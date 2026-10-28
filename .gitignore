@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+.pytest_cache/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Local models (downloaded by users; not part of the public repo)
+models/
+
+# FalcoCV specific (optional)
+# *.cvj  <-- Keep them if you want to include demo jobs
+temp/
+logs/
+
+# Local build artifacts
+build/
+dist/
+benchmarks/.legacy/
+benchmarks/__pycache__/
+
+# OpenCV 5 source/build (downloaded locally, not part of the repo)
+cpp/opencv5/
+cpp/build/
+cpp/opencv-5.0.0-src.zip
+
+# Native kernel build outputs
+*.pyd
+*.dll
+cpp/bin/
+
+# Local agent tooling
+.opencode/

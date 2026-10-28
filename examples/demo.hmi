@@ -1,0 +1,51 @@
+{
+  "version": "1.0",
+  "slots": [
+    {
+      "name": "job1",
+      "job_path": "examples/demo_job1.cvj"
+    },
+    {
+      "name": "job2",
+      "job_path": "examples/demo_job2.cvj"
+    }
+  ],
+  "layout": {
+    "rows": 50,
+    "cols": 50,
+    "widgets": [
+      {
+        "id": "w_af29e900",
+        "type": "StatusIndicator",
+        "x": 2,
+        "y": 2,
+        "w": 10,
+        "h": 8,
+        "z": 0,
+        "slot": "job1",
+        "label": "Job 1"
+      },
+      {
+        "id": "w_98ef0ea7",
+        "type": "StatusIndicator",
+        "x": 14,
+        "y": 2,
+        "w": 10,
+        "h": 8,
+        "z": 1,
+        "slot": "job2",
+        "label": "Job 2"
+      },
+      {
+        "id": "w_c5df6135",
+        "type": "LogPanel",
+        "x": 2,
+        "y": 12,
+        "w": 22,
+        "h": 20,
+        "z": 2
+      }
+    ]
+  },
+  "script": "# Demo script: alternates between job1 and job2 with logs and states\nlog(\"HMI demo started\")\nwhile True:\n    log(\"Running job1...\")\n    run_slot(\"job1\")\n    set_slot_status(\"job1\", \"pass\")\n    log(\"job1 finished: PASS\")\n    sleep(1)\n\n    log(\"Running job2...\")\n    run_slot(\"job2\")\n    set_slot_status(\"job2\", \"fail\")\n    log(\"job2 finished: FAIL\")\n    sleep(1)\n"
+}

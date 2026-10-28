@@ -1,0 +1,3 @@
+models/*.onnx binary
+models/*.onnx.data binary
+models/ppocrv5_dict.txt -text

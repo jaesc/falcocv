@@ -1,0 +1,26 @@
+# Runtime dependencies (canonical list: pyproject.toml).
+# For development: pip install -e ".[dev]"
+numpy>=1.26
+setuptools>=83.0.0
+Pillow>=10.0.0
+opencv-python>=5.0.0
+PyQt6>=6.5.0
+PyQt6-QScintilla>=2.14.0
+pyzbar>=0.1.9
+pylibdmtx>=0.1.10
+zxing-cpp>=3.0.0,<3.1
+python-Levenshtein>=0.26.0
+python-barcode>=0.16.0
+fastapi>=0.146.0
+uvicorn[standard]>=0.29.0
+websockets>=12.0
+python-multipart>=0.0.31
+psutil>=5.9.0
+PyOpenGL>=3.1.7
+tifffile>=2023.0.0
+imagecodecs>=2023.0.0
+onnxruntime>=1.15.0
+harvesters>=1.4.3
+
+# Build/test (installed by the pyproject build-system and [dev] extra):
+# scikit-build-core, pybind11, cmake, ninja, pytest

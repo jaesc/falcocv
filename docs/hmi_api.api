@@ -1,0 +1,47 @@
+run_slot(?slot_name, advance=True)
+log(?msg, level='info')
+set_slot_status(?name, status)
+sleep(?seconds)
+help()
+_stop
+proj
+proj.widgets
+proj.slots
+proj.layout
+proj.script
+proj.project_id
+proj.source_dir
+proj.entry_point
+proj.run_slot(?slot_name, advance=True)
+proj.log(?msg, level='info')
+proj.set_slot_status(?name, status)
+proj.get_logs(?since_index=0)
+proj.add_slot(?name, job_path)
+proj.remove_slot(?index)
+proj.add_widget(?widget_type, x=0, y=0, name=None)
+proj.remove_widget(?widget_id)
+proj.rename_widget(?widget_id, new_name)
+proj.load_all_jobs()
+proj.start_script()
+proj.stop_script()
+proj.save(?path)
+proj.set_project_id(?value)
+widget.id
+widget.name
+widget.type
+widget.x
+widget.y
+widget.w
+widget.h
+widget.z
+widget.label
+widget.slot
+widget.output
+widget.field
+widget.min
+widget.max
+widget.font_size
+widget.bg_color
+widget.text_color
+widget.halign
+widget.valign

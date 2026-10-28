@@ -1,0 +1,71 @@
+#prompt-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+  display: none; align-items: center; justify-content: center; z-index: 9999;
+}
+#prompt-dialog {
+  background: #2d2d2d; border: 1px solid #555; border-radius: 8px;
+  padding: 24px; min-width: 320px; max-width: 480px;
+  color: #ccc; font-family: sans-serif; display: flex; flex-direction: column; gap: 12px;
+}
+#prompt-dialog .prompt-msg { font-size: 15px; }
+#prompt-dialog .prompt-input input {
+  width: 100%; padding: 6px 8px; background: #1e1e1e; border: 1px solid #555;
+  color: #ccc; border-radius: 4px; font-size: 14px; font-family: Consolas, monospace;
+}
+#prompt-dialog .prompt-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+#prompt-dialog .prompt-buttons button, #prompt-dialog .prompt-cancel button {
+  padding: 6px 16px; border: 1px solid #555; border-radius: 4px;
+  background: #3a3a3a; color: #ccc; cursor: pointer; font-size: 13px;
+}
+#prompt-dialog .prompt-buttons button:hover, #prompt-dialog .prompt-cancel button:hover {
+  background: #4a4a4a;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1e1e1e; overflow: hidden; font-family: sans-serif; color: #ccc; }
+#app { display: flex; flex-direction: column; height: 100vh; width: 100vw; position: relative; }
+#splash { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: #1e1e1e; z-index: 10; }
+#splash.hidden { display: none; }
+.splash-title {
+  font: bold 120px/1 sans-serif;
+  color: #555;
+  letter-spacing: 14px;
+  user-select: none;
+  pointer-events: none;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+#grid { flex: 1; min-height: 0; display: grid; gap: 0; padding: 0; overflow: hidden; border: 1px solid #444; }
+#footer { display: flex; align-items: center; padding: 2px 12px; background: #007acc; color: #fff; font: 11px Consolas, monospace; height: 22px; flex-shrink: 0; gap: 16px; }
+#slot-info { flex: 1; }
+#ws-status { }
+.cell { background: #2d2d2d; border: none; border-radius: 0; overflow: hidden; position: relative; display: flex; flex-direction: column; }
+.cell-label { position: absolute; top: 2px; left: 6px; font: 9px sans-serif; color: #666; z-index: 1; }
+.cell-type { display: none; }
+.widget-textlabel .cell-label,
+.widget-measurelabel .cell-label { display: none; }
+.viewer-cell { flex: 1; background: #1a1a1a; display: flex; align-items: center; justify-content: center; min-height: 0; position: relative; }
+.viewer-cell canvas { width: 100%; height: 100%; }
+.viewer-cell .empty { color: #555; font: 13px sans-serif; }
+.measure-cell { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; }
+.measure-label { font-family: sans-serif; color: #888; text-align: center; }
+.measure-cell.inline { flex-direction: row; align-items: center; }
+.measure-value { font-family: Consolas, monospace; font-weight: bold; color: #4ec9b0; }
+.measure-value.pass { color: #4ec9b0; }
+.measure-value.fail { color: #c62828; }
+.indicator-cell { flex: 1; display: flex; align-items: center; justify-content: center; border-radius: 4px; margin: 8px; font: bold 18px sans-serif; color: #fff; }
+.indicator-cell.pending { animation: led-blink 1s ease-in-out infinite; }
+.indicator-label { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); font: 10px sans-serif; color: rgba(255,255,255,0.7); }
+.widget-ledindicator { background: transparent !important; }
+@keyframes led-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+.led-indicator { border-radius: 50%; }
+.led-indicator.pending { animation: led-blink 1s ease-in-out infinite; }
+.led-label { text-align: center; font: 11px sans-serif; color: #888; padding: 2px 0; flex-shrink: 0; }
+.log-cell { flex: 1; background: #1e1e1e; margin: 4px; border-radius: 2px; overflow-y: auto; padding: 4px; font-family: Consolas, monospace; color: #888; }
+.log-cell div { padding: 1px 0; }
+.log-info { color: #888; }
+.log-error { color: #f14c4c; }
+.log-warning { color: #ffa726; }
+.log-debug { color: #569cd6; }
+.text-cell { flex: 1; display: flex; padding: 8px; overflow: hidden; word-break: break-word; }
