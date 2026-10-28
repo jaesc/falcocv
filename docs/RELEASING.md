@@ -91,13 +91,15 @@ OIDC (`id-token: write`).
 
 Actions → **Publish** → *Run workflow* → target `testpypi`.
 
-Validate in a clean venv (TestPyPI has no dependencies, so point pip at PyPI for
-them):
+Validate in a clean venv. TestPyPI has no dependencies, and `--extra-index-url`
+can pull unrelated pre-releases from TestPyPI, so download the wheel with
+`--no-deps` and install it against regular PyPI:
 
 ```bash
 python -m venv /tmp/falcocv-rc
-/tmp/falcocv-rc/bin/pip install --pre -i https://test.pypi.org/simple/ \
-    --extra-index-url https://pypi.org/simple falcocv
+/tmp/falcocv-rc/bin/pip download --no-deps -i https://test.pypi.org/simple/ \
+    -d /tmp/falcocv-wheel falcocv
+/tmp/falcocv-rc/bin/pip install /tmp/falcocv-wheel/falcocv-*.whl
 /tmp/falcocv-rc/bin/falcocv self-test
 ```
 

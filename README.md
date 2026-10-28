@@ -1,9 +1,10 @@
 # FalcoCV — Industrial Machine Vision Framework
 
-![Status](https://img.shields.io/badge/Status-Release_Candidate-yellow)
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![Qt](https://img.shields.io/badge/UI-PyQt6-orange)
-![OpenCV](https://img.shields.io/badge/Vision-OpenCV%205-red)
+[![PyPI](https://img.shields.io/pypi/v/falcocv)](https://pypi.org/project/falcocv/)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://pypi.org/project/falcocv/)
+[![Qt](https://img.shields.io/badge/UI-PyQt6-orange)](https://www.riverbankcomputing.com/software/pyqt/)
+[![OpenCV](https://img.shields.io/badge/Vision-OpenCV%205-red)](https://opencv.org/)
+[![CI](https://github.com/jaesc/falcocv/actions/workflows/ci.yml/badge.svg)](https://github.com/jaesc/falcocv/actions/workflows/ci.yml)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="src/falcocv/ui/assets/logo_lockup_dark.png">

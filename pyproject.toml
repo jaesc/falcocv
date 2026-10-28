@@ -9,7 +9,7 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "falcocv"
-version = "1.0.0rc1"
+version = "1.0.0"
 description = "Modular industrial machine vision environment with a DAG workflow engine and web HMI"
 readme = "README.md"
 requires-python = ">=3.10"
