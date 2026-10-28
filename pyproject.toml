@@ -143,5 +143,5 @@ test-requires = ["numpy"]
 test-command = "python -c \"import falcocv; from falcocv._falco_kernel import generate_pointcloud; print(falcocv.__version__)\""
 
 [tool.cibuildwheel.linux]
-manylinux-x86_64-image = "manylinux_2_28"
+manylinux-x86_64-image = "manylinux_2_34"
 

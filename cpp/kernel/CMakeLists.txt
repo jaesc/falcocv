@@ -3,7 +3,7 @@ project(falco_kernel LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 find_package(pybind11 QUIET CONFIG)
 if(NOT pybind11_FOUND)
