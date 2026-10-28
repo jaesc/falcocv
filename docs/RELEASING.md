@@ -62,37 +62,58 @@ Download the artifacts and inspect that the kernel is inside the package:
 python -c "import zipfile; print([n for n in zipfile.ZipFile('falcocv-...whl').namelist() if '_falco_kernel' in n])"
 ```
 
-## 4. Publish a release candidate
+## 4. Trusted publishing (one-time setup)
 
-Always upload the candidate to TestPyPI first; a published file cannot be
-replaced on PyPI.
+TestPyPI and PyPI are separate accounts.
+
+1. Create an account at <https://test.pypi.org/account/register/>, verify the
+   email and enable two-factor authentication.
+2. Add a **pending trusted publisher** at
+   <https://test.pypi.org/manage/account/publishing/>:
+
+   | Field | Value |
+   |---|---|
+   | PyPI Project Name | `falcocv` |
+   | Owner | `jaesc` |
+   | Repository name | `falcocv` |
+   | Workflow name | `publish.yml` |
+   | Environment name | `testpypi` |
+
+3. Repeat on <https://pypi.org/account/register/> and
+   <https://pypi.org/manage/account/publishing/> with environment `pypi`.
+4. Recommended: create the GitHub environments `testpypi` and `pypi`
+   (Settings → Environments) and add required reviewers to `pypi`.
+
+No API token is stored anywhere: the `Publish` workflow authenticates with
+OIDC (`id-token: write`).
+
+## 5. Publish a release candidate
+
+Actions → **Publish** → *Run workflow* → target `testpypi`.
+
+Validate in a clean venv (TestPyPI has no dependencies, so point pip at PyPI for
+them):
 
 ```bash
-python -m pip install twine
-twine upload --repository testpypi dist/*
-
 python -m venv /tmp/falcocv-rc
 /tmp/falcocv-rc/bin/pip install --pre -i https://test.pypi.org/simple/ \
     --extra-index-url https://pypi.org/simple falcocv
 /tmp/falcocv-rc/bin/falcocv self-test
 ```
 
-Validate on Windows and Linux: `falcocv` (editor), `falcocv-server`, a real job
-through `falcocv run job.cvj --output results.json`, and the first-run model
-download.
+Check `falcocv` (editor), `falcocv-server`, a real job through
+`falcocv run job.cvj --output results.json`, and the first-run model download on
+Windows and Linux.
 
-## 5. Publish the stable release
+## 6. Publish the stable release
 
-When the candidate is validated, publish the same artifacts to PyPI:
+1. Bump `pyproject.toml` and `src/falcocv/version.py` (for example
+   `1.0.0rc1` → `1.0.0`), commit and tag `v1.0.0`.
+2. Actions → **Publish** → *Run workflow* → target `pypi`.
+3. Create the GitHub release.
 
-```bash
-twine upload dist/*
-```
-
-Use an API token or PyPI trusted publishing (the `Wheels` workflow can be
-extended with `pypa/gh-action-pypi-publish` and `id-token: write`).
-
-Then bump `src/falcocv/version.py`, tag `v1.0.0` and create the GitHub release.
+Manual upload with a token remains possible as a fallback:
+`twine upload --repository testpypi dist/*` and `twine upload dist/*`.
 
 ## 6. Post-release smoke test
 
