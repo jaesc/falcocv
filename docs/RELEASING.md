@@ -53,7 +53,7 @@ Push a tag (for example `v1.0.0rc1`) or run the **Wheels** GitHub Actions
 workflow manually. It builds:
 
 - Windows x86_64 wheels (CPython 3.10–3.13)
-- Linux x86_64 manylinux_2_28 wheels (CPython 3.10–3.13)
+- Linux x86_64 manylinux_2_34 wheels (CPython 3.10-3.13; PyQt6 needs glibc 2.34+)
 - an sdist
 
 Download the artifacts and inspect that the kernel is inside the package:

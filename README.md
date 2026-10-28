@@ -50,9 +50,10 @@ python -m pip install falcocv
 
 The native kernel ships inside the wheel, so no compiler is needed. On platforms
 without a wheel, `pip` builds it from the sdist and needs Python 3.10+ (3.13
-recommended), CMake 3.20+ and a C++17 compiler. GigE and USB3 Vision cameras
-only need the vendor GenTL producer (`.cti` file); the Harvesters integration is
-installed by default.
+recommended), CMake 3.20+ and a C++17 compiler. On Linux the wheels target
+glibc 2.34+ (Ubuntu 22.04+, Debian 12+, RHEL 9+), which is what PyQt6 requires.
+GigE and USB3 Vision cameras only need the vendor GenTL producer (`.cti` file);
+the Harvesters integration is installed by default.
 
 ### From source
 
