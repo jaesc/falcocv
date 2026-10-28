@@ -34,6 +34,9 @@ classifiers = [
 ]
 dependencies = [
     "numpy>=1.26",
+    # pylibdmtx imports distutils.version (removed from Python 3.12+);
+    # setuptools provides the shim. Required for DataMatrix decoding.
+    "setuptools>=83.0.0",
     "Pillow>=10.0.0",
     "opencv-python>=5.0.0",
     "PyQt6>=6.5.0",
