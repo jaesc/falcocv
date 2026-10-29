@@ -11,6 +11,15 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import propagate_3d
 
 
+# Angle conventions
+# -----------------
+# Public angles (params, results, overlays and fixture) follow the framework
+# convention: positive = clockwise on screen (Qt / ROI / fixture).
+# OpenCV's ``cv2.getRotationMatrix2D`` uses the opposite sign, so the cache
+# renders each template at ``-a`` while the cache key and the result keep the
+# public angle ``a``.
+
+
 # --- Background cache builder -------------------------------------------
 class _CacheWorker:
     """Builds the template cache in a background thread."""
@@ -54,7 +63,9 @@ class _CacheWorker:
                     if self.stop_requested: return
                     key_0 = (round(s, 6), round(a, 6), 0)
                     if key_0 not in cache:
-                        t_base = _transform(self._template_gray, a, s)
+                        # ``a`` is the public clockwise angle; OpenCV rotates
+                        # counter-clockwise, so render with the negated angle.
+                        t_base = _transform(self._template_gray, -a, s)
                         cache[key_0] = t_base
                     else:
                         t_base = cache[key_0]
@@ -91,7 +102,11 @@ class _CacheWorker:
 
 
 def _transform(template, angle, scale):
-    """Rotate + scale a template image, auto-expanding the canvas."""
+    """Rotate + scale a template image, auto-expanding the canvas.
+
+    ``angle`` is an OpenCV angle (positive = counter-clockwise).  Callers that
+    hold a public/FalcoCV angle (positive = clockwise) must negate it.
+    """
     if angle == 0 and scale == 1.0:
         return template
     h, w = template.shape[:2]
@@ -368,7 +383,8 @@ class PatternMatcher(BaseTool):
             self.data_changed.emit()
 
     def _transformed_template(self, template, angle, scale):
-        return _transform(template, angle, scale)
+        """Render a template for a public clockwise ``angle``."""
+        return _transform(template, -angle, scale)
 
     def run(self, advance=False):
         if self._static_train_image is None and self.params["train_image_b64"] is not None:
@@ -610,7 +626,8 @@ class PatternMatcher(BaseTool):
         tw, th = self._template_size
 
         for idx, r in enumerate(kept):
-            rad = np.deg2rad(-r["angle"])
+            # Public angle: positive = clockwise in image coordinates.
+            rad = np.deg2rad(r["angle"])
             cos_a, sin_a = np.cos(rad), np.sin(rad)
 
             def transform_pt(px, py):

@@ -3,6 +3,8 @@
 The template is a texture-light industrial-looking part.  Scenes are generated
 by warping the template to a known (x, y, angle, scale), then applying noise,
 blur, gamma/contrast and occlusion.  Ground truth is therefore exact.
+
+Angles use the FalcoCV convention: positive = clockwise on screen.
 """
 
 from __future__ import annotations
@@ -75,7 +77,10 @@ def render_scene(
     scene_height, scene_width = scene_size
     scene = np.full((scene_height, scene_width, 3), BACKGROUND, dtype=np.uint8)
 
-    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), angle, scale)
+    # Positive angle follows the FalcoCV convention: clockwise on screen.
+    # OpenCV's getRotationMatrix2D rotates counter-clockwise for positive
+    # angles, so the sign is flipped here.
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), -angle, scale)
     matrix[0, 2] += cx - width / 2.0
     matrix[1, 2] += cy - height / 2.0
 

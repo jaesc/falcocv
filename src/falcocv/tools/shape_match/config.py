@@ -182,6 +182,9 @@ class ShapeMatchConfig(QWidget):
         self.spin_angle_start = QDoubleSpinBox()
         self.spin_angle_start.setRange(-180.0, 180.0)
         self.spin_angle_start.setDecimals(2)
+        self.spin_angle_start.setToolTip(
+            "Positive angles rotate clockwise, like ROI/fixture angles."
+        )
         self.spin_angle_start.setValue(float(self.tool.params.get("angle_start", -30.0)))
         self.spin_angle_start.valueChanged.connect(
             lambda value: self._set_param("angle_start", value)
@@ -189,6 +192,9 @@ class ShapeMatchConfig(QWidget):
         self.spin_angle_end = QDoubleSpinBox()
         self.spin_angle_end.setRange(-180.0, 180.0)
         self.spin_angle_end.setDecimals(2)
+        self.spin_angle_end.setToolTip(
+            "Positive angles rotate clockwise, like ROI/fixture angles."
+        )
         self.spin_angle_end.setValue(float(self.tool.params.get("angle_end", 30.0)))
         self.spin_angle_end.valueChanged.connect(
             lambda value: self._set_param("angle_end", value)

@@ -72,7 +72,8 @@ class _CacheWorker(QThread):
                 for a in angles:
                     key_0 = (round(s, 6), round(a, 6), 0)
                     if key_0 not in cache:
-                        t_base = _transform(self._template_gray, a, s)
+                        # Public clockwise angle; OpenCV rotates the other way.
+                        t_base = _transform(self._template_gray, -a, s)
                         cache[key_0] = t_base
                     else:
                         t_base = cache[key_0]
@@ -106,7 +107,11 @@ class _CacheWorker(QThread):
 
 
 def _transform(template, angle, scale):
-    """Rotate + scale a template image, auto-expanding the canvas."""
+    """Rotate + scale a template image, auto-expanding the canvas.
+
+    ``angle`` is an OpenCV angle (positive = counter-clockwise).  Callers that
+    hold a public/FalcoCV angle (positive = clockwise) must negate it.
+    """
     if angle == 0 and scale == 1.0:
         return template
     h, w = template.shape[:2]
@@ -216,8 +221,20 @@ class PatternMatcherConfig(QWidget):
 
         angle_group = QGroupBox("Angle Range"); angle_lyt = QHBoxLayout(angle_group)
         [angle_lyt.addWidget(QLabel(t)) for t in ["Min:", "Max:", "Step:"]]
-        self.spin_a0 = QSpinBox(); self.spin_a0.setRange(-180, 180); self.spin_a0.setValue(self.tool.params["angle_start"]); self.spin_a0.valueChanged.connect(lambda v: self._set_param("angle_start", v))
-        self.spin_a1 = QSpinBox(); self.spin_a1.setRange(-180, 180); self.spin_a1.setValue(self.tool.params["angle_end"]); self.spin_a1.valueChanged.connect(lambda v: self._set_param("angle_end", v))
+        self.spin_a0 = QSpinBox()
+        self.spin_a0.setRange(-180, 180)
+        self.spin_a0.setValue(self.tool.params["angle_start"])
+        self.spin_a0.setToolTip(
+            "Positive angles rotate clockwise, like ROI/fixture angles."
+        )
+        self.spin_a0.valueChanged.connect(lambda v: self._set_param("angle_start", v))
+        self.spin_a1 = QSpinBox()
+        self.spin_a1.setRange(-180, 180)
+        self.spin_a1.setValue(self.tool.params["angle_end"])
+        self.spin_a1.setToolTip(
+            "Positive angles rotate clockwise, like ROI/fixture angles."
+        )
+        self.spin_a1.valueChanged.connect(lambda v: self._set_param("angle_end", v))
         self.spin_as = QDoubleSpinBox(); self.spin_as.setRange(0.1, 1.0); self.spin_as.setSingleStep(0.1); self.spin_as.setDecimals(1); self.spin_as.setValue(self.tool.params["angle_step"]); self.spin_as.valueChanged.connect(lambda v: self._set_param("angle_step", v))
         angle_lyt.insertWidget(1, self.spin_a0); angle_lyt.insertWidget(3, self.spin_a1); angle_lyt.insertWidget(5, self.spin_as); layout.addWidget(angle_group)
 

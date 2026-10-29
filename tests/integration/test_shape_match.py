@@ -1,11 +1,14 @@
 """ShapeMatch v2 integration tests against synthetic ground truth."""
 
+import math
+
 import cv2
 import numpy as np
 import pytest
 
 from falcocv.accuracy.synthetic import BACKGROUND, make_template, render_scene, scene_suite
 from falcocv.core.job_manager import JobManager
+from falcocv.core.overlay_layer import OverlayType
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.workflow import Workflow
 from falcocv.tools.image_loader.logic import ImageLoader
@@ -96,7 +99,8 @@ def _two_part_scene(template):
     scene = np.full((360, 480, 3), BACKGROUND, dtype=np.uint8)
     height, width = template.shape[:2]
     for cx, cy, angle in ((180.0, 150.0, 0.0), (360.0, 230.0, 15.0)):
-        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), angle, 1.0)
+        # Positive angle is clockwise (FalcoCV convention).
+        matrix = cv2.getRotationMatrix2D((width / 2, height / 2), -angle, 1.0)
         matrix[0, 2] += cx - width / 2
         matrix[1, 2] += cy - height / 2
         warped = cv2.warpAffine(template, matrix, (480, 360), borderValue=(BACKGROUND,) * 3)
@@ -336,7 +340,7 @@ def test_shape_match_bright_border_template():
     cv2.rectangle(template, (28, 30), (42, 42), (190, 190, 190), -1)
 
     scene = np.full((360, 480, 3), 190, dtype=np.uint8)
-    matrix = cv2.getRotationMatrix2D((80, 60), 12.0, 1.05)
+    matrix = cv2.getRotationMatrix2D((80, 60), -12.0, 1.05)
     matrix[0, 2] += 300.0 - 80.0
     matrix[1, 2] += 190.0 - 60.0
     warped = cv2.warpAffine(
@@ -433,3 +437,85 @@ def test_shape_match_untrained_draws_search_roi():
 
     assert tool.outputs["count"] == 0
     assert "ROI" in _overlay_types(tool.outputs["output image"], tool.name)
+
+
+def test_shape_match_angle_range_is_clockwise():
+    """Public angle ranges use the framework convention (positive = clockwise)."""
+    template = make_template()
+    tool = _tool(template)
+
+    scene = render_scene(template, cx=300, cy=190, angle=20.0, scale=1.0)
+    tool.params.update({"angle_start": 10.0, "angle_end": 30.0})
+    result = _run(tool, scene)
+    assert abs(result.angle - 20.0) <= 0.2
+
+    scene = render_scene(template, cx=300, cy=190, angle=-20.0, scale=1.0)
+    tool.params.update({"angle_start": -30.0, "angle_end": -10.0})
+    result = _run(tool, scene)
+    assert abs(result.angle + 20.0) <= 0.2
+
+    # The same positive part must not match a negative-only range.
+    scene = render_scene(template, cx=300, cy=190, angle=20.0, scale=1.0)
+    tool.params.update({"angle_start": -30.0, "angle_end": -10.0})
+    tool.inputs["input image"] = VisionImage(scene)
+    tool.run()
+    assert tool.outputs["count"] == 0
+
+
+def test_shape_match_axes_follow_found_region():
+    """The AXES X direction must be parallel to the found region's X edge."""
+    template = make_template()
+    tool = _tool(template)
+    tool.params.update(
+        {
+            "show_found_region": True,
+            "show_found_origin": True,
+            "show_labels": False,
+            "copy_overlays_to_input": False,
+        }
+    )
+    scene = render_scene(template, cx=300, cy=190, angle=25.0, scale=1.0)
+    result = _run(tool, scene)
+
+    layer = tool.outputs["output image"].get_overlay_layer("default")
+    contour = next(
+        element
+        for element in layer.elements
+        if element.element_type == OverlayType.CONTOUR
+        and element.ref_id == "match_0"
+    )
+    axes = next(
+        element
+        for element in layer.elements
+        if element.element_type == OverlayType.AXES and element.ref_id == "match_0"
+    )
+
+    p0, p1 = np.asarray(contour.data["contour"][:2], dtype=np.float64)
+    edge = p1 - p0
+    edge /= np.linalg.norm(edge)
+    radians = math.radians(axes.data["angle"])
+    axis = np.array([math.cos(radians), math.sin(radians)])
+    assert abs(result.angle - axes.data["angle"]) <= 1e-6
+    assert float(np.dot(edge, axis)) > 0.999
+    assert abs(float(edge[0] * axis[1] - edge[1] * axis[0])) < 1e-3
+
+
+def test_shape_match_act_as_fixture_uses_framework_angle():
+    """act_as_fixture must rotate downstream ROIs in the same sense as the part."""
+    template = make_template()
+    tool = _tool(template)
+    tool.params["act_as_fixture"] = True
+    scene = render_scene(template, cx=300, cy=190, angle=25.0, scale=1.0)
+    result = _run(tool, scene)
+    output = tool.outputs["output image"]
+
+    assert abs(result.angle - 25.0) <= 0.2
+    assert abs(output.angle - result.angle) <= 1e-6
+
+    # Local +X/+Y offsets must move down-right for a positive (clockwise)
+    # angle; the old OpenCV sign moved them up-right.
+    abs_roi = output.fixture_to_image([0.0, 0.0, 10.0, 10.0, 0.0])
+    centre_x = abs_roi[0] + 5.0
+    centre_y = abs_roi[1] + 5.0
+    assert centre_x - output.x > 0
+    assert centre_y - output.y > 0

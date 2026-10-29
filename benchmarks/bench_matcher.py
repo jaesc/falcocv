@@ -198,9 +198,9 @@ def run_sift(template: np.ndarray, scene: SyntheticScene) -> dict:
 
     height, width = template.shape[:2]
     center = matrix @ np.array([width / 2.0, height / 2.0, 1.0])
-    # cv2.getRotationMatrix2D uses [[cos, sin], [-sin, cos]]; SIFT returns the
-    # same image-space matrix, so negate to compare with the scene's angle.
-    angle = -float(np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0])))
+    # SIFT returns an image-space matrix; positive arctan2 is clockwise on
+    # screen, which is the same convention as the synthetic ground truth.
+    angle = float(np.degrees(np.arctan2(matrix[1, 0], matrix[0, 0])))
     scale = float(np.hypot(matrix[0, 0], matrix[1, 0]))
     return {
         "found": True,

@@ -33,6 +33,17 @@ except ImportError:
 
 MODEL_VERSION = 2
 
+# Angle conventions
+# -----------------
+# Public angles (params, results, overlays and fixture) follow the framework
+# convention: positive = clockwise on screen (Qt / ROI / fixture).
+# Internal ``theta`` values used by the kernel, NCC, ECC and ICP follow
+# OpenCV's convention: positive = counter-clockwise.  ``theta = -angle``.
+#
+# The training ROI is already expressed in the framework convention, so the
+# crop below can keep using ``cv2.getRotationMatrix2D(+roi_angle)``: rotating
+# the content counter-clockwise straightens a clockwise-rotated ROI.
+
 _EDGE_LOW = 50
 _EDGE_HIGH = 150
 _ORIENTATION_EXPONENT = 2.0
@@ -508,11 +519,16 @@ class ShapeMatch(BaseTool):
         return matrix
 
     def _origin_point(self, x, y, angle, scale):
+        """Offset origin in image space.
+
+        ``angle`` is a public/framework angle (positive = clockwise), so the
+        local offset is rotated clockwise around the template centre.
+        """
         origin_x = float(self.params.get("origin_x", 0.0))
         origin_y = float(self.params.get("origin_y", 0.0))
         if abs(origin_x) < 1e-9 and abs(origin_y) < 1e-9:
             return x, y
-        radians = math.radians(-angle)
+        radians = math.radians(angle)
         cos_a = math.cos(radians)
         sin_a = math.sin(radians)
         tx = origin_x * scale
@@ -1395,17 +1411,19 @@ class ShapeMatch(BaseTool):
         return cache[0]
 
     def _refine_candidate(self, gray, gx, gy, edge_cache, dt_cache, gradient_cache,
-                          candidate, angle_start, angle_end, scale_start, scale_end,
+                          candidate, theta_start, theta_end, scale_start, scale_end,
                           alignment_gx=None, alignment_gy=None, alignment_scale=1.0,
                           search_gray=None, search_factor=1):
+        # ``theta_*`` and ``angle`` below are internal OpenCV angles
+        # (positive = counter-clockwise); the caller converts the final pose.
         x = float(candidate["x"])
         y = float(candidate["y"])
-        angle = float(np.clip(candidate["angle"], angle_start, angle_end))
+        angle = float(np.clip(candidate["angle"], theta_start, theta_end))
         scale = float(np.clip(candidate["scale"], scale_start, scale_end))
 
         coarse = self._coarse_pose(
             gray, gx, gy, x, y, angle, scale,
-            angle_start, angle_end, scale_start, scale_end,
+            theta_start, theta_end, scale_start, scale_end,
             alignment_gx=alignment_gx,
             alignment_gy=alignment_gy,
             alignment_scale=alignment_scale,
@@ -1432,7 +1450,7 @@ class ShapeMatch(BaseTool):
         if alignment >= _ECC_ALIGNMENT:
             pose, ecc_cc = self._ecc_solver(
                 gray, x, y, angle, scale,
-                angle_start, angle_end, scale_start, scale_end,
+                theta_start, theta_end, scale_start, scale_end,
                 search_gray=search_gray,
                 search_factor=search_factor,
             )
@@ -1447,7 +1465,7 @@ class ShapeMatch(BaseTool):
                 )
                 occlusion = self._occlusion_refine(
                     gx, gy, dt, gray, x, y, angle, scale,
-                    angle_start, angle_end, scale_start, scale_end,
+                    theta_start, theta_end, scale_start, scale_end,
                 )
                 if occlusion is None:
                     return None, {
@@ -1472,7 +1490,7 @@ class ShapeMatch(BaseTool):
             )
             occlusion = self._occlusion_refine(
                 gx, gy, dt, gray, x, y, angle, scale,
-                angle_start, angle_end, scale_start, scale_end,
+                theta_start, theta_end, scale_start, scale_end,
             )
             if occlusion is None:
                 return None, {
@@ -1599,21 +1617,27 @@ class ShapeMatch(BaseTool):
             vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
         )
 
-        start = float(self.params["angle_start"])
-        end = float(self.params["angle_end"])
-        if start > end:
-            start, end = end, start
+        # Public angle range: positive = clockwise.  The search stages work
+        # with OpenCV's counter-clockwise ``theta``, so the range is mirrored.
+        angle_start = float(self.params["angle_start"])
+        angle_end = float(self.params["angle_end"])
+        if angle_start > angle_end:
+            angle_start, angle_end = angle_end, angle_start
+        theta_start = -angle_end
+        theta_end = -angle_start
         scale_start = float(self.params["scale_start"])
         scale_end = float(self.params["scale_end"])
         if scale_start > scale_end:
             scale_start, scale_end = scale_end, scale_start
 
-        span = end - start
+        span = theta_end - theta_start
         coarse_angle = min(10.0, max(2.0, span / 4.0)) if span > 0 else 0.0
         if coarse_angle > 0:
-            angles = list(np.arange(start, end + coarse_angle * 0.5, coarse_angle))
+            angles = list(
+                np.arange(theta_start, theta_end + coarse_angle * 0.5, coarse_angle)
+            )
         else:
-            angles = [start]
+            angles = [theta_start]
 
         scale_span = scale_end - scale_start
         if scale_span < 1e-9:
@@ -1681,8 +1705,8 @@ class ShapeMatch(BaseTool):
                 dt_cache,
                 gradient_cache,
                 coarse_candidate,
-                start,
-                end,
+                theta_start,
+                theta_end,
                 scale_start,
                 scale_end,
                 alignment_gx=alignment_gx,
@@ -1713,8 +1737,10 @@ class ShapeMatch(BaseTool):
             refined_centers.append((refined_x, refined_y))
             center_x = refined_x + ax
             center_y = refined_y + ay
+            # Refinement works in OpenCV theta; expose the framework angle.
+            angle = -refined_angle
             origin_x, origin_y = self._origin_point(
-                center_x, center_y, refined_angle, refined_scale
+                center_x, center_y, angle, refined_scale
             )
             candidates.append(
                 {
@@ -1722,7 +1748,7 @@ class ShapeMatch(BaseTool):
                     "y": origin_y,
                     "center_x": center_x,
                     "center_y": center_y,
-                    "angle": refined_angle,
+                    "angle": angle,
                     "scale": refined_scale,
                     "score": score,
                     "solver": solver,
@@ -1774,10 +1800,11 @@ class ShapeMatch(BaseTool):
                     (half_w, half_h),
                     (-half_w, half_h),
                 ]
+                # Public angle: positive = clockwise in image coordinates.
                 points = [
                     (
-                        candidate["center_x"] + cos_a * px + sin_a * py,
-                        candidate["center_y"] - sin_a * px + cos_a * py,
+                        candidate["center_x"] + cos_a * px - sin_a * py,
+                        candidate["center_y"] + sin_a * px + cos_a * py,
                     )
                     for px, py in corners
                 ]
