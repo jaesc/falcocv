@@ -1560,12 +1560,15 @@ class ShapeMatch(BaseTool):
 
         roi = extract_roi(v_img, self.params["search_roi"])
         ax, ay = roi["ax"], roi["ay"]
+        roi_angle = float(roi["abs_angle"])
+        roi_m_inv = roi["M_inv"]
 
         # Draw the search ROI even when untrained (same as PatternMatcher) so
-        # the ROI editor always has visual feedback.
+        # the ROI editor always has visual feedback.  Use the unclamped
+        # absolute rect so a rotated ROI is shown with its real angle.
         if self.params["show_search_roi"]:
             layer.add_roi(
-                [ax, ay, roi["aw"], roi["ah"], 0],
+                [roi["abs_x"], roi["abs_y"], roi["abs_w"], roi["abs_h"], roi_angle],
                 color=(255, 128, 0),
                 thickness=2,
             )
@@ -1617,14 +1620,16 @@ class ShapeMatch(BaseTool):
             vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
         )
 
-        # Public angle range: positive = clockwise.  The search stages work
-        # with OpenCV's counter-clockwise ``theta``, so the range is mirrored.
+        # Public angle range: positive = clockwise in the image frame.  The
+        # crop is straightened by ``roi_angle``, so the crop-relative range is
+        # shifted by it.  Search stages work with OpenCV's counter-clockwise
+        # ``theta``, hence ``theta = roi_angle - angle``.
         angle_start = float(self.params["angle_start"])
         angle_end = float(self.params["angle_end"])
         if angle_start > angle_end:
             angle_start, angle_end = angle_end, angle_start
-        theta_start = -angle_end
-        theta_end = -angle_start
+        theta_start = roi_angle - angle_end
+        theta_end = roi_angle - angle_start
         scale_start = float(self.params["scale_start"])
         scale_end = float(self.params["scale_end"])
         if scale_start > scale_end:
@@ -1735,10 +1740,15 @@ class ShapeMatch(BaseTool):
             if score < float(self.params["min_score"]):
                 continue
             refined_centers.append((refined_x, refined_y))
-            center_x = refined_x + ax
-            center_y = refined_y + ay
-            # Refinement works in OpenCV theta; expose the framework angle.
-            angle = -refined_angle
+            if roi_m_inv is not None:
+                mapped = roi_m_inv @ np.array([refined_x, refined_y, 1.0])
+                center_x, center_y = float(mapped[0]), float(mapped[1])
+            else:
+                center_x = refined_x + ax
+                center_y = refined_y + ay
+            # Refinement works in OpenCV theta; convert to the framework
+            # angle in the image frame (undo the crop rotation).
+            angle = -refined_angle + roi_angle
             origin_x, origin_y = self._origin_point(
                 center_x, center_y, angle, refined_scale
             )

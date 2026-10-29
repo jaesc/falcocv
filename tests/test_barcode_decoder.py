@@ -2,6 +2,7 @@
 """
 Unit tests for Barcode Decoder Tool (C++ backend via _cv_core).
 """
+import math
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -437,6 +438,44 @@ class TestPreprocessing(unittest.TestCase):
                 preprocessing={"strategy": strategy},
             )
             self.assertGreater(decoder.outputs["count"], 0, f"strategy={strategy}")
+
+
+class TestCanonicalAngle(unittest.TestCase):
+    @staticmethod
+    def _rect_points(w, h, angle):
+        rad = math.radians(angle)
+        c, s = math.cos(rad), math.sin(rad)
+        corners = [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]
+        return [(c * x - s * y, s * x + c * y) for x, y in corners]
+
+    def test_long_edge_is_clockwise(self):
+        pts = self._rect_points(100.0, 30.0, 20.0)
+        angle = BarcodeDecoder._canonical_angle(pts)
+        self.assertAlmostEqual(angle, 20.0, places=6)
+
+    def test_square_is_modulo_90(self):
+        pts = self._rect_points(60.0, 60.0, 20.0)
+        angle = BarcodeDecoder._canonical_angle(pts)
+        diff = (angle - 20.0 + 45.0) % 90.0 - 45.0
+        self.assertAlmostEqual(diff, 0.0, places=6)
+
+    def test_qr_rotated_angle_and_fixture_offset(self):
+        base = _make_qr("RotatedAngle")
+        h, w = base.shape[:2]
+        matrix = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), -15.0, 1.0)
+        rotated = cv2.warpAffine(base, matrix, (w, h), borderValue=(255, 255, 255))
+        decoder = _run_decoder(
+            rotated,
+            code_type="QR Code",
+            act_as_fixture=True,
+            fixture_angle_offset=90.0,
+        )
+        self.assertGreater(decoder.outputs["count"], 0)
+        result = decoder.outputs["results"][0]
+        diff = (result.angle - 15.0 + 45.0) % 90.0 - 45.0
+        self.assertLessEqual(abs(diff), 4.0)
+        expected = (result.angle + 90.0 + 180.0) % 360.0 - 180.0
+        self.assertAlmostEqual(decoder.outputs["output image"].angle, expected, places=6)
 
 
 if __name__ == "__main__":

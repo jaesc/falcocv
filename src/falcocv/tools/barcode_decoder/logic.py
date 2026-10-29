@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import numpy as np
 from falcocv.core.tool_base import BaseTool
@@ -37,6 +39,7 @@ class BarcodeDecoder(BaseTool):
             "show_labels": True,
             "show_found_origin": True,
             "act_as_fixture": False,
+            "fixture_angle_offset": 0.0,
             "max_count": 1,
             "qr_params": {"eps_x": 0.1, "eps_y": 0.1},
             # Kept for backwards compatibility with saved jobs.  The UI no
@@ -176,9 +179,15 @@ class BarcodeDecoder(BaseTool):
         results = ToolResults()
         for i, r in enumerate(raw_results):
             cx_abs, cy_abs = _to_image(r["x"], r["y"])
+            # Use one canonical orientation for every backend, then map it
+            # from the straightened crop back to the image frame.
+            angle_crop = (
+                self._canonical_angle(r["pts"]) if "pts" in r else float(r["angle"])
+            )
+            angle_img = (angle_crop + abs_angle + 180.0) % 360.0 - 180.0
             res = CodeResult(
                 id=i, x=cx_abs, y=cy_abs,
-                w=r["w"], h=r["h"], angle=r["angle"],
+                w=r["w"], h=r["h"], angle=angle_img,
                 text=r["text"], format=r["format"], quality=r["quality"],
             )
             results.append(res)
@@ -195,8 +204,11 @@ class BarcodeDecoder(BaseTool):
 
         # Search ROI overlay
         if self.params.get("show_search_roi", True) and not roi["is_full_img"]:
-            layer.add_roi([float(ax), float(ay), float(aw), float(ah), abs_angle],
-                          color=(255, 128, 0), thickness=2)
+            layer.add_roi(
+                [roi["abs_x"], roi["abs_y"], roi["abs_w"], roi["abs_h"], abs_angle],
+                color=(255, 128, 0),
+                thickness=2,
+            )
 
         for i, r in enumerate(raw_results):
             cx_abs, cy_abs = _to_image(r["x"], r["y"])
@@ -216,9 +228,10 @@ class BarcodeDecoder(BaseTool):
 
         if self.params.get("act_as_fixture") and results.Count > 0:
             best = results[0]
+            offset = float(self.params.get("fixture_angle_offset", 0.0))
             out_img.x = best.x
             out_img.y = best.y
-            out_img.angle = best.angle
+            out_img.angle = (best.angle + offset + 180.0) % 360.0 - 180.0
 
         self.outputs["output image"] = out_img
         self._copy_overlays_to_input(out_img, img)
@@ -236,6 +249,32 @@ class BarcodeDecoder(BaseTool):
             return clahe.apply(gray)
         except Exception:
             return gray
+
+    @staticmethod
+    def _canonical_angle(pts):
+        """Return the code orientation in the framework convention.
+
+        Positive angles are clockwise on screen.  The longest edge of the
+        detected quadrilateral defines the orientation, which removes the
+        180-degree ambiguity of a 1D barcode.  Square 2D codes remain
+        ambiguous modulo 90 degrees; use ``fixture_angle_offset`` to correct
+        a fixture if needed.
+        """
+        points = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
+        if len(points) < 2:
+            return 0.0
+        edges = np.roll(points, -1, axis=0) - points
+        lengths = np.hypot(edges[:, 0], edges[:, 1])
+        if float(lengths.max()) <= 1e-9:
+            return 0.0
+        dx, dy = edges[int(np.argmax(lengths))]
+        angle = math.degrees(math.atan2(dy, dx))
+        # Point the long edge to the right; +/-180 is the same barcode.
+        if angle >= 90.0:
+            angle -= 180.0
+        elif angle < -90.0:
+            angle += 180.0
+        return float(angle)
 
     @staticmethod
     def _result_from_corners(corners, text, fmt, quality=1.0):

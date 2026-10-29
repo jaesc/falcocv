@@ -37,19 +37,24 @@ class _CacheWorker(QThread):
     """Builds the template cache in a background thread."""
     finished = Signal(dict, dict)  # (cache, cache_params)
 
-    def __init__(self, template_gray, params, template_size, existing_cache=None):
+    def __init__(self, template_gray, params, template_size, existing_cache=None,
+                 angle_offset=0.0):
         super().__init__()
         self._template_gray = template_gray
         self._params = params
         self._template_size = template_size
         self._existing_cache = existing_cache or {}
+        self._angle_offset = float(angle_offset)
 
     def run(self):
         try:
             levels  = int(self._params["pyramid_levels"])
             angle_step = max(0.1, float(self._params["angle_step"]))
-            angles  = list(np.arange(float(self._params["angle_start"]),
-                                     float(self._params["angle_end"]) + 0.001, angle_step))
+            angles  = list(np.arange(
+                float(self._params["angle_start"]) - self._angle_offset,
+                float(self._params["angle_end"]) - self._angle_offset + 0.001,
+                angle_step,
+            ))
             scales  = np.arange(self._params["scale_start"],
                                 self._params["scale_end"] + 0.001,
                                 max(0.01, self._params["scale_step"])).tolist()
@@ -97,6 +102,7 @@ class _CacheWorker(QThread):
                 "scale_step":    self._params["scale_step"],
                 "pyramid_levels": self._params["pyramid_levels"],
                 "template_size": self._template_size,
+                "angle_offset":  self._angle_offset,
             }
             self._cache_params = cache_params
             self.finished.emit(cache, cache_params)
@@ -225,14 +231,16 @@ class PatternMatcherConfig(QWidget):
         self.spin_a0.setRange(-180, 180)
         self.spin_a0.setValue(self.tool.params["angle_start"])
         self.spin_a0.setToolTip(
-            "Positive angles rotate clockwise, like ROI/fixture angles."
+            "Positive angles rotate clockwise in the image frame, "
+            "like ROI/fixture angles."
         )
         self.spin_a0.valueChanged.connect(lambda v: self._set_param("angle_start", v))
         self.spin_a1 = QSpinBox()
         self.spin_a1.setRange(-180, 180)
         self.spin_a1.setValue(self.tool.params["angle_end"])
         self.spin_a1.setToolTip(
-            "Positive angles rotate clockwise, like ROI/fixture angles."
+            "Positive angles rotate clockwise in the image frame, "
+            "like ROI/fixture angles."
         )
         self.spin_a1.valueChanged.connect(lambda v: self._set_param("angle_end", v))
         self.spin_as = QDoubleSpinBox(); self.spin_as.setRange(0.1, 1.0); self.spin_as.setSingleStep(0.1); self.spin_as.setDecimals(1); self.spin_as.setValue(self.tool.params["angle_step"]); self.spin_as.valueChanged.connect(lambda v: self._set_param("angle_step", v))

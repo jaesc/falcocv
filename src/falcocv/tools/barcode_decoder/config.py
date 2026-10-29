@@ -71,6 +71,24 @@ class BarcodeDecoderConfig(QWidget):
         )
         self.controls_layout.addWidget(self.chk_fixture)
 
+        fixture_row = QHBoxLayout()
+        fixture_row.addWidget(QLabel("Fixture angle offset:"))
+        self.spin_fixture_offset = QDoubleSpinBox()
+        self.spin_fixture_offset.setRange(-180.0, 180.0)
+        self.spin_fixture_offset.setDecimals(2)
+        self.spin_fixture_offset.setSuffix("°")
+        self.spin_fixture_offset.setValue(
+            float(self.tool.params.get("fixture_angle_offset", 0.0))
+        )
+        self.spin_fixture_offset.setToolTip(
+            "Correction added to the fixture angle (e.g. 90 for square 2D codes)."
+        )
+        self.spin_fixture_offset.valueChanged.connect(
+            lambda value: self._set_top_param("fixture_angle_offset", value)
+        )
+        fixture_row.addWidget(self.spin_fixture_offset)
+        self.controls_layout.addLayout(fixture_row)
+
         # Visibility checkboxes
         vis_group = QGroupBox("Visibility")
         vis_lyt = QVBoxLayout(vis_group)

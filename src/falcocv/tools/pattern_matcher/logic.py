@@ -23,12 +23,14 @@ from falcocv.core.pointcloud_utils import propagate_3d
 # --- Background cache builder -------------------------------------------
 class _CacheWorker:
     """Builds the template cache in a background thread."""
-    def __init__(self, template_gray, params, template_size, existing_cache=None):
+    def __init__(self, template_gray, params, template_size, existing_cache=None,
+                 angle_offset=0.0):
         self.finished = CallbackList()
         self._template_gray = template_gray
         self._params = params
         self._template_size = template_size
         self._existing_cache = existing_cache or {}
+        self._angle_offset = float(angle_offset)
         self._cache = {}
         self._cache_params = {}
         self.stop_requested = False
@@ -37,8 +39,13 @@ class _CacheWorker:
         try:
             levels  = int(self._params["pyramid_levels"])
             angle_step = max(0.1, float(self._params["angle_step"]))
-            angles  = list(np.arange(float(self._params["angle_start"]),
-                                     float(self._params["angle_end"]) + 0.001, angle_step))
+            # Cache keys are crop-relative public angles.  The public range is
+            # expressed in the image frame, so subtract the search ROI angle.
+            angles  = list(np.arange(
+                float(self._params["angle_start"]) - self._angle_offset,
+                float(self._params["angle_end"]) - self._angle_offset + 0.001,
+                angle_step,
+            ))
             scales  = np.arange(self._params["scale_start"],
                                 self._params["scale_end"] + 0.001,
                                 max(0.01, self._params["scale_step"])).tolist()
@@ -90,6 +97,7 @@ class _CacheWorker:
                 "scale_step":    self._params["scale_step"],
                 "pyramid_levels": self._params["pyramid_levels"],
                 "template_size": self._template_size,
+                "angle_offset":  self._angle_offset,
             }
             self._cache_params = cache_params
             if not self.stop_requested:
@@ -343,8 +351,12 @@ class PatternMatcher(BaseTool):
         self._rebuild_cache(async_=False)
         self.data_changed.emit()
 
-    def _rebuild_cache(self, async_=True):
-        """Starts an asynchronous cache rebuild on a background thread."""
+    def _rebuild_cache(self, async_=True, angle_offset=0.0):
+        """Starts an asynchronous cache rebuild on a background thread.
+
+        ``angle_offset`` is the search ROI angle: the public angle range is
+        expressed in the image frame, while the cache keys are crop-relative.
+        """
         if not self.is_trained:
             self._template_cache = {}
             self._cache_ready = False
@@ -362,6 +374,7 @@ class PatternMatcher(BaseTool):
             dict(self.params),
             self._template_size,
             existing_cache=self._template_cache,
+            angle_offset=angle_offset,
         )
         worker.finished.connect(self._on_cache_built)
         self._cache_worker = worker
@@ -436,10 +449,16 @@ class PatternMatcher(BaseTool):
         roi = extract_roi(v_img, self.params["search_roi"])
         roi_img = roi["roi_src"]
         abs_x_roi, abs_y_roi = roi["ax"], roi["ay"]
+        roi_angle = float(roi["abs_angle"])
+        roi_m_inv = roi["M_inv"]
 
         if self.params["show_search_roi"]:
-            # Draw search ROI in absolute coordinates (after fixture transformation)
-            vision_img.get_overlay_layer("default").add_roi([abs_x_roi, abs_y_roi, roi["aw"], roi["ah"], 0], color=(255, 128, 0), thickness=2)
+            # Draw the unclamped absolute ROI so its rotation is visible.
+            vision_img.get_overlay_layer("default").add_roi(
+                [roi["abs_x"], roi["abs_y"], roi["abs_w"], roi["abs_h"], roi_angle],
+                color=(255, 128, 0),
+                thickness=2,
+            )
 
         if not self.is_trained: self.outputs["output image"] = vision_img; self.data_changed.emit(); return
 
@@ -453,10 +472,11 @@ class PatternMatcher(BaseTool):
             not self._cache_ready
             or any(self.params[k] != self._cache_params.get(k) for k in current_cache_keys)
             or self._cache_params.get("template_size") != self._template_size
+            or self._cache_params.get("angle_offset") != roi_angle
         )
         if needs_rebuild:
             # Synchronous rebuild ensures dependent tools get correct output on first pass
-            self._rebuild_cache(async_=False)
+            self._rebuild_cache(async_=False, angle_offset=roi_angle)
 
         if roi_img is None or roi_img.size == 0:
             self.outputs["output image"] = vision_img
@@ -470,10 +490,11 @@ class PatternMatcher(BaseTool):
 
         fine_step  = max(0.1, float(self.params["angle_step"]))
         coarse_step = fine_step * 4.0
-        angles_fine   = list(np.arange(float(self.params["angle_start"]),
-                                       float(self.params["angle_end"]) + 0.001, fine_step))
-        angles_coarse = list(np.arange(float(self.params["angle_start"]),
-                                       float(self.params["angle_end"]) + 0.001,
+        # Public range is in the image frame; cache keys are crop-relative.
+        search_start = float(self.params["angle_start"]) - roi_angle
+        search_end = float(self.params["angle_end"]) - roi_angle
+        angles_fine   = list(np.arange(search_start, search_end + 0.001, fine_step))
+        angles_coarse = list(np.arange(search_start, search_end + 0.001,
                                        max(fine_step, coarse_step)))
         scales = np.arange(self.params["scale_start"],
                            self.params["scale_end"] + 0.001,
@@ -507,7 +528,7 @@ class PatternMatcher(BaseTool):
         for pa in promising_angles:
             for da in (i * fine_step for i in range(-n_steps, n_steps + 1)):
                 candidate_angle = round((pa + da) / fine_step) * fine_step
-                if int(self.params["angle_start"]) <= candidate_angle <= int(self.params["angle_end"]):
+                if search_start <= candidate_angle <= search_end:
                     fine_angles.add(candidate_angle)
 
         # Fine sweep on the intermediate angles (not already covered by coarse)
@@ -626,19 +647,45 @@ class PatternMatcher(BaseTool):
         tw, th = self._template_size
 
         for idx, r in enumerate(kept):
-            # Public angle: positive = clockwise in image coordinates.
-            rad = np.deg2rad(r["angle"])
+            # ``r["angle"]`` is the crop-relative public angle.  Convert it to
+            # the image frame before drawing or reporting it.
+            angle = r["angle"] + roi_angle
+            rad = np.deg2rad(angle)
             cos_a, sin_a = np.cos(rad), np.sin(rad)
 
+            # The cached template is the auto-expanded rotated canvas, so its
+            # centre is half of the expanded size, not half of tw/th.
+            cached = self._template_cache.get((r["scale"], r["angle"], 0))
+            if cached is not None:
+                t_w, t_h = cached.shape[1], cached.shape[0]
+            else:
+                rad_crop = math.radians(r["angle"])
+                cos_v = abs(math.cos(rad_crop)) * r["scale"]
+                sin_v = abs(math.sin(rad_crop)) * r["scale"]
+                t_w = int(th * sin_v + tw * cos_v)
+                t_h = int(th * cos_v + tw * sin_v)
+
+            crop_cx = r["x"] + t_w / 2.0
+            crop_cy = r["y"] + t_h / 2.0
+            if roi_m_inv is not None:
+                mapped = roi_m_inv @ np.array([crop_cx, crop_cy, 1.0])
+                img_cx, img_cy = float(mapped[0]), float(mapped[1])
+            else:
+                img_cx = crop_cx + abs_x_roi
+                img_cy = crop_cy + abs_y_roi
+
             def transform_pt(px, py):
-                tx, ty = (px - tw/2) * r["scale"], (py - th/2) * r["scale"]
-                rx, ry = tx * cos_a - ty * sin_a, tx * sin_a + ty * cos_a
-                # Use absolute ROI offsets (converted from fixture coordinates)
-                return (rx + r["x"] + abs_x_roi + (tw*r["scale"])/2, ry + r["y"] + abs_y_roi + (th*r["scale"])/2)
+                tx = (px - tw / 2.0) * r["scale"]
+                ty = (py - th / 2.0) * r["scale"]
+                rx = tx * cos_a - ty * sin_a
+                ry = tx * sin_a + ty * cos_a
+                return img_cx + rx, img_cy + ry
 
             # Final result is the transformed defined origin
-            cx, cy = transform_pt(tw/2 + ox, th/2 + oy)
-            final_results.append(PatternMatchResult(id=idx, x=cx, y=cy, angle=r["angle"], scale=r["scale"], score=r["score"]))
+            cx, cy = transform_pt(tw / 2.0 + ox, th / 2.0 + oy)
+            final_results.append(PatternMatchResult(
+                id=idx, x=cx, y=cy, angle=angle, scale=r["scale"], score=r["score"]
+            ))
 
             ref = f"match_{idx}"
             pts = [transform_pt(0,0), transform_pt(tw,0), transform_pt(tw,th), transform_pt(0,th)]
@@ -647,7 +694,7 @@ class PatternMatcher(BaseTool):
 
             if self.params["show_found_origin"]:
                 vision_img.get_overlay_layer("default").add_axes(
-                    (int(cx), int(cy)), angle=r["angle"], length=30,
+                    (int(cx), int(cy)), angle=angle, length=30,
                     color_x=(0, 0, 255), color_y=(0, 255, 0), thickness=2, ref_id=ref
                 )
 

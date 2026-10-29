@@ -25,14 +25,14 @@ def _template():
     return template
 
 
-def _scene(template, angle=30.0):
+def _scene(template, angle=30.0, cx=200.0, cy=150.0):
     height, width = template.shape[:2]
     # Positive angle is clockwise (FalcoCV convention).
     matrix = cv2.getRotationMatrix2D(
         (width / 2.0, height / 2.0), -angle, 1.0
     )
-    matrix[0, 2] += 200.0 - width / 2.0
-    matrix[1, 2] += 150.0 - height / 2.0
+    matrix[0, 2] += cx - width / 2.0
+    matrix[1, 2] += cy - height / 2.0
     return cv2.warpAffine(
         template,
         matrix,
@@ -125,3 +125,71 @@ def test_pattern_matcher_axes_follow_found_region():
     axis = np.array([math.cos(radians), math.sin(radians)])
     assert float(np.dot(edge, axis)) > 0.999
     assert abs(float(edge[0] * axis[1] - edge[1] * axis[0])) < 1e-3
+
+
+def test_pattern_matcher_rotated_search_roi_pose():
+    template = _template()
+    tool = _tool(template)
+
+    for cx, cy, angle, roi_angle in (
+        (260.0, 190.0, 20.0, 30.0),
+        (245.0, 175.0, -15.0, -25.0),
+    ):
+        tool.params.update(
+            {
+                "search_roi": [250.0 - 70.0, 180.0 - 70.0, 140.0, 140.0, roi_angle],
+                "angle_start": angle - 10.0,
+                "angle_end": angle + 10.0,
+            }
+        )
+        tool.inputs["input image"] = VisionImage(
+            _scene(template, angle=angle, cx=cx, cy=cy)
+        )
+        tool.run()
+        assert tool.outputs["count"] == 1
+        result = tool.outputs["results"][0]
+        assert abs(result.x - cx) <= 1.0
+        assert abs(result.y - cy) <= 1.0
+        assert abs(result.angle - angle) <= 1.5
+
+
+def test_pattern_matcher_rotation_keeps_center():
+    template = _template()
+    tool = _tool(template)
+    for angle in (0.0, 30.0, 90.0):
+        tool.params.update(
+            {"angle_start": angle - 15.0, "angle_end": angle + 15.0}
+        )
+        tool.inputs["input image"] = VisionImage(
+            _scene(template, angle=angle, cx=200.0, cy=150.0)
+        )
+        tool.run()
+        assert tool.outputs["count"] == 1
+        result = tool.outputs["results"][0]
+        assert abs(result.x - 200.0) <= 1.0
+        assert abs(result.y - 150.0) <= 1.0
+
+
+def test_pattern_matcher_act_as_fixture_uses_absolute_angle():
+    template = _template()
+    tool = _tool(template)
+    scene = _scene(template, angle=30.0, cx=200.0, cy=150.0)
+    image = VisionImage(scene, x=0.0, y=0.0, angle=30.0)
+    roi = image.image_to_fixture([170.0, 110.0, 60.0, 80.0, 30.0])
+    roi[4] = 0.0  # ROI aligned with the fixture
+
+    tool.params.update(
+        {
+            "search_roi": roi,
+            "angle_start": 20.0,
+            "angle_end": 40.0,
+            "act_as_fixture": True,
+        }
+    )
+    tool.inputs["input image"] = image
+    tool.run()
+    assert tool.outputs["count"] == 1
+    result = tool.outputs["results"][0]
+    output = tool.outputs["output image"]
+    assert abs(result.angle - 30.0) <= 1.5
+    assert abs(output.angle - result.angle) <= 1e-6

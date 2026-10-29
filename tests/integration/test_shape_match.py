@@ -519,3 +519,50 @@ def test_shape_match_act_as_fixture_uses_framework_angle():
     centre_y = abs_roi[1] + 5.0
     assert centre_x - output.x > 0
     assert centre_y - output.y > 0
+
+
+def test_shape_match_rotated_search_roi_pose():
+    template = make_template()
+    tool = _tool(template)
+    for cx, cy, angle, roi_angle in (
+        (260.0, 190.0, 20.0, 30.0),
+        (245.0, 175.0, -15.0, -25.0),
+    ):
+        tool.params.update(
+            {
+                "search_roi": [250.0 - 90.0, 180.0 - 90.0, 180.0, 180.0, roi_angle],
+                "angle_start": angle - 10.0,
+                "angle_end": angle + 10.0,
+            }
+        )
+        scene = render_scene(template, cx=cx, cy=cy, angle=angle, scale=1.0)
+        result = _run(tool, scene)
+        assert abs(result.x - cx) <= 1.0
+        assert abs(result.y - cy) <= 1.0
+        assert abs(result.angle - angle) <= 0.3
+
+
+def test_shape_match_act_as_fixture_with_fixtured_input():
+    template = make_template()
+    tool = _tool(template)
+    scene = render_scene(template, cx=300.0, cy=190.0, angle=30.0, scale=1.0)
+    image = VisionImage(scene, x=0.0, y=0.0, angle=30.0)
+    roi = image.image_to_fixture([200.0, 90.0, 200.0, 200.0, 30.0])
+    roi[4] = 0.0  # ROI aligned with the fixture
+
+    tool.params.update(
+        {
+            "search_roi": roi,
+            "angle_start": 20.0,
+            "angle_end": 40.0,
+            "act_as_fixture": True,
+        }
+    )
+    tool.inputs["input image"] = image
+    tool.run()
+
+    assert tool.outputs["count"] == 1
+    result = tool.outputs["results"][0]
+    output = tool.outputs["output image"]
+    assert abs(result.angle - 30.0) <= 0.3
+    assert abs(output.angle - result.angle) <= 1e-6

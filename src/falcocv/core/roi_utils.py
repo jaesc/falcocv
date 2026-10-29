@@ -27,6 +27,8 @@ def extract_roi(vision_img, roi_params):
           roi_src     - np.ndarray of the ROI pixel data (or full image)
           ax, ay      - int, absolute top-left corner in image coords (clamped)
           aw, ah      - int, absolute width/height in image coords (clamped)
+          abs_x, abs_y, abs_w, abs_h
+                      - float, unclamped absolute ROI rect in image coords
           h_img, w_img - int, full image dimensions
           is_full_img  - bool, True if ROI covers the entire image
           abs_angle    - float, absolute rotation angle after fixture transform
@@ -46,6 +48,8 @@ def extract_roi(vision_img, roi_params):
         return {
             "roi_src": raw_img,
             "ax": 0, "ay": 0, "aw": w_img, "ah": h_img,
+            "abs_x": 0.0, "abs_y": 0.0,
+            "abs_w": float(w_img), "abs_h": float(h_img),
             "h_img": h_img, "w_img": w_img,
             "is_full_img": True,
             "abs_angle": 0.0,
@@ -92,6 +96,8 @@ def extract_roi(vision_img, roi_params):
     return {
         "roi_src": roi_src,
         "ax": ax, "ay": ay, "aw": aw, "ah": ah,
+        "abs_x": float(abs_x), "abs_y": float(abs_y),
+        "abs_w": float(abs_w), "abs_h": float(abs_h),
         "h_img": h_img, "w_img": w_img,
         "is_full_img": (ax == 0 and ay == 0 and aw >= w_img and ah >= h_img),
         "abs_angle": float(abs_angle),
