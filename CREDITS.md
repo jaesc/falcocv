@@ -59,6 +59,13 @@ distributed under the EMVA GenICam 1.6 license.
 The weights are exported to ONNX by `scripts/export_*.py`; the published model
 bundle ships this attribution in its release notes.
 
+## Demo images (`examples/`)
+
+`examples/images/`, `examples/train/part_reference.png` and
+`examples/result_*.jpg` are synthetic scenes rendered from scratch by
+`examples/generate_demo_images.py` with NumPy/OpenCV. No third-party photos,
+textures or models are used. Released under **CC0-1.0**.
+
 ## Development-only toolchain
 
 `torch`, `torchvision`, `timm`, `onnx` and `albumentations` are used only by the

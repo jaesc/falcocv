@@ -102,6 +102,26 @@ export FALCOCV_MODELS_URL="https://mirror.example.com/falcocv/models-v1"
 The web dashboard is served at `http://localhost:8000`; HMI pages are available
 at `http://localhost:8000/?id=<project_id>`.
 
+## Demo
+
+`examples/demo_inspection.cvj` locates a bracket with **Shape Match**, uses it as
+a **fixture**, counts the two through-holes with **Blob Detector** and measures
+their distance with **Measurement**:
+
+![Demo result](examples/result_ok.jpg)
+
+```bash
+git clone https://github.com/jaesc/falcocv.git
+cd falcocv
+falcocv run examples/demo_inspection.cvj --output results.json
+```
+
+The dataset is 14 synthetic images (10 OK, including cosmetic scratches and
+stains; 4 NG: missing/blocked/extra hole and wrong hole spacing). Image
+generation, the trained job and the annotated results are scripted and
+reproducible — see [`examples/README.md`](examples/README.md). All of it is
+original CC0 artwork.
+
 ## Architecture
 
 ```

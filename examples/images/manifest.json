@@ -1,0 +1,143 @@
+{
+  "generator": "examples/generate_demo_images.py",
+  "license": "CC0-1.0 (original synthetic renders, no third-party assets)",
+  "camera": {
+    "width": 1280,
+    "height": 960
+  },
+  "part": {
+    "width": 260,
+    "height": 170,
+    "hole_radius": 22,
+    "hole_spacing_px": 140.0
+  },
+  "verdict_rule": "OK when exactly 2 holes are found and the hole distance is within 12.5-15.5 mm (10 px/mm); cosmetic marks are ignored",
+  "images": [
+    {
+      "file": "01_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 436.88,
+      "cy": 405.73,
+      "angle": -17.793,
+      "scale": 0.9829
+    },
+    {
+      "file": "02_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 501.11,
+      "cy": 599.61,
+      "angle": 18.534,
+      "scale": 1.0339
+    },
+    {
+      "file": "03_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 850.8,
+      "cy": 541.03,
+      "angle": 14.656,
+      "scale": 0.9965
+    },
+    {
+      "file": "04_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 494.56,
+      "cy": 519.28,
+      "angle": 1.4,
+      "scale": 1.0191
+    },
+    {
+      "file": "05_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 849.94,
+      "cy": 451.34,
+      "angle": 4.134,
+      "scale": 0.964
+    },
+    {
+      "file": "06_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 655.83,
+      "cy": 379.97,
+      "angle": -1.187,
+      "scale": 1.054
+    },
+    {
+      "file": "07_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 707.14,
+      "cy": 369.59,
+      "angle": -11.773,
+      "scale": 1.0478
+    },
+    {
+      "file": "08_ok.jpg",
+      "verdict": "ok",
+      "defect": "",
+      "cx": 385.34,
+      "cy": 621.87,
+      "angle": -5.54,
+      "scale": 1.0077
+    },
+    {
+      "file": "09_ok_scratch.jpg",
+      "verdict": "ok",
+      "defect": "scratch",
+      "cx": 467.22,
+      "cy": 541.64,
+      "angle": 7.367,
+      "scale": 1.0138
+    },
+    {
+      "file": "10_ok_stain.jpg",
+      "verdict": "ok",
+      "defect": "stain",
+      "cx": 650.18,
+      "cy": 465.36,
+      "angle": -13.656,
+      "scale": 0.9852
+    },
+    {
+      "file": "11_ng_missing_hole.jpg",
+      "verdict": "ng",
+      "defect": "missing_hole",
+      "cx": 631.2,
+      "cy": 395.47,
+      "angle": -0.339,
+      "scale": 0.9816
+    },
+    {
+      "file": "12_ng_blocked_hole.jpg",
+      "verdict": "ng",
+      "defect": "blocked_hole",
+      "cx": 703.24,
+      "cy": 362.32,
+      "angle": 14.918,
+      "scale": 0.97
+    },
+    {
+      "file": "13_ng_extra_hole.jpg",
+      "verdict": "ng",
+      "defect": "extra_hole",
+      "cx": 748.62,
+      "cy": 532.43,
+      "angle": -7.402,
+      "scale": 1.0086
+    },
+    {
+      "file": "14_ng_holes_too_close.jpg",
+      "verdict": "ng",
+      "defect": "holes_too_close",
+      "cx": 460.41,
+      "cy": 618.11,
+      "angle": -0.905,
+      "scale": 1.0034
+    }
+  ]
+}
