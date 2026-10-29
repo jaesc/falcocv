@@ -117,6 +117,54 @@ def test_shape_match_config_has_training_ux(qtbot):
 
     dialog.close()
 
+def test_shape_match_preview_has_fixed_square_size(qtbot):
+    from falcocv.tools.shape_match.logic import ShapeMatch
+
+    tool = ShapeMatch()
+    dialog = ToolConfigDialog(tool)
+    qtbot.addWidget(dialog)
+    dialog.resize(1200, 800)
+    dialog.show()
+    widget = dialog._config_widget
+    widget.tabs.setCurrentIndex(1)
+    qtbot.wait(150)
+
+    viewer = widget.template_viewer
+    assert viewer.width() == 250
+    assert viewer.height() == 250
+
+    widget.content_layout.setSizes([700, 500])
+    qtbot.wait(150)
+    assert viewer.width() == 250
+    assert viewer.height() == 250
+
+    dialog.close()
+
+
+def test_pattern_matcher_preview_has_fixed_square_size(qtbot):
+    from falcocv.tools.pattern_matcher.logic import PatternMatcher
+
+    tool = PatternMatcher()
+    dialog = ToolConfigDialog(tool)
+    qtbot.addWidget(dialog)
+    dialog.resize(1200, 800)
+    dialog.show()
+    widget = dialog._config_widget
+    widget.tabs.setCurrentIndex(1)
+    qtbot.wait(150)
+
+    viewer = widget.template_viewer
+    assert viewer.width() == 250
+    assert viewer.height() == 250
+
+    widget.content_layout.setSizes([700, 500])
+    qtbot.wait(150)
+    assert viewer.width() == 250
+    assert viewer.height() == 250
+
+    dialog.close()
+
+
 def test_shape_match_capture_roi_train_uses_roi(qtbot):
     from falcocv.accuracy.synthetic import make_template, render_scene
     from falcocv.core.vision_image import VisionImage

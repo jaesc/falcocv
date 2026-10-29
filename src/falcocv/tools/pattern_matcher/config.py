@@ -216,7 +216,7 @@ class PatternMatcherConfig(QWidget):
         layout.addWidget(orig_group)
 
         preview_box = QGroupBox("Pattern Preview"); preview_lyt = QVBoxLayout(preview_box)
-        self.template_viewer = ImageViewer(); self.template_viewer.setMinimumSize(250, 250); preview_lyt.addWidget(self.template_viewer)
+        self.template_viewer = ImageViewer(); self.template_viewer.setFixedSize(250, 250); preview_lyt.addWidget(self.template_viewer)
         layout.addWidget(preview_box); layout.addStretch(); return panel
 
     def _build_search_tab(self):

@@ -155,7 +155,7 @@ class ShapeMatchConfig(QWidget):
         preview_group = QGroupBox("Shape Preview")
         preview_layout = QVBoxLayout(preview_group)
         self.template_viewer = ImageViewer()
-        self.template_viewer.setMinimumSize(250, 250)
+        self.template_viewer.setFixedSize(250, 250)
         preview_layout.addWidget(self.template_viewer)
         layout.addWidget(preview_group)
         layout.addStretch()
