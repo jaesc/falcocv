@@ -58,6 +58,7 @@ _DISTANCE_SIGMA = 1.0
 _ECC_ALIGNMENT = 0.90
 _ECC_REJECT_ALIGNMENT = 0.98
 _ECC_MIN_CC = 0.85
+_ECC_POLISH_MIN_CC = 0.995
 _MIN_NCC = 0.30
 _MAX_MATCHES = 100
 _MAX_REFINE = 8
@@ -684,9 +685,12 @@ class ShapeMatch(BaseTool):
 
     @staticmethod
     def _cap_scene_edges(mag, edges, target=_VOTE_EDGE_CAP, cell=_VOTE_EDGE_CELL):
-        ys, xs = np.nonzero(edges)
-        if len(xs) <= target:
+        # ``np.nonzero`` allocates two index arrays for every pixel run.  Most
+        # scenes are already below the cap, so a cheap count avoids that work
+        # on the common path.
+        if target > 0 and cv2.countNonZero(edges) <= target:
             return edges
+        ys, xs = np.nonzero(edges)
         height, width = edges.shape
         cells_x = max(1, (width + cell - 1) // cell)
         cells_y = max(1, (height + cell - 1) // cell)
@@ -819,16 +823,28 @@ class ShapeMatch(BaseTool):
             )
         if not evaluated:
             return None
-        best = max(evaluated, key=lambda item: item[1])
-        return best[1], best[0], best[2], best[3]
+        best_index = max(range(len(evaluated)), key=lambda index: evaluated[index][1])
+        best_scale, best_score, best_x, best_y = evaluated[best_index]
+        if 0 < best_index < len(evaluated) - 1:
+            left = evaluated[best_index - 1]
+            center = evaluated[best_index]
+            right = evaluated[best_index + 1]
+            denominator = left[1] - 2.0 * center[1] + right[1]
+            if abs(denominator) > 1e-12:
+                step = right[0] - center[0]
+                best_scale = center[0] + 0.5 * (left[1] - right[1]) / denominator * step
+                best_scale = max(left[0], min(right[0], best_scale))
+        return best_score, best_scale, best_x, best_y
 
-    def _ncc_translate(self, scene_gray, x, y, angle, scale):
+    def _ncc_translate(self, scene_gray, x, y, angle, scale, margin=8, search=6):
         if self._template_gray is None:
             return x, y
         rendered = self._render_gray(angle, scale)
         if rendered is None:
             return x, y
-        match = self._ncc_match(scene_gray, rendered, x, y)
+        match = self._ncc_match(
+            scene_gray, rendered, x, y, margin=margin, search=search
+        )
         if match is None:
             return x, y
         return match[0], match[1]
@@ -867,7 +883,7 @@ class ShapeMatch(BaseTool):
         warp = np.eye(2, 3, dtype=np.float32)
         criteria = (
             cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT,
-            30,
+            20,
             1e-5,
         )
         try:
@@ -1081,12 +1097,21 @@ class ShapeMatch(BaseTool):
         angle = -math.degrees(math.atan2(rotation[1, 0], rotation[0, 0]))
         return float(translation[0]), float(translation[1]), angle, scale
 
-    def _icp_refine(self, gx, gy, dt, x, y, angle, scale, iterations=2):
+    def _icp_refine(self, gx, gy, dt, x, y, angle, scale, iterations=2,
+                    max_points=400):
         points = np.stack(
             [self._model_x.astype(np.float64), self._model_y.astype(np.float64)], axis=1
         )
         model_theta = self._model_theta.astype(np.float64)
         model_mag = self._model_mag.astype(np.float64)
+        if max_points and points.shape[0] > max_points:
+            stride = int(math.ceil(points.shape[0] / float(max_points)))
+            points = points[::stride]
+            model_theta = model_theta[::stride]
+            model_mag = model_mag[::stride]
+            total = float(model_mag.sum())
+            if total > 0:
+                model_mag = model_mag / total
         ddx = cv2.Sobel(dt, cv2.CV_32F, 1, 0, ksize=3)
         ddy = cv2.Sobel(dt, cv2.CV_32F, 0, 1, ksize=3)
         for _ in range(iterations):
@@ -1275,6 +1300,8 @@ class ShapeMatch(BaseTool):
                     angle_min, angle_max, scale_min, scale_max,
                     search_gray=None, search_factor=1):
         factor = max(1, int(self._ecc_factor))
+        fixed_scale = abs(float(scale_max) - float(scale_min)) < 1e-9
+        ecc_motion = cv2.MOTION_EUCLIDEAN if fixed_scale else cv2.MOTION_AFFINE
         pre_refined = False
         if factor > 1 and self._ecc_template_gray is not None:
             scene = self._reduced_gray(
@@ -1289,6 +1316,7 @@ class ShapeMatch(BaseTool):
                 angle,
                 scale,
                 template_gray=self._ecc_template_gray,
+                motion=ecc_motion,
                 template_scale=(
                     self._ecc_template_gray.shape[1] / float(self._template_size[0]),
                     self._ecc_template_gray.shape[0] / float(self._template_size[1]),
@@ -1314,7 +1342,7 @@ class ShapeMatch(BaseTool):
             y,
             angle,
             scale,
-            motion=cv2.MOTION_TRANSLATION if pre_refined else cv2.MOTION_AFFINE,
+            motion=cv2.MOTION_TRANSLATION if pre_refined else ecc_motion,
         )
         if result is None:
             return None, 0.0
@@ -1331,7 +1359,13 @@ class ShapeMatch(BaseTool):
         x, y, angle, scale = ex, ey, ea, es
         if pre_refined:
             return (x, y, angle, scale), coefficient
-        polish = self._ecc_refine(gray, x, y, angle, scale)
+        # A translation-only polish is cheap, but when the affine pass is
+        # already essentially perfect it cannot move the pose enough to matter.
+        if coefficient >= _ECC_POLISH_MIN_CC:
+            return (x, y, angle, scale), coefficient
+        polish = self._ecc_refine(
+            gray, x, y, angle, scale, motion=cv2.MOTION_TRANSLATION
+        )
         if polish is not None:
             px, py, pa, ps, polish_cc = polish
             if (
@@ -1354,7 +1388,7 @@ class ShapeMatch(BaseTool):
                           angle_min, angle_max, scale_min, scale_max):
         result = self._dt_scan_axis(
             gx, gy, dt, x, y, angle, scale, "angle",
-            max(angle_min, angle - 1.5), min(angle_max, angle + 1.5), 0.5,
+            max(angle_min, angle - 1.5), min(angle_max, angle + 1.5), 0.75,
         )
         if result:
             angle = result[0]
@@ -1367,28 +1401,30 @@ class ShapeMatch(BaseTool):
         if result:
             scale = result[0]
 
-        _, _, icp_angle, _ = self._icp_refine(gx, gy, dt, x, y, angle, scale)
-        if abs(icp_angle - angle) <= 0.2:
-            angle = icp_angle
-
         visible_fraction = None
         alignment = self._alignment_score(gx, gy, x, y, angle, scale)
+        # The masked angle scan below is the stronger refinement for heavily
+        # occluded parts; running ICP first only duplicates that work.  Keep
+        # ICP for the milder cases where the masked scan is not triggered.
+        if alignment > 0.70:
+            _, _, icp_angle, _ = self._icp_refine(gx, gy, dt, x, y, angle, scale)
+            if abs(icp_angle - angle) <= 0.2:
+                angle = icp_angle
         if alignment <= 0.70:
             mask = self._visible_mask(gray, x, y, angle, scale)
             if mask is None:
                 return None
             masked = self._dt_scan_axis(
                 gx, gy, dt, x, y, angle, scale, "angle",
-                max(angle_min, angle - 0.6), min(angle_max, angle + 0.6), 0.1,
+                max(angle_min, angle - 0.45), min(angle_max, angle + 0.45), 0.15,
                 model_mask=mask,
             )
             if masked is not None:
                 angle = masked[0]
-            x, y = self._ncc_translate(gray, x, y, angle, scale)
 
         result = self._dt_scan_axis(
             gx, gy, dt, x, y, angle, scale, "scale",
-            max(scale_min, scale - 0.006), min(scale_max, scale + 0.006), 0.002,
+            max(scale_min, scale - 0.006), min(scale_max, scale + 0.006), 0.003,
         )
         if result:
             scale = result[0]
@@ -1609,16 +1645,26 @@ class ShapeMatch(BaseTool):
         else:
             search_factor = 1
             search_gray = gray_for_match
-        vote_gx = cv2.Sobel(vote_gray, cv2.CV_32F, 1, 0, ksize=3)
-        vote_gy = cv2.Sobel(vote_gray, cv2.CV_32F, 0, 1, ksize=3)
-        vote_mag = cv2.magnitude(vote_gx, vote_gy)
+        # ``spatialGradient`` is the same 3x3 Sobel kernel as two separate
+        # ``Sobel`` calls but computes both axes in one pass.  Magnitude and
+        # orientation are only needed on Canny edge pixels, so avoid the full
+        # ``cv2.magnitude`` pass on large ROIs.
+        vote_gx, vote_gy = cv2.spatialGradient(vote_gray)
         vote_edges = cv2.Canny(vote_gray, _EDGE_LOW, _EDGE_HIGH)
+        edge_y, edge_x = np.nonzero(vote_edges)
+        vote_mag = np.zeros(vote_gray.shape, dtype=np.float32)
+        if edge_y.size:
+            vote_mag[edge_y, edge_x] = np.hypot(
+                vote_gx[edge_y, edge_x].astype(np.float32),
+                vote_gy[edge_y, edge_x].astype(np.float32),
+            )
         vote_edges = self._cap_scene_edges(vote_mag, vote_edges)
         edge_y, edge_x = np.nonzero(vote_edges)
-        vote_theta = np.zeros_like(vote_mag, dtype=np.float32)
-        vote_theta[edge_y, edge_x] = np.arctan2(
-            vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
-        )
+        vote_theta = np.zeros(vote_gray.shape, dtype=np.float32)
+        if edge_y.size:
+            vote_theta[edge_y, edge_x] = np.arctan2(
+                vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
+            )
 
         # Public angle range: positive = clockwise in the image frame.  The
         # crop is straightened by ``roi_angle``, so the crop-relative range is
@@ -1685,8 +1731,11 @@ class ShapeMatch(BaseTool):
         gradient_cache = [None]
         alignment_scale = factor_x
         if factor == 1:
-            gx, gy = vote_gx, vote_gy
-            alignment_gx, alignment_gy = vote_gx, vote_gy
+            # The vote path only needs the int16 gradients; the alignment
+            # score bilinearly samples them and wants float32.
+            gx = vote_gx.astype(np.float32)
+            gy = vote_gy.astype(np.float32)
+            alignment_gx, alignment_gy = gx, gy
         else:
             gx = gy = None
             alignment_gx = alignment_gy = None

@@ -23,6 +23,10 @@
 #include <string>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 namespace py = pybind11;
 using namespace pybind11::literals;
 
@@ -806,19 +810,52 @@ py::dict shape_match_vote_impl(
         float votes;
     };
     std::vector<Candidate> candidates;
-    std::vector<float> response(static_cast<std::size_t>(height) * width, 0.0f);
+    const int total_hypotheses = n_angles * n_scales;
+    std::vector<std::vector<Candidate>> hypothesis_candidates(
+        static_cast<std::size_t>(total_hypotheses));
 
-    for (int ai = 0; ai < n_angles; ++ai) {
-        const float angle = angle_values[ai];
-        const float radians = angle * kPi / 180.0f;
-        const float cos_a = std::cos(radians);
-        const float sin_a = std::sin(radians);
-        const float cos_neg = std::cos(-radians);
-        const float sin_neg = std::sin(-radians);
+#ifdef _OPENMP
+    // Leave roughly half of the logical processors free for OpenCV's own
+    // worker pool.  Oversubscribing both runtimes makes the occlusion path
+    // slower even though the vote itself finishes sooner.
+    const int physical_guess = std::max(1, omp_get_num_procs() / 2);
+    const int worker_count = std::max(
+        1, std::min({omp_get_max_threads(), physical_guess, 16}));
+#else
+    const int worker_count = 1;
+#endif
+    const std::size_t response_size =
+        static_cast<std::size_t>(height) * static_cast<std::size_t>(width);
+    std::vector<std::vector<float>> response_buffers(
+        static_cast<std::size_t>(worker_count),
+        std::vector<float>(response_size, 0.0f));
+    std::vector<std::vector<std::uint8_t>> seen_buffers(
+        static_cast<std::size_t>(worker_count),
+        std::vector<std::uint8_t>(response_size, 0));
 
-        for (int si = 0; si < n_scales; ++si) {
+#ifdef _OPENMP
+#pragma omp parallel num_threads(worker_count)
+    {
+        const int tid = omp_get_thread_num();
+#else
+    {
+        const int tid = 0;
+#endif
+        auto& response = response_buffers[static_cast<std::size_t>(tid)];
+        auto& seen = seen_buffers[static_cast<std::size_t>(tid)];
+        std::vector<int> touched;
+        touched.reserve(4096);
+#pragma omp for schedule(static)
+        for (int hypothesis = 0; hypothesis < total_hypotheses; ++hypothesis) {
+            const int ai = hypothesis / n_scales;
+            const int si = hypothesis % n_scales;
+            const float angle = angle_values[ai];
+            const float radians = angle * kPi / 180.0f;
+            const float cos_a = std::cos(radians);
+            const float sin_a = std::sin(radians);
+            const float cos_neg = std::cos(-radians);
+            const float sin_neg = std::sin(-radians);
             const float scale = scale_values[si];
-            std::fill(response.begin(), response.end(), 0.0f);
 
             for (int i = 0; i < n_model; ++i) {
                 const float rx = scale * (cos_a * mx[i] + sin_a * my[i]);
@@ -833,11 +870,19 @@ py::dict shape_match_vote_impl(
                     const int cx = static_cast<int>(std::lround(point.first - rx));
                     const int cy = static_cast<int>(std::lround(point.second - ry));
                     if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
-                    response[static_cast<std::size_t>(cy) * width + cx] += vote;
+                    const std::size_t index =
+                        static_cast<std::size_t>(cy) * width + cx;
+                    response[index] += vote;
+                    if (!seen[index]) {
+                        seen[index] = 1;
+                        touched.push_back(static_cast<int>(index));
+                    }
                 }
             }
 
-            // Keep the strongest local maxima for this hypothesis.
+            // Keep the strongest local maxima for this hypothesis.  Each
+            // hypothesis owns its candidate vector, so the parallel region
+            // never touches the same container from two threads.
             std::priority_queue<Candidate, std::vector<Candidate>,
                                 std::function<bool(const Candidate&, const Candidate&)>>
                 top(
@@ -845,39 +890,49 @@ py::dict shape_match_vote_impl(
                         return a.votes > b.votes;  // min-heap by votes
                     });
             const int keep = std::max(1, peaks_per_hypothesis);
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    const float value = response[static_cast<std::size_t>(y) * width + x];
-                    if (value <= 0.01f) continue;
-                    bool local_max = true;
-                    for (int dy = -2; dy <= 2 && local_max; ++dy) {
-                        const int ny = y + dy;
-                        if (ny < 0 || ny >= height) continue;
-                        for (int dx = -2; dx <= 2; ++dx) {
-                            if (dx == 0 && dy == 0) continue;
-                            const int nx = x + dx;
-                            if (nx < 0 || nx >= width) continue;
-                            if (response[static_cast<std::size_t>(ny) * width + nx] > value) {
-                                local_max = false;
-                                break;
-                            }
+            for (int index : touched) {
+                const float value = response[static_cast<std::size_t>(index)];
+                if (value <= 0.01f) continue;
+                const int y = index / width;
+                const int x = index - y * width;
+                bool local_max = true;
+                for (int dy = -2; dy <= 2 && local_max; ++dy) {
+                    const int ny = y + dy;
+                    if (ny < 0 || ny >= height) continue;
+                    for (int dx = -2; dx <= 2; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        const int nx = x + dx;
+                        if (nx < 0 || nx >= width) continue;
+                        if (response[static_cast<std::size_t>(ny) * width + nx] > value) {
+                            local_max = false;
+                            break;
                         }
                     }
-                    if (!local_max) continue;
-                    Candidate candidate{static_cast<float>(x), static_cast<float>(y), angle, scale, value};
-                    if (static_cast<int>(top.size()) < keep) {
-                        top.push(candidate);
-                    } else if (value > top.top().votes) {
-                        top.pop();
-                        top.push(candidate);
-                    }
+                }
+                if (!local_max) continue;
+                Candidate candidate{static_cast<float>(x), static_cast<float>(y), angle, scale, value};
+                if (static_cast<int>(top.size()) < keep) {
+                    top.push(candidate);
+                } else if (value > top.top().votes) {
+                    top.pop();
+                    top.push(candidate);
                 }
             }
+            auto& local = hypothesis_candidates[static_cast<std::size_t>(hypothesis)];
             while (!top.empty()) {
-                candidates.push_back(top.top());
+                local.push_back(top.top());
                 top.pop();
             }
+            for (int index : touched) {
+                response[static_cast<std::size_t>(index)] = 0.0f;
+                seen[static_cast<std::size_t>(index)] = 0;
+            }
+            touched.clear();
         }
+    }
+
+    for (const auto& local : hypothesis_candidates) {
+        candidates.insert(candidates.end(), local.begin(), local.end());
     }
 
     std::sort(candidates.begin(), candidates.end(),
