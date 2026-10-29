@@ -18,6 +18,8 @@ Thumbs.db
 
 # Local models (downloaded by users; not part of the public repo)
 models/
+# Local datasets (e.g. VisA, CC BY 4.0): downloaded on demand, never committed
+datasets/
 
 # FalcoCV specific (optional)
 # *.cvj  <-- Keep them if you want to include demo jobs
