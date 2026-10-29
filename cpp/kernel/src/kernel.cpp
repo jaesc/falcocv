@@ -526,18 +526,35 @@ py::dict plane_fit_impl(py::dict input) {
         if (!r.auto_z) continue;
         double z_min = std::numeric_limits<double>::max();
         double z_max = -std::numeric_limits<double>::max();
-#ifdef _OPENMP
-#pragma omp parallel for reduction(min:z_min) reduction(max:z_max) schedule(static)
-#endif
-        for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i) {
+        auto update = [&](std::int64_t i, double& mn, double& mx) {
             const double x = points[i * 3 + 0];
             const double y = points[i * 3 + 1];
-            if (!point_in_roi_xy(x, y, r)) continue;
+            if (!point_in_roi_xy(x, y, r)) return;
             const double z = points[i * 3 + 2];
-            if (!std::isfinite(z)) continue;
-            z_min = std::min(z_min, z);
-            z_max = std::max(z_max, z);
+            if (!std::isfinite(z)) return;
+            mn = std::min(mn, z);
+            mx = std::max(mx, z);
+        };
+#ifdef _OPENMP
+#pragma omp parallel
+        {
+            double local_min = std::numeric_limits<double>::max();
+            double local_max = -std::numeric_limits<double>::max();
+#pragma omp for schedule(static)
+            for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i) {
+                update(i, local_min, local_max);
+            }
+#pragma omp critical
+            {
+                z_min = std::min(z_min, local_min);
+                z_max = std::max(z_max, local_max);
+            }
         }
+#else
+        for (std::int64_t i = 0; i < static_cast<std::int64_t>(n); ++i) {
+            update(i, z_min, z_max);
+        }
+#endif
         if (z_min <= z_max && z_max > -1e290) {
             r.z_min = z_min;
             r.z_max = z_max;

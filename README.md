@@ -1,7 +1,7 @@
 # FalcoCV — Industrial Machine Vision Framework
 
 [![PyPI](https://img.shields.io/pypi/v/falcocv)](https://pypi.org/project/falcocv/)
-[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://pypi.org/project/falcocv/)
+[![Python](https://img.shields.io/badge/Python-3.13-blue)](https://pypi.org/project/falcocv/)
 [![Qt](https://img.shields.io/badge/UI-PyQt6-orange)](https://www.riverbankcomputing.com/software/pyqt/)
 [![OpenCV](https://img.shields.io/badge/Vision-OpenCV%205-red)](https://opencv.org/)
 [![CI](https://github.com/jaesc/falcocv/actions/workflows/ci.yml/badge.svg)](https://github.com/jaesc/falcocv/actions/workflows/ci.yml)
@@ -43,20 +43,25 @@ operator dashboards.
 ## Install
 
 FalcoCV is distributed as a wheel for Windows x86_64 and Linux x86_64
-(CPython 3.10–3.13):
+(CPython 3.13.x):
 
 ```bash
 python -m pip install falcocv
 ```
 
-The native kernel ships inside the wheel, so no compiler is needed. On platforms
-without a wheel, `pip` builds it from the sdist and needs Python 3.10+ (3.13
-recommended), CMake 3.20+ and a C++17 compiler. On Linux the wheels target
-glibc 2.34+ (Ubuntu 22.04+, Debian 12+, RHEL 9+), which is what PyQt6 requires.
+Python 3.13 is the only supported version for this release. The native kernel
+ships inside the wheel, so no compiler is needed. On Windows, install the
+Microsoft Visual C++ 2015-2022 Redistributable (x64); ONNX Runtime and the
+native kernel use that runtime. On platforms without a wheel, `pip` builds it
+from the sdist and needs Python 3.13.x, CMake 3.20+ and a C++17 compiler. On
+Linux the wheels target glibc 2.34+ (Ubuntu 22.04+, Debian 12+, RHEL 9+), which
+is what PyQt6 requires.
 GigE and USB3 Vision cameras only need the vendor GenTL producer (`.cti` file);
 the Harvesters integration is installed by default.
 
 ### From source
+
+Requires CPython 3.13.x:
 
 ```bash
 git clone https://github.com/jaesc/falcocv.git

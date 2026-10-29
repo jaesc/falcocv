@@ -31,7 +31,10 @@ install(TARGETS _falco_kernel
 )
 
 if(MSVC)
-    target_compile_options(_falco_kernel PRIVATE /O2 /openmp:llvm)
+    # Use the VC++ OpenMP runtime (vcomp140.dll), which ships with the
+    # Microsoft Visual C++ Redistributable. /openmp:llvm would depend on
+    # libomp140.x86_64.dll, which is not redistributable with the wheel.
+    target_compile_options(_falco_kernel PRIVATE /O2 /openmp)
 else()
     find_package(OpenMP REQUIRED)
     target_compile_options(_falco_kernel PRIVATE -O3)

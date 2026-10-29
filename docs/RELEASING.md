@@ -26,7 +26,7 @@ If you host the models on a mirror, set `FALCOCV_MODELS_URL` for users or change
 
 ```bash
 python -m pip install -e ".[dev]"
-pytest -q --ignore=tests/test_trainer_equivalence.py   # 254 passed
+pytest -q --ignore=tests/test_trainer_equivalence.py
 falcocv self-test                                      # installation smoke test
 python -m build --sdist --outdir dist
 python scripts/check_wheel.py                          # wheel contents
@@ -52,8 +52,8 @@ cd /tmp/falcocv-src && python -m build --sdist --wheel --outdir dist
 Push a tag (for example `v1.0.0rc1`) or run the **Wheels** GitHub Actions
 workflow manually. It builds:
 
-- Windows x86_64 wheels (CPython 3.10–3.13)
-- Linux x86_64 manylinux_2_34 wheels (CPython 3.10-3.13; PyQt6 needs glibc 2.34+)
+- Windows x86_64 wheels (CPython 3.13.x)
+- Linux x86_64 manylinux_2_34 wheels (CPython 3.13.x; PyQt6 needs glibc 2.34+)
 - an sdist
 
 Download the artifacts and inspect that the kernel is inside the package:

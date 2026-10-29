@@ -6,7 +6,7 @@ Updated by the build script and git tags.
 
 import datetime
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __build__ = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
 __semver__ = f"{__version__}+{__build__}"
 

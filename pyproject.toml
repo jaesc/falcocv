@@ -9,10 +9,10 @@ build-backend = "scikit_build_core.build"
 
 [project]
 name = "falcocv"
-version = "1.0.0"
+version = "1.0.1"
 description = "Modular industrial machine vision environment with a DAG workflow engine and web HMI"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.13,<3.14"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "FalcoCV contributors" }]
@@ -26,9 +26,6 @@ classifiers = [
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
@@ -137,7 +134,7 @@ show_missing = true
 skip_covered = true
 
 [tool.cibuildwheel]
-build = "cp310-* cp311-* cp312-* cp313-*"
+build = "cp313-*"
 skip = ["*-musllinux_*"]
 test-requires = ["numpy"]
 test-command = "python -c \"import falcocv; from falcocv._falco_kernel import generate_pointcloud; print(falcocv.__version__)\""

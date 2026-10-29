@@ -133,7 +133,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 ```
 
 ## Key facts
-- Python 3.10+ (3.13 recommended), branch: `main` / working branch
+- Python 3.13.x (only supported version), branch: `main` / working branch
   `public_refactor`.
 - No PyInstaller/Inno distribution build; distribution is the PyPI wheel/sdist.
 - `config.json` lives in `%APPDATA%/FalcoCV/config.json` (or XDG config).

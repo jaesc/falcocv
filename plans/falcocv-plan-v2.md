@@ -54,7 +54,7 @@ Regla: `core/` no importa PyQt6 ni UI a nivel de módulo. El kernel expone funci
 - Tests de UI offscreen (51), integración headless (44), web (7), contrato de tools, jobs, barcode, depth, empaquetado.
 - `falcocv self-test` valida todos los configs, ayuda, pipeline sintético y round-trip de job.
 - `scripts/check_wheel.py` y `scripts/wheel_smoke.py` verifican la wheel instalada.
-- CI: `full` (Windows/Linux, Python 3.13), `compat` (3.10), `package` (wheel + self-test).
+- CI: `full` (Windows/Linux, Python 3.13), `package` (wheel + self-test).
 - Cobertura: branch, sin `tools/*/config.py`, suelo del 35 % en CI. Es un suelo anti-regresión, no un objetivo.
 
 ### 1.4 Huecos reales
@@ -400,7 +400,6 @@ No se invierten 6 semanas en ShapeMatch sin este informe.
 ### CI
 
 - `full`: Windows + Linux, Python 3.13, suite completa, cobertura y JUnit.
-- `compat`: Windows + Linux, Python 3.10, unit + integración.
 - `package`: wheel + `check_wheel` + `wheel_smoke`.
 - Cobertura: branch, sin `tools/*/config.py`, suelo 35 %. Subir cuando HMI/ML/3D tengan tests.
 
