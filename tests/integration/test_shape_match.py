@@ -237,6 +237,31 @@ def test_shape_match_native_score_matches_python():
     assert np.allclose(native, reference, rtol=0.0, atol=1e-6)
 
 
+def test_shape_match_native_icp_matches_python():
+    scenes = {scene.name: scene for scene in scene_suite()}
+    scene = scenes["occlusion30"]
+    tool = _tool(scene.template)
+    gray = cv2.cvtColor(scene.image, cv2.COLOR_BGR2GRAY)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    edges = cv2.Canny(gray, 50, 150)
+    dt = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 3)
+
+    native = tool._icp_refine(gx, gy, dt, scene.cx, scene.cy, 0.0, 1.0)
+
+    import falcocv.tools.shape_match.logic as shape_logic
+
+    saved = shape_logic._kernel_icp
+    shape_logic._kernel_icp = None
+    try:
+        reference = tool._icp_refine(
+            gx, gy, dt, scene.cx, scene.cy, 0.0, 1.0
+        )
+    finally:
+        shape_logic._kernel_icp = saved
+    assert np.allclose(native, reference, rtol=0.0, atol=1e-3)
+
+
 def test_shape_match_rotated_training_roi():
     template = make_template()
     scene = render_scene(template, cx=300, cy=190, angle=15, scale=1.0)

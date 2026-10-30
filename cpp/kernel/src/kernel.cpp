@@ -1175,6 +1175,216 @@ py::array_t<double> safe_shape_match_score(
     }
 }
 
+py::tuple shape_match_icp_impl(
+    py::array_t<float, py::array::c_style | py::array::forcecast> gx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> gy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> dt,
+    py::array_t<float, py::array::c_style | py::array::forcecast> ddx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> ddy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
+    float x,
+    float y,
+    float angle,
+    float scale,
+    int iterations,
+    int max_points)
+{
+    auto gx_buf = gx.request();
+    auto gy_buf = gy.request();
+    auto dt_buf = dt.request();
+    auto ddx_buf = ddx.request();
+    auto ddy_buf = ddy.request();
+    auto mx_buf = model_x.request();
+    auto my_buf = model_y.request();
+    auto mt_buf = model_theta.request();
+    auto mm_buf = model_mag.request();
+
+    if (gx_buf.ndim != 2 || gy_buf.ndim != 2 || dt_buf.ndim != 2 ||
+        ddx_buf.ndim != 2 || ddy_buf.ndim != 2) {
+        throw std::runtime_error("image arrays must be 2D");
+    }
+    if (mx_buf.ndim != 1 || my_buf.ndim != 1 || mt_buf.ndim != 1 ||
+        mm_buf.ndim != 1) {
+        throw std::runtime_error("model arrays must be 1D");
+    }
+    const int height = static_cast<int>(gx_buf.shape[0]);
+    const int width = static_cast<int>(gx_buf.shape[1]);
+    if (gy_buf.shape[0] != height || gy_buf.shape[1] != width ||
+        dt_buf.shape[0] != height || dt_buf.shape[1] != width ||
+        ddx_buf.shape[0] != height || ddx_buf.shape[1] != width ||
+        ddy_buf.shape[0] != height || ddy_buf.shape[1] != width) {
+        throw std::runtime_error("image arrays must have the same shape");
+    }
+    const int n_model = static_cast<int>(mx_buf.shape[0]);
+    if (my_buf.shape[0] != n_model || mt_buf.shape[0] != n_model ||
+        mm_buf.shape[0] != n_model) {
+        throw std::runtime_error("model arrays must have the same length");
+    }
+
+    const auto* gx_data = static_cast<const float*>(gx_buf.ptr);
+    const auto* gy_data = static_cast<const float*>(gy_buf.ptr);
+    const auto* dt_data = static_cast<const float*>(dt_buf.ptr);
+    const auto* ddx_data = static_cast<const float*>(ddx_buf.ptr);
+    const auto* ddy_data = static_cast<const float*>(ddy_buf.ptr);
+    const auto* mx = static_cast<const float*>(mx_buf.ptr);
+    const auto* my = static_cast<const float*>(my_buf.ptr);
+    const auto* mt = static_cast<const float*>(mt_buf.ptr);
+    const auto* mm = static_cast<const float*>(mm_buf.ptr);
+
+    int stride = 1;
+    if (max_points > 0 && n_model > max_points) {
+        stride = static_cast<int>(
+            std::ceil(static_cast<double>(n_model) / max_points));
+    }
+    double model_total = 0.0;
+    for (int i = 0; i < n_model; i += stride) {
+        model_total += mm[i];
+    }
+    if (model_total <= 0.0) {
+        return py::make_tuple(x, y, angle, scale);
+    }
+    const double model_scale_weight = 1.0 / model_total;
+
+    std::vector<double> point_x;
+    std::vector<double> point_y;
+    std::vector<double> target_x;
+    std::vector<double> target_y;
+    std::vector<double> weights;
+    point_x.reserve(static_cast<std::size_t>(max_points > 0 ? max_points : n_model));
+    point_y.reserve(point_x.capacity());
+    target_x.reserve(point_x.capacity());
+    target_y.reserve(point_x.capacity());
+    weights.reserve(point_x.capacity());
+
+    const float kPi = 3.14159265358979323846f;
+    for (int iteration = 0; iteration < std::max(1, iterations); ++iteration) {
+        const float radians = angle * kPi / 180.0f;
+        const float cos_a = std::cos(radians);
+        const float sin_a = std::sin(radians);
+        point_x.clear();
+        point_y.clear();
+        target_x.clear();
+        target_y.clear();
+        weights.clear();
+
+        double sum_w = 0.0;
+        double sum_px = 0.0;
+        double sum_py = 0.0;
+        double sum_qx = 0.0;
+        double sum_qy = 0.0;
+
+        for (int i = 0; i < n_model; i += stride) {
+            const float xs = x + scale * (cos_a * mx[i] + sin_a * my[i]);
+            const float ys = y + scale * (-sin_a * mx[i] + cos_a * my[i]);
+            float distance = 0.0f;
+            float gx_value = 0.0f;
+            float gy_value = 0.0f;
+            float ddx_value = 0.0f;
+            float ddy_value = 0.0f;
+            if (!bilinear_sample(dt_data, height, width, xs, ys, distance) ||
+                !bilinear_sample(gx_data, height, width, xs, ys, gx_value) ||
+                !bilinear_sample(gy_data, height, width, xs, ys, gy_value) ||
+                !bilinear_sample(ddx_data, height, width, xs, ys, ddx_value) ||
+                !bilinear_sample(ddy_data, height, width, xs, ys, ddy_value)) {
+                continue;
+            }
+            const float magnitude = std::sqrt(
+                gx_value * gx_value + gy_value * gy_value);
+            if (magnitude <= 5.0f || distance >= 2.5f) {
+                continue;
+            }
+            const float expected = mt[i] - radians;
+            const float dot = (
+                std::cos(expected) * gx_value +
+                std::sin(expected) * gy_value) / std::max(magnitude, 1e-6f);
+            const float orientation = std::pow(
+                std::max(dot, 0.0f), 2.0f);
+            const float near = std::exp(-(distance * distance) / 2.0f);
+            const double weight = static_cast<double>(
+                mm[i] * model_scale_weight * orientation * near);
+            if (weight <= 0.0) {
+                continue;
+            }
+            const float gradient = std::sqrt(
+                ddx_value * ddx_value + ddy_value * ddy_value);
+            float target_x_value = xs;
+            float target_y_value = ys;
+            if (gradient > 1e-6f) {
+                target_x_value = xs - distance * ddx_value / gradient;
+                target_y_value = ys - distance * ddy_value / gradient;
+            }
+            point_x.push_back(static_cast<double>(mx[i]));
+            point_y.push_back(static_cast<double>(my[i]));
+            target_x.push_back(static_cast<double>(target_x_value));
+            target_y.push_back(static_cast<double>(target_y_value));
+            weights.push_back(weight);
+            sum_w += weight;
+            sum_px += weight * mx[i];
+            sum_py += weight * my[i];
+            sum_qx += weight * target_x_value;
+            sum_qy += weight * target_y_value;
+        }
+
+        if (sum_w < 0.1) {
+            break;
+        }
+        const double mu_px = sum_px / sum_w;
+        const double mu_py = sum_py / sum_w;
+        const double mu_qx = sum_qx / sum_w;
+        const double mu_qy = sum_qy / sum_w;
+
+        double c00 = 0.0;
+        double c01 = 0.0;
+        double c10 = 0.0;
+        double c11 = 0.0;
+        double variance = 0.0;
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            const double px = point_x[i] - mu_px;
+            const double py = point_y[i] - mu_py;
+            const double qx = target_x[i] - mu_qx;
+            const double qy = target_y[i] - mu_qy;
+            const double w = weights[i];
+            c00 += w * qx * px;
+            c01 += w * qx * py;
+            c10 += w * qy * px;
+            c11 += w * qy * py;
+            variance += w * (px * px + py * py);
+        }
+        if (variance <= 1e-12) {
+            break;
+        }
+        const double a = c00 + c11;
+        const double b = c10 - c01;
+        const double rotation = std::atan2(b, a);
+        const double next_scale = std::sqrt(a * a + b * b) / variance;
+        if (next_scale <= 0.0) {
+            break;
+        }
+        const double cos_r = std::cos(rotation);
+        const double sin_r = std::sin(rotation);
+        const double next_x = mu_qx - next_scale * (
+            cos_r * mu_px - sin_r * mu_py);
+        const double next_y = mu_qy - next_scale * (
+            sin_r * mu_px + cos_r * mu_py);
+        const double next_angle = -rotation * 180.0 / kPi;
+
+        if (std::abs(next_x - x) > 2.0 ||
+            std::abs(next_y - y) > 2.0 ||
+            std::abs(next_angle - angle) > 1.0 ||
+            std::abs(next_scale / scale - 1.0) > 0.05) {
+            break;
+        }
+        x = static_cast<float>(next_x);
+        y = static_cast<float>(next_y);
+        angle = static_cast<float>(next_angle);
+        scale = static_cast<float>(next_scale);
+    }
+    return py::make_tuple(x, y, angle, scale);
+}
+
 py::dict safe_plane_fit(py::dict input) {
     try {
         return plane_fit_impl(std::move(input));
@@ -1210,4 +1420,11 @@ PYBIND11_MODULE(_falco_kernel, m) {
           py::arg("distance_sigma") = 1.0f,
           py::arg("orientation_exponent") = 2.0f,
           py::arg("min_magnitude") = 5.0f);
+    m.def("shape_match_icp", &shape_match_icp_impl,
+          py::arg("gx"), py::arg("gy"), py::arg("dt"),
+          py::arg("ddx"), py::arg("ddy"),
+          py::arg("model_x"), py::arg("model_y"),
+          py::arg("model_theta"), py::arg("model_mag"),
+          py::arg("x"), py::arg("y"), py::arg("angle"), py::arg("scale"),
+          py::arg("iterations") = 2, py::arg("max_points") = 400);
 }

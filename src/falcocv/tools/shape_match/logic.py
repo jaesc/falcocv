@@ -25,16 +25,19 @@ from falcocv.core.pointcloud_utils import propagate_3d
 
 try:
     from _falco_kernel import (
+        shape_match_icp as _kernel_icp,
         shape_match_score as _kernel_score,
         shape_match_vote as _kernel_vote,
     )
 except ImportError:
     try:
         from falcocv._falco_kernel import (
+            shape_match_icp as _kernel_icp,
             shape_match_score as _kernel_score,
             shape_match_vote as _kernel_vote,
         )
     except ImportError:
+        _kernel_icp = None
         _kernel_score = None
         _kernel_vote = None
 
@@ -1131,6 +1134,31 @@ class ShapeMatch(BaseTool):
 
     def _icp_refine(self, gx, gy, dt, x, y, angle, scale, iterations=2,
                     max_points=400):
+        ddx = cv2.Sobel(dt, cv2.CV_32F, 1, 0, ksize=3)
+        ddy = cv2.Sobel(dt, cv2.CV_32F, 0, 1, ksize=3)
+        if _kernel_icp is not None:
+            try:
+                result = _kernel_icp(
+                    np.ascontiguousarray(gx, dtype=np.float32),
+                    np.ascontiguousarray(gy, dtype=np.float32),
+                    np.ascontiguousarray(dt, dtype=np.float32),
+                    np.ascontiguousarray(ddx, dtype=np.float32),
+                    np.ascontiguousarray(ddy, dtype=np.float32),
+                    np.ascontiguousarray(self._model_x, dtype=np.float32),
+                    np.ascontiguousarray(self._model_y, dtype=np.float32),
+                    np.ascontiguousarray(self._model_theta, dtype=np.float32),
+                    np.ascontiguousarray(self._model_mag, dtype=np.float32),
+                    float(x),
+                    float(y),
+                    float(angle),
+                    float(scale),
+                    int(iterations),
+                    int(max_points or 0),
+                )
+                return tuple(float(value) for value in result)
+            except Exception:
+                pass
+
         points = np.stack(
             [self._model_x.astype(np.float64), self._model_y.astype(np.float64)], axis=1
         )
@@ -1144,8 +1172,6 @@ class ShapeMatch(BaseTool):
             total = float(model_mag.sum())
             if total > 0:
                 model_mag = model_mag / total
-        ddx = cv2.Sobel(dt, cv2.CV_32F, 1, 0, ksize=3)
-        ddy = cv2.Sobel(dt, cv2.CV_32F, 0, 1, ksize=3)
         for _ in range(iterations):
             radians = math.radians(angle)
             cos_a = math.cos(radians)

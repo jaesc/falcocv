@@ -77,6 +77,27 @@ Phase profile on a representative image:
 - Regression: full suite 275 passed; wheel self-test PASS.
 - Verdict: kept. This is the current native baseline.
 
+### Native ICP kernel (2026-10-30)
+
+- Added `shape_match_icp` to `_falco_kernel`: bilinear sampling, robust
+  orientation/distance weights and closed-form 2D similarity (no SVD, no
+  OpenCV). Python still computes `ddx`/`ddy` with OpenCV and passes arrays.
+- Native vs Python: max delta ~1.4e-5 px, ~3e-6 degrees, ~3.5e-8 scale.
+- Microbenchmark: ~2.1x faster than the NumPy ICP.
+- Private 142-image job, compared with native score only:
+  - Shape_0: ~60.1 -> ~54.7 ms
+  - Shape_1: ~48.6 -> ~43.0 ms
+  - Shape_2: ~64.9 -> ~57.7 ms
+  - Detections unchanged (140/140/142); pose deltas < 0.0003 px.
+- Combined native score + native ICP vs original baseline:
+  - Shape_0: ~133.5 -> ~54.7 ms (~2.4x)
+  - Shape_1: ~107.7 -> ~43.0 ms (~2.5x)
+  - Shape_2: ~136.8 -> ~57.7 ms (~2.4x)
+- Native scan was evaluated but skipped: `_dt_scan_axis` costs ~0.666 ms vs
+  ~0.655 ms for the score alone, so Python orchestration overhead is negligible.
+- Regression test added: `test_shape_match_native_icp_matches_python`.
+- Verdict: kept (pending user validation).
+
 ### Kept in `dc4f3b4`
 
 - Native vote parallelized over angle/scale hypotheses with per-thread response
@@ -167,7 +188,8 @@ Status:
    - Private 142-image job: 2.1-2.2x faster, identical detections, pose deltas
      < 0.0005 px.
    - Regression test added: `test_shape_match_native_score_matches_python`.
-2. Native occlusion scans / ICP / pose update — next candidate.
+2. Native ICP — **done and kept pending user validation**. Native scan was
+   measured and skipped because its overhead is ~0.01 ms.
 3. Native NCC prototype only if it can beat `cv2.matchTemplate` in a fair
    microbenchmark; otherwise keep OpenCV.
 4. Re-run the 142-image private job as the gate: no detection or pose changes.
