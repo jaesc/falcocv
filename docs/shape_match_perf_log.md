@@ -146,6 +146,29 @@ Phase profile on a representative image:
   speedup; sometimes slower.
 - Verdict: reverted.
 
+### 3x3 peak neighbourhood
+
+- Tried: reduce the native peak local-maximum neighbourhood from 5x5 to 3x3.
+- Result: identical detections and poses on 142 real images, but slower
+  (~0.66-0.73x of baseline in the same session).
+- Verdict: reverted.
+
+### Coarse angle step 15 degrees
+
+- Tried: increase the coarse vote angle step from 10 to 15 degrees, reducing
+  angle hypotheses by ~29%.
+- Result: identical detections and poses on 142 real images, but no speedup;
+  measured slower in the same session.
+- Verdict: reverted. The NCC refinement cost and candidate distribution offset
+  the smaller vote.
+
+### Native NCC feasibility
+
+- A direct C++ NCC over the search window is O(template_pixels * offsets) and
+  would not beat OpenCV's `matchTemplate` (which uses optimized/DFT paths)
+  without a much larger FFT/SIMD effort.
+- Verdict: keep OpenCV `matchTemplate`; do not port NCC directly.
+
 ### Parameter reductions on the real job
 
 Tested on all 142 real images (aggregated, no images stored):
@@ -188,11 +211,13 @@ Status:
    - Private 142-image job: 2.1-2.2x faster, identical detections, pose deltas
      < 0.0005 px.
    - Regression test added: `test_shape_match_native_score_matches_python`.
-2. Native ICP — **done and kept pending user validation**. Native scan was
+2. Native ICP — **done, validated and committed** (`8d21a8e`). Native scan was
    measured and skipped because its overhead is ~0.01 ms.
-3. Native NCC prototype only if it can beat `cv2.matchTemplate` in a fair
-   microbenchmark; otherwise keep OpenCV.
-4. Re-run the 142-image private job as the gate: no detection or pose changes.
+3. Native NCC — **not pursued**: a direct C++ implementation cannot beat
+   OpenCV `matchTemplate` without a much larger FFT/SIMD effort. Keep OpenCV.
+4. Next candidate: instrument the native vote to separate accumulation from peak
+   extraction, then optimize the dominant part without reducing model data.
+5. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing feature/edge/factor constants.
