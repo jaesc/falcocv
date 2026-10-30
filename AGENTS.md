@@ -147,3 +147,4 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - Server: `falcocv-server` or `python -m falcocv.web`; dashboard:
   `http://localhost:8000`; HMI: `http://localhost:8000/?id=<project_id>`.
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
+- ShapeMatch performance history: `docs/shape_match_perf_log.md`.

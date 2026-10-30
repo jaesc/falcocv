@@ -995,6 +995,186 @@ py::dict safe_shape_match_vote(
     }
 }
 
+static inline bool bilinear_sample(
+    const float* array, int height, int width, float x, float y, float& value)
+{
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int x1 = x0 + 1;
+    const int y1 = y0 + 1;
+    if (x0 < 0 || y0 < 0 || x1 >= width || y1 >= height) {
+        return false;
+    }
+    const float wx = x - static_cast<float>(x0);
+    const float wy = y - static_cast<float>(y0);
+    const float top = array[static_cast<std::size_t>(y0) * width + x0] *
+                          (1.0f - wx) +
+                      array[static_cast<std::size_t>(y0) * width + x1] * wx;
+    const float bottom = array[static_cast<std::size_t>(y1) * width + x0] *
+                             (1.0f - wx) +
+                         array[static_cast<std::size_t>(y1) * width + x1] * wx;
+    value = top * (1.0f - wy) + bottom * wy;
+    return true;
+}
+
+py::array_t<double> shape_match_score_impl(
+    py::array_t<float, py::array::c_style | py::array::forcecast> gx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> gy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> dt,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
+    py::array_t<float, py::array::c_style | py::array::forcecast> cx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> cy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> angles,
+    py::array_t<float, py::array::c_style | py::array::forcecast> scales,
+    bool use_distance,
+    float distance_sigma,
+    float orientation_exponent,
+    float min_magnitude)
+{
+    auto gx_buf = gx.request();
+    auto gy_buf = gy.request();
+    auto dt_buf = dt.request();
+    auto mx_buf = model_x.request();
+    auto my_buf = model_y.request();
+    auto mt_buf = model_theta.request();
+    auto mm_buf = model_mag.request();
+    auto cx_buf = cx.request();
+    auto cy_buf = cy.request();
+    auto angle_buf = angles.request();
+    auto scale_buf = scales.request();
+
+    if (gx_buf.ndim != 2 || gy_buf.ndim != 2) {
+        throw std::runtime_error("gx and gy must be 2D");
+    }
+    if (use_distance && dt_buf.ndim != 2) {
+        throw std::runtime_error("dt must be 2D when use_distance is true");
+    }
+    if (mx_buf.ndim != 1 || my_buf.ndim != 1 || mt_buf.ndim != 1 ||
+        mm_buf.ndim != 1) {
+        throw std::runtime_error("model arrays must be 1D");
+    }
+    if (cx_buf.ndim != 1 || cy_buf.ndim != 1 || angle_buf.ndim != 1 ||
+        scale_buf.ndim != 1) {
+        throw std::runtime_error("pose arrays must be 1D");
+    }
+
+    const int height = static_cast<int>(gx_buf.shape[0]);
+    const int width = static_cast<int>(gx_buf.shape[1]);
+    if (gy_buf.shape[0] != height || gy_buf.shape[1] != width) {
+        throw std::runtime_error("gx and gy must have the same shape");
+    }
+    if (use_distance &&
+        (dt_buf.shape[0] != height || dt_buf.shape[1] != width)) {
+        throw std::runtime_error("dt must have the same shape as gx");
+    }
+
+    const int n_model = static_cast<int>(mx_buf.shape[0]);
+    if (my_buf.shape[0] != n_model || mt_buf.shape[0] != n_model ||
+        mm_buf.shape[0] != n_model) {
+        throw std::runtime_error("model arrays must have the same length");
+    }
+    const int n_poses = static_cast<int>(angle_buf.shape[0]);
+    if (scale_buf.shape[0] != n_poses || cx_buf.shape[0] != n_poses ||
+        cy_buf.shape[0] != n_poses) {
+        throw std::runtime_error("pose arrays must have the same length");
+    }
+
+    const auto* gx_data = static_cast<const float*>(gx_buf.ptr);
+    const auto* gy_data = static_cast<const float*>(gy_buf.ptr);
+    const auto* dt_data = static_cast<const float*>(dt_buf.ptr);
+    const auto* mx = static_cast<const float*>(mx_buf.ptr);
+    const auto* my = static_cast<const float*>(my_buf.ptr);
+    const auto* mt = static_cast<const float*>(mt_buf.ptr);
+    const auto* mm = static_cast<const float*>(mm_buf.ptr);
+    const auto* cx_data = static_cast<const float*>(cx_buf.ptr);
+    const auto* cy_data = static_cast<const float*>(cy_buf.ptr);
+    const auto* angle_data = static_cast<const float*>(angle_buf.ptr);
+    const auto* scale_data = static_cast<const float*>(scale_buf.ptr);
+
+    py::array_t<double> result(n_poses);
+    auto scores = result.mutable_unchecked<1>();
+    const float kPi = 3.14159265358979323846f;
+    const float sigma_denominator =
+        2.0f * distance_sigma * distance_sigma;
+
+    for (int pose = 0; pose < n_poses; ++pose) {
+        const float radians = angle_data[pose] * kPi / 180.0f;
+        const float cos_a = std::cos(radians);
+        const float sin_a = std::sin(radians);
+        const float scale = scale_data[pose];
+        const float center_x = cx_data[pose];
+        const float center_y = cy_data[pose];
+        double total = 0.0;
+
+        for (int i = 0; i < n_model; ++i) {
+            const float x = center_x + scale * (
+                cos_a * mx[i] + sin_a * my[i]);
+            const float y = center_y + scale * (
+                -sin_a * mx[i] + cos_a * my[i]);
+            float gx_value = 0.0f;
+            float gy_value = 0.0f;
+            if (!bilinear_sample(gx_data, height, width, x, y, gx_value)) {
+                continue;
+            }
+            if (!bilinear_sample(gy_data, height, width, x, y, gy_value)) {
+                continue;
+            }
+            const float magnitude = std::sqrt(
+                gx_value * gx_value + gy_value * gy_value);
+            if (magnitude <= min_magnitude) {
+                continue;
+            }
+            const float expected = mt[i] - radians;
+            const float dot = (
+                std::cos(expected) * gx_value +
+                std::sin(expected) * gy_value) / std::max(magnitude, 1e-6f);
+            const float orientation = std::pow(
+                std::max(dot, 0.0f), orientation_exponent);
+            float near = 1.0f;
+            if (use_distance) {
+                float distance = 0.0f;
+                if (!bilinear_sample(dt_data, height, width, x, y, distance)) {
+                    continue;
+                }
+                near = std::exp(-(distance * distance) / sigma_denominator);
+            }
+            total += static_cast<double>(mm[i]) * orientation * near;
+        }
+        scores(pose) = std::max(0.0, std::min(1.0, total));
+    }
+    return result;
+}
+
+py::array_t<double> safe_shape_match_score(
+    py::array_t<float, py::array::c_style | py::array::forcecast> gx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> gy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> dt,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
+    py::array_t<float, py::array::c_style | py::array::forcecast> cx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> cy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> angles,
+    py::array_t<float, py::array::c_style | py::array::forcecast> scales,
+    bool use_distance,
+    float distance_sigma,
+    float orientation_exponent,
+    float min_magnitude)
+{
+    try {
+        return shape_match_score_impl(
+            gx, gy, dt, model_x, model_y, model_theta, model_mag,
+            cx, cy, angles, scales, use_distance, distance_sigma,
+            orientation_exponent, min_magnitude);
+    } catch (const std::exception& e) {
+        throw std::runtime_error(e.what());
+    }
+}
+
 py::dict safe_plane_fit(py::dict input) {
     try {
         return plane_fit_impl(std::move(input));
@@ -1021,4 +1201,13 @@ PYBIND11_MODULE(_falco_kernel, m) {
           py::arg("angles"), py::arg("scales"), py::arg("bins") = 32,
           py::arg("min_scene_mag") = 5.0f, py::arg("peaks_per_hypothesis") = 3,
           py::arg("max_candidates") = 64);
+    m.def("shape_match_score", &safe_shape_match_score,
+          py::arg("gx"), py::arg("gy"), py::arg("dt"),
+          py::arg("model_x"), py::arg("model_y"),
+          py::arg("model_theta"), py::arg("model_mag"),
+          py::arg("cx"), py::arg("cy"), py::arg("angles"), py::arg("scales"),
+          py::arg("use_distance") = true,
+          py::arg("distance_sigma") = 1.0f,
+          py::arg("orientation_exponent") = 2.0f,
+          py::arg("min_magnitude") = 5.0f);
 }

@@ -24,11 +24,18 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import propagate_3d
 
 try:
-    from _falco_kernel import shape_match_vote as _kernel_vote
+    from _falco_kernel import (
+        shape_match_score as _kernel_score,
+        shape_match_vote as _kernel_vote,
+    )
 except ImportError:
     try:
-        from falcocv._falco_kernel import shape_match_vote as _kernel_vote
+        from falcocv._falco_kernel import (
+            shape_match_score as _kernel_score,
+            shape_match_vote as _kernel_vote,
+        )
     except ImportError:
+        _kernel_score = None
         _kernel_vote = None
 
 MODEL_VERSION = 2
@@ -996,6 +1003,31 @@ class ShapeMatch(BaseTool):
         if model_scale != 1.0:
             model_x = model_x / model_scale
             model_y = model_y / model_scale
+
+        if _kernel_score is not None:
+            dt_arg = dt
+            if not use_distance or dt_arg is None:
+                dt_arg = np.zeros((1, 1), dtype=np.float32)
+            return np.asarray(
+                _kernel_score(
+                    np.ascontiguousarray(gx, dtype=np.float32),
+                    np.ascontiguousarray(gy, dtype=np.float32),
+                    np.ascontiguousarray(dt_arg, dtype=np.float32),
+                    np.ascontiguousarray(model_x, dtype=np.float32),
+                    np.ascontiguousarray(model_y, dtype=np.float32),
+                    np.ascontiguousarray(model_theta, dtype=np.float32),
+                    np.ascontiguousarray(model_mag, dtype=np.float32),
+                    np.ascontiguousarray(cx, dtype=np.float32),
+                    np.ascontiguousarray(cy, dtype=np.float32),
+                    np.ascontiguousarray(angles, dtype=np.float32),
+                    np.ascontiguousarray(scales, dtype=np.float32),
+                    bool(use_distance),
+                    float(_DISTANCE_SIGMA),
+                    float(_ORIENTATION_EXPONENT),
+                    5.0,
+                ),
+                dtype=np.float64,
+            )
 
         radians = np.radians(angles)[:, None]
         cos_a = np.cos(radians)

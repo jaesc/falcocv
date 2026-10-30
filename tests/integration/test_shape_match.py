@@ -210,6 +210,33 @@ def test_shape_match_solver_diagnostics():
     assert occluded.visible_fraction < 1.0
 
 
+def test_shape_match_native_score_matches_python():
+    scenes = {scene.name: scene for scene in scene_suite()}
+    scene = scenes["occlusion30"]
+    tool = _tool(scene.template)
+    gray = cv2.cvtColor(scene.image, cv2.COLOR_BGR2GRAY)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    edges = cv2.Canny(gray, 50, 150)
+    dt = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 3)
+    angles = np.linspace(-1.5, 1.5, 5, dtype=np.float32)
+    scales = np.ones(5, dtype=np.float32)
+    cx = np.full(5, scene.cx, dtype=np.float32)
+    cy = np.full(5, scene.cy, dtype=np.float32)
+
+    native = tool._dt_score(gx, gy, dt, cx, cy, angles, scales)
+
+    import falcocv.tools.shape_match.logic as shape_logic
+
+    saved = shape_logic._kernel_score
+    shape_logic._kernel_score = None
+    try:
+        reference = tool._dt_score(gx, gy, dt, cx, cy, angles, scales)
+    finally:
+        shape_logic._kernel_score = saved
+    assert np.allclose(native, reference, rtol=0.0, atol=1e-6)
+
+
 def test_shape_match_rotated_training_roi():
     template = make_template()
     scene = render_scene(template, cx=300, cy=190, angle=15, scale=1.0)
