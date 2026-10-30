@@ -1002,26 +1002,45 @@ py::dict safe_shape_match_vote(
     }
 }
 
-static inline bool bilinear_sample(
-    const float* array, int height, int width, float x, float y, float& value)
+struct BilinearCoords {
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+    float wx;
+    float wy;
+};
+
+static inline bool bilinear_coords(
+    int height, int width, float x, float y, BilinearCoords& coords)
 {
-    const int x0 = static_cast<int>(std::floor(x));
-    const int y0 = static_cast<int>(std::floor(y));
-    const int x1 = x0 + 1;
-    const int y1 = y0 + 1;
-    if (x0 < 0 || y0 < 0 || x1 >= width || y1 >= height) {
+    coords.x0 = static_cast<int>(std::floor(x));
+    coords.y0 = static_cast<int>(std::floor(y));
+    coords.x1 = coords.x0 + 1;
+    coords.y1 = coords.y0 + 1;
+    if (coords.x0 < 0 || coords.y0 < 0 ||
+        coords.x1 >= width || coords.y1 >= height) {
         return false;
     }
-    const float wx = x - static_cast<float>(x0);
-    const float wy = y - static_cast<float>(y0);
-    const float top = array[static_cast<std::size_t>(y0) * width + x0] *
-                          (1.0f - wx) +
-                      array[static_cast<std::size_t>(y0) * width + x1] * wx;
-    const float bottom = array[static_cast<std::size_t>(y1) * width + x0] *
-                             (1.0f - wx) +
-                         array[static_cast<std::size_t>(y1) * width + x1] * wx;
-    value = top * (1.0f - wy) + bottom * wy;
+    coords.wx = x - static_cast<float>(coords.x0);
+    coords.wy = y - static_cast<float>(coords.y0);
     return true;
+}
+
+static inline float bilinear_at(
+    const float* array, int width, const BilinearCoords& coords)
+{
+    const float top =
+        array[static_cast<std::size_t>(coords.y0) * width + coords.x0] *
+            (1.0f - coords.wx) +
+        array[static_cast<std::size_t>(coords.y0) * width + coords.x1] *
+            coords.wx;
+    const float bottom =
+        array[static_cast<std::size_t>(coords.y1) * width + coords.x0] *
+            (1.0f - coords.wx) +
+        array[static_cast<std::size_t>(coords.y1) * width + coords.x1] *
+            coords.wx;
+    return top * (1.0f - coords.wy) + bottom * coords.wy;
 }
 
 py::array_t<double> shape_match_score_impl(
@@ -1121,14 +1140,12 @@ py::array_t<double> shape_match_score_impl(
                 cos_a * mx[i] + sin_a * my[i]);
             const float y = center_y + scale * (
                 -sin_a * mx[i] + cos_a * my[i]);
-            float gx_value = 0.0f;
-            float gy_value = 0.0f;
-            if (!bilinear_sample(gx_data, height, width, x, y, gx_value)) {
+            BilinearCoords coords;
+            if (!bilinear_coords(height, width, x, y, coords)) {
                 continue;
             }
-            if (!bilinear_sample(gy_data, height, width, x, y, gy_value)) {
-                continue;
-            }
+            const float gx_value = bilinear_at(gx_data, width, coords);
+            const float gy_value = bilinear_at(gy_data, width, coords);
             const float magnitude = std::sqrt(
                 gx_value * gx_value + gy_value * gy_value);
             if (magnitude <= min_magnitude) {
@@ -1144,10 +1161,7 @@ py::array_t<double> shape_match_score_impl(
                 : std::pow(positive_dot, orientation_exponent);
             float near = 1.0f;
             if (use_distance) {
-                float distance = 0.0f;
-                if (!bilinear_sample(dt_data, height, width, x, y, distance)) {
-                    continue;
-                }
+                const float distance = bilinear_at(dt_data, width, coords);
                 near = std::exp(-(distance * distance) / sigma_denominator);
             }
             total += static_cast<double>(mm[i]) * orientation * near;
@@ -1288,18 +1302,15 @@ py::tuple shape_match_icp_impl(
         for (int i = 0; i < n_model; i += stride) {
             const float xs = x + scale * (cos_a * mx[i] + sin_a * my[i]);
             const float ys = y + scale * (-sin_a * mx[i] + cos_a * my[i]);
-            float distance = 0.0f;
-            float gx_value = 0.0f;
-            float gy_value = 0.0f;
-            float ddx_value = 0.0f;
-            float ddy_value = 0.0f;
-            if (!bilinear_sample(dt_data, height, width, xs, ys, distance) ||
-                !bilinear_sample(gx_data, height, width, xs, ys, gx_value) ||
-                !bilinear_sample(gy_data, height, width, xs, ys, gy_value) ||
-                !bilinear_sample(ddx_data, height, width, xs, ys, ddx_value) ||
-                !bilinear_sample(ddy_data, height, width, xs, ys, ddy_value)) {
+            BilinearCoords coords;
+            if (!bilinear_coords(height, width, xs, ys, coords)) {
                 continue;
             }
+            const float distance = bilinear_at(dt_data, width, coords);
+            const float gx_value = bilinear_at(gx_data, width, coords);
+            const float gy_value = bilinear_at(gy_data, width, coords);
+            const float ddx_value = bilinear_at(ddx_data, width, coords);
+            const float ddy_value = bilinear_at(ddy_data, width, coords);
             const float magnitude = std::sqrt(
                 gx_value * gx_value + gy_value * gy_value);
             if (magnitude <= 5.0f || distance >= 2.5f) {

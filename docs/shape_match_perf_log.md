@@ -155,6 +155,21 @@ occlusion refinement.
   arithmetic-only and the 142-image gate keeps 140/140/142 with pose deltas 0.
 - Verdict: kept.
 
+### Fused bilinear sampling in score/ICP (2026-10-30)
+
+- `shape_match_score` sampled `gx`, `gy` and `dt` at the same `(x, y)`, and
+  `shape_match_icp` sampled `dt`, `gx`, `gy`, `ddx` and `ddy` at the same
+  `(xs, ys)`. Each call recomputed `floor`, bounds, `wx` and `wy`.
+- Added `BilinearCoords` + `bilinear_at`: compute the coordinates once, then
+  apply the unchanged interpolation formula to each array.
+- Score microbenchmark: 0.282 -> 0.162 ms (~1.7x faster); score arrays
+  bit-identical.
+- Private 142-image job: Shape medians ~44.9/44.3/62.9 -> ~39.8/39.6/53.0 ms
+  (~11-16% faster); detections 140/140/142 and pose deltas exactly 0.
+- Regression: full suite 276 passed, 3 skipped, 3 xfailed; wheel self-test
+  PASS.
+- Verdict: kept.
+
 ### Kept in `dc4f3b4`
 
 - Native vote parallelized over angle/scale hypotheses with per-thread response
@@ -338,7 +353,10 @@ Status:
 5. `visible_mask` histogram median and native `pow(x, 2)` — **done and kept**:
    2-3x faster median math, 28% faster score microbenchmark, bit-identical
    scores and 140/140/142 detections with pose deltas 0.
-6. Re-run the 142-image private job as the gate: no detection or pose changes.
+6. Fused bilinear sampling in score/ICP — **done and kept**: score
+   0.282 -> 0.162 ms, bit-identical; real job 39.8/39.6/53.0 ms with
+   140/140/142 detections and pose deltas 0.
+7. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing feature/edge/factor constants.
