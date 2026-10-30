@@ -1239,13 +1239,35 @@ class ShapeMatch(BaseTool):
         patch = cv2.warpAffine(
             scene_gray, inverse, (width, height), flags=cv2.INTER_LINEAR, borderValue=0
         )
-        difference = np.abs(
-            patch.astype(np.float32) - self._template_gray.astype(np.float32)
-        )
-        median = float(np.median(difference))
-        mad = float(np.median(np.abs(difference - median)))
-        threshold = min(45.0, max(30.0, median + 3.0 * 1.4826 * mad))
-        visible = difference < threshold
+        if patch.dtype == np.uint8 and self._template_gray.dtype == np.uint8:
+            # The difference is integer-valued 0..255.  A 256-bin histogram
+            # gives the exact median and MAD without sorting the template.
+            difference = cv2.absdiff(patch, self._template_gray)
+            total = int(difference.size)
+            hist = np.bincount(difference.ravel(), minlength=256)
+            cumulative = np.cumsum(hist)
+            lo = int(np.searchsorted(cumulative, (total - 1) // 2, side="right"))
+            hi = int(np.searchsorted(cumulative, total // 2, side="right"))
+            median2 = lo + hi
+            median = 0.5 * median2
+            # Keep the deviations in doubled units so half-integer medians
+            # remain exact; the final MAD is divided by two.
+            dev2 = np.abs(difference.astype(np.int16) * 2 - median2)
+            hist2 = np.bincount(dev2.ravel(), minlength=511)
+            cumulative2 = np.cumsum(hist2)
+            lo2 = int(np.searchsorted(cumulative2, (total - 1) // 2, side="right"))
+            hi2 = int(np.searchsorted(cumulative2, total // 2, side="right"))
+            mad = 0.25 * (lo2 + hi2)
+            threshold = min(45.0, max(30.0, median + 3.0 * 1.4826 * mad))
+            visible = difference < threshold
+        else:
+            difference = np.abs(
+                patch.astype(np.float32) - self._template_gray.astype(np.float32)
+            )
+            median = float(np.median(difference))
+            mad = float(np.median(np.abs(difference - median)))
+            threshold = min(45.0, max(30.0, median + 3.0 * 1.4826 * mad))
+            visible = difference < threshold
         px = np.rint(self._model_x + width / 2.0).astype(np.int32)
         py = np.rint(self._model_y + height / 2.0).astype(np.int32)
         valid = (px >= 0) & (px < width) & (py >= 0) & (py < height)

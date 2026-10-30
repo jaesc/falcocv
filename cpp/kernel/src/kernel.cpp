@@ -1138,8 +1138,10 @@ py::array_t<double> shape_match_score_impl(
             const float dot = (
                 std::cos(expected) * gx_value +
                 std::sin(expected) * gy_value) / std::max(magnitude, 1e-6f);
-            const float orientation = std::pow(
-                std::max(dot, 0.0f), orientation_exponent);
+            const float positive_dot = std::max(dot, 0.0f);
+            const float orientation = orientation_exponent == 2.0f
+                ? positive_dot * positive_dot
+                : std::pow(positive_dot, orientation_exponent);
             float near = 1.0f;
             if (use_distance) {
                 float distance = 0.0f;

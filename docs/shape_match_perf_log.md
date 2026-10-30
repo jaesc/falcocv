@@ -106,8 +106,8 @@ occlusion refinement.
 
 - The native vote profile showed accumulation dominated, but the cost was not
   the response-buffer memory: the inner loop called `std::lround` twice per
-  vote, and MSVC did not inline it.
-- Replaced it with an inline round-half-away-from-zero helper in
+  vote. Replacing it with an inline helper removed that library-rounding cost.
+- Added an inline round-half-away-from-zero helper in
   `shape_match_vote` (`fast_round`). Coordinates are bounded, so the helper is
   equivalent to `std::lround` for this loop.
 - Captured real vote inputs (one image, three Shapes), 20-25 calls each:
@@ -127,6 +127,33 @@ occlusion refinement.
 - Regression: full suite 276 passed, 3 skipped, 3 xfailed; wheel self-test
   PASS.
 - Verdict: kept. This is the current native baseline.
+
+### Visible-mask histogram median (2026-10-30)
+
+- `_visible_mask` compares a warped uint8 patch against the uint8 template.
+  The absolute difference is therefore integer-valued 0..255, so median and
+  MAD can be computed exactly with two small histograms instead of sorting the
+  float template.
+- Fast path: `cv2.absdiff` + 256-bin `np.bincount`; doubled units keep
+  half-integer medians exact. Non-uint8 inputs keep the old NumPy path.
+- Synthetic math benchmark: ~2-3x faster for the real template sizes
+  (120x253, 145x179, 140x167).
+- Private 142-image job: Shape medians ~38.9/37.5/50.9 vs ~41.3/39.7/53.5 ms
+  before this change; detections 140/140/142 and pose deltas exactly 0.
+- Regression: full suite 276 passed, 3 skipped, 3 xfailed; wheel self-test
+  PASS.
+- Verdict: kept.
+
+### Native score `pow(x, 2)` fast path (2026-10-30)
+
+- `_ORIENTATION_EXPONENT` is 2.0, but the kernel called `std::pow` for every
+  model feature and pose. Added a `positive_dot * positive_dot` fast path when
+  the exponent is exactly 2.0; other exponents still use `std::pow`.
+- Same-process score benchmark: 0.453 -> 0.328 ms (~28% faster); score arrays
+  bit-identical.
+- End-to-end gain is below the laptop's thermal noise, but the change is
+  arithmetic-only and the 142-image gate keeps 140/140/142 with pose deltas 0.
+- Verdict: kept.
 
 ### Kept in `dc4f3b4`
 
@@ -217,6 +244,24 @@ occlusion refinement.
 - Verdict: reverted. The expensive part was the rounding call, not the
   response-buffer access pattern.
 
+### Integer offsets in the native vote
+
+- Tried: replace the per-vote `fast_round(px - rx)` with a precomputed integer
+  offset (`px - ceil(rx - 0.5)`), falling back to exact rounding for features
+  whose offset is at or near a half-integer.
+- Result: candidates stayed exact, but same-process A/B gave 18%, 14% and -6%
+  across the three Shapes. No consistent gain.
+- Verdict: reverted. `fast_round` is already cheap; the remaining loop cost is
+  the scatter itself.
+
+### Precomputed score trigonometry
+
+- Tried: precompute `cos/sin(model_theta)` and use angle-addition identities
+  instead of `std::cos(expected)`/`std::sin(expected)` per feature and pose.
+- Result: ~30% faster score microbenchmark, but scores changed by ~6e-9 and
+  the 142-image poses moved by up to ~2.4e-4 px / ~2.5e-4 degrees.
+- Verdict: reverted. Kept only the exact `pow(x, 2)` fast path.
+
 ### 3x3 peak neighbourhood
 
 - Tried: reduce the native peak local-maximum neighbourhood from 5x5 to 3x3.
@@ -289,8 +334,11 @@ Status:
 4. Native vote profile — **done**: accumulation dominates (31-75 ms CPU vs
    1-6 ms CPU for peak extraction). Inline rounding — **done and kept**:
    kernel 26.4/15.5/17.2 -> 8.7/7.9/9.4 ms on captured inputs, bit-identical
-   candidates; real job 41.3/39.8/53.4 ms with unchanged detections/poses.
-5. Re-run the 142-image private job as the gate: no detection or pose changes.
+   candidates; real job 41.3/39.7/53.5 ms with unchanged detections/poses.
+5. `visible_mask` histogram median and native `pow(x, 2)` — **done and kept**:
+   2-3x faster median math, 28% faster score microbenchmark, bit-identical
+   scores and 140/140/142 detections with pose deltas 0.
+6. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing feature/edge/factor constants.
