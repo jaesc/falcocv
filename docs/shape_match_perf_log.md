@@ -57,6 +57,10 @@ Phase profile on a representative image:
 - NCC / `matchTemplate`: 8-22 ms;
 - ECC: 2-5 ms.
 
+After the inline-rounding fix, the native vote is ~7 ms per Shape and the
+remaining cost is distributed across NCC/`matchTemplate`, coarse pose and
+occlusion refinement.
+
 `Shape Match_2` is the canary: it detects 142/142 at baseline.
 
 ## What worked
@@ -97,6 +101,32 @@ Phase profile on a representative image:
   ~0.655 ms for the score alone, so Python orchestration overhead is negligible.
 - Regression test added: `test_shape_match_native_icp_matches_python`.
 - Verdict: kept (pending user validation).
+
+### Native vote inline rounding (2026-10-30)
+
+- The native vote profile showed accumulation dominated, but the cost was not
+  the response-buffer memory: the inner loop called `std::lround` twice per
+  vote, and MSVC did not inline it.
+- Replaced it with an inline round-half-away-from-zero helper in
+  `shape_match_vote` (`fast_round`). Coordinates are bounded, so the helper is
+  equivalent to `std::lround` for this loop.
+- Captured real vote inputs (one image, three Shapes), 20-25 calls each:
+  - kernel median: 26.4 / 15.5 / 17.2 ms -> 8.7 / 7.9 / 9.4 ms
+    (~3.0x / 2.0x / 1.8x; absolute values vary with laptop throttling);
+  - candidate arrays (`x`, `y`, `angle`, `scale`, `votes`) bit-identical.
+- Private 142-image job, compared with native score + ICP:
+  - Shape_0: ~54.7 -> ~41.3 ms
+  - Shape_1: ~43.0 -> ~39.7 ms
+  - Shape_2: ~57.7 -> ~53.5 ms
+  - Detections unchanged (140/140/142); pose deltas exactly 0.
+- Synthetic benchmark medians (current vs the approximate baseline table
+  above): 480x360 23.4 vs ~26 ms; 1 MP 21.9 vs ~24.5 ms; 2.7 MP 34.2 vs
+  ~37.7 ms; occlusion 20% 25.5 vs ~40 ms; occlusion 30% 27.1 vs ~40 ms;
+  combo 26.5 vs ~37 ms; two instances 33.8 vs ~46 ms; angle +-90 21.6 vs
+  ~33 ms; angle +-180 23.9 vs ~38 ms; fixed scale 17.3 vs ~20 ms.
+- Regression: full suite 276 passed, 3 skipped, 3 xfailed; wheel self-test
+  PASS.
+- Verdict: kept. This is the current native baseline.
 
 ### Kept in `dc4f3b4`
 
@@ -145,6 +175,47 @@ Phase profile on a representative image:
 - Result: exactly identical detections and poses on 142 real images, but no
   speedup; sometimes slower.
 - Verdict: reverted.
+
+### Native vote profile (accumulation vs peaks)
+
+- Added a temporary optional `profile` mode to `shape_match_vote` and measured
+  one image of the 142-image job per Shape (aggregated numbers only):
+  - scene bins: ~0.25 ms
+  - accumulation: 31-75 ms CPU (summed across workers)
+  - local-maxima/top-K: 1-6 ms CPU
+  - merge/sort: <0.02 ms
+  - kernel wall time: 11-27 ms
+- Conclusion: accumulation dominates by an order of magnitude; peak extraction
+  is not the bottleneck. This explains why the max-filter and 3x3 experiments
+  could not help.
+- Temporary profile code was reverted after the measurement.
+
+### Remove the `seen` buffer during accumulation
+
+- Tried: drop the per-worker `seen` byte buffer and detect the first vote with
+  `response[index] == 0.0f`.
+- Result: identical detections and poses on all 142 real images, but no
+  speedup (measured slower in the same session; thermal noise was significant).
+- Verdict: reverted. The dense random-scatter response write, not the `seen`
+  lookup, is the cost.
+
+### Scene-outer vote accumulation
+
+- Tried: invert the vote loops to scene point -> model features, so all writes
+  for one point target a small response neighbourhood.
+- Result: identical detections and poses on 142 real images, but ~1.5x slower.
+  The existing model-feature -> scene-point order already writes in scan order
+  and is more cache-friendly.
+- Verdict: reverted.
+
+### Blocked / tiled vote accumulation
+
+- Tried: block the scene-point loop (sizes 1-256) and bucket votes into
+  response tiles (32-512 px) before accumulation.
+- Result: exact or near-identical candidates, but no consistent speedup
+  (differences were within thermal noise, ~3-5% at best).
+- Verdict: reverted. The expensive part was the rounding call, not the
+  response-buffer access pattern.
 
 ### 3x3 peak neighbourhood
 
@@ -215,8 +286,10 @@ Status:
    measured and skipped because its overhead is ~0.01 ms.
 3. Native NCC — **not pursued**: a direct C++ implementation cannot beat
    OpenCV `matchTemplate` without a much larger FFT/SIMD effort. Keep OpenCV.
-4. Next candidate: instrument the native vote to separate accumulation from peak
-   extraction, then optimize the dominant part without reducing model data.
+4. Native vote profile — **done**: accumulation dominates (31-75 ms CPU vs
+   1-6 ms CPU for peak extraction). Inline rounding — **done and kept**:
+   kernel 26.4/15.5/17.2 -> 8.7/7.9/9.4 ms on captured inputs, bit-identical
+   candidates; real job 41.3/39.8/53.4 ms with unchanged detections/poses.
 5. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,

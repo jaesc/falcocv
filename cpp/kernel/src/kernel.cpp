@@ -28,6 +28,13 @@
 #endif
 
 namespace py = pybind11;
+
+// The vote inner loop calls this twice per vote.  Coordinates are bounded
+// image/model offsets, so an inline round-half-away-from-zero is equivalent
+// to std::lround here and avoids the library rounding call.
+static inline int fast_round(float value) {
+    return static_cast<int>(value >= 0.0f ? value + 0.5f : value - 0.5f);
+}
 using namespace pybind11::literals;
 
 namespace {
@@ -867,8 +874,8 @@ py::dict shape_match_vote_impl(
                 const auto& points = scene_bins[bin];
                 const float vote = mm[i];
                 for (const auto& point : points) {
-                    const int cx = static_cast<int>(std::lround(point.first - rx));
-                    const int cy = static_cast<int>(std::lround(point.second - ry));
+                    const int cx = fast_round(point.first - rx);
+                    const int cy = fast_round(point.second - ry);
                     if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
                     const std::size_t index =
                         static_cast<std::size_t>(cy) * width + cx;
