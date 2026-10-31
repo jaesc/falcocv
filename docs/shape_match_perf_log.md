@@ -296,6 +296,27 @@ one), on 480x360, 1 MP, 2.7 MP and a 5 MP scene with a 404 px template.
   kept 90/90 and the 13 synthetic scenes, but the saving was inside the noise
   and it shrinks the safety margin.  **Not applied** for now.
 
+### Three-sample NCC scans (2026-10-31)
+
+- Angle scan: 5 samples at 4 deg over +-8 -> **3 samples at +-5 deg**.  The
+  kernel angle step is capped at 10 deg, so the truth is always inside +-5.
+- Scale scan: 5 samples at 0.05 over +-0.10 -> **3 samples at +-half**, with
+  `half = max(0.05, kernel_spacing / 2)`.  The half-width follows the kernel's
+  scale-hypothesis spacing, so wide user ranges (0.5-1.5) are still covered.
+- 6 `matchTemplate` calls per candidate instead of 10.
+
+Validation:
+
+- Bake-off: 13/13, 0.063 px / 0.034 deg / 0.081 % (rotation max improved from
+  0.060 to 0.034 deg; scale moved +0.001 %).
+- 90-image job: 90/90 in ROI and full image; pose deltas stay inside the
+  pyramid-reference band.
+- Wide-scale sweep 0.6-1.4 with a 0.5-1.5 range: <= 0.04 % scale, <= 0.017 deg.
+- Interleaved matrix: 37.9 / 70.1 / 100.1 / 52.7 ms (480x360, 1 MP, 2.7 MP,
+  5 MP with a 404 px template).
+
+Verdict: kept.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes

@@ -94,6 +94,8 @@ _VOTE_MIN_PEAK = 0.02
 # derived from the template size so the template keeps enough detail for a
 # reliable NCC peak; nothing here depends on the job or the ROI position.
 _SEARCH_MIN_TEMPLATE_PX = 48
+_NCC_ANGLE_HALF = 5.0
+_NCC_SCALE_HALF = 0.05
 _SEARCH_MAX_FACTOR = 8
 _ECC_COARSE_MAX_FACTOR = 2
 
@@ -836,11 +838,11 @@ class ShapeMatch(BaseTool):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
-        low = max(angle_min, angle - 8.0)
-        high = min(angle_max, angle + 8.0)
+        low = max(angle_min, angle - _NCC_ANGLE_HALF)
+        high = min(angle_max, angle + _NCC_ANGLE_HALF)
         if high < low:
             return None
-        grid = np.arange(low, high + 1e-6, 4.0, dtype=np.float32)
+        grid = np.linspace(low, high, 3, dtype=np.float32)
         if grid.size == 0:
             return None
         if not np.any(np.abs(grid - angle) < 1e-4):
@@ -876,7 +878,13 @@ class ShapeMatch(BaseTool):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
-        offsets = (-0.10, -0.05, 0.0, 0.05, 0.10)
+        # Cover at least half of the kernel's scale-hypothesis spacing so the
+        # scan still reaches the true scale for wide user ranges.
+        span = max(0.0, float(scale_max) - float(scale_min))
+        count = 1 if span < 1e-9 else min(5, max(3, int(round(span / 0.10)) + 1))
+        spacing = span / (count - 1) if count > 1 else 0.0
+        half = max(_NCC_SCALE_HALF, spacing * 0.5)
+        offsets = (-half, 0.0, half)
         values = []
         for offset in offsets:
             value = min(scale_max, max(scale_min, scale + offset))
