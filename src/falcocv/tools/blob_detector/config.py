@@ -62,6 +62,22 @@ class BlobDetectorConfig(QWidget):
         self.combo_pol.currentTextChanged.connect(self._on_pol_changed)
         cfg_lyt.addWidget(QLabel("Target Type:"))
         cfg_lyt.addWidget(self.combo_pol)
+
+        self.combo_blob_mode = QComboBox()
+        self.combo_blob_mode.addItems(["Outer blobs", "Nested blobs"])
+        self.combo_blob_mode.setCurrentText(
+            "Nested blobs"
+            if self.tool.params.get("blob_mode", "Outer") == "Nested"
+            else "Outer blobs"
+        )
+        self.combo_blob_mode.setToolTip(
+            "Outer blobs: only the outermost regions.\n"
+            "Nested blobs: also includes isolated regions inside holes, for example "
+            "dark holes inside a bright part surrounded by a dark background."
+        )
+        self.combo_blob_mode.currentTextChanged.connect(self._on_blob_mode_changed)
+        cfg_lyt.addWidget(QLabel("Blob Mode:"))
+        cfg_lyt.addWidget(self.combo_blob_mode)
         self.controls_layout.addWidget(cfg_group)
 
         # --- SEGMENTATION ---
@@ -248,6 +264,9 @@ class BlobDetectorConfig(QWidget):
 
     def _on_bs_changed(self, v): self.tool.params["adaptive_block_size"] = v; self.tool.mark_dirty()
     def _on_pol_changed(self, v): self.tool.params["polarity"] = v; self.tool.mark_dirty()
+    def _on_blob_mode_changed(self, v):
+        self.tool.params["blob_mode"] = "Nested" if v == "Nested blobs" else "Outer"
+        self.tool.mark_dirty()
     def _on_min_changed(self, v): self.tool.params["area_min"] = v; self.tool.mark_dirty()
     def _on_max_changed(self, v): self.tool.params["area_max"] = v; self.tool.mark_dirty()
     def _on_sort_changed(self, v): self.tool.params["sort_mode"] = v; self.tool.mark_dirty()

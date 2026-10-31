@@ -22,6 +22,11 @@ cpp/bin/       → local kernel build output (gitignored)
 ```
 
 ### Rules
+- **FalcoCV is the product.** All tool work, fixes, benchmarks and discussions
+  are framed at the tool/framework level: general behavior, parameters and
+  regressions. A job, dataset or image is only a way to reproduce a general
+  behavior; never tune or design around a specific job unless the user
+  explicitly asks for a job-specific change.
 - Use **Python/OpenCV/NumPy** for tools unless a measured benchmark shows a
   meaningful (>1.5× end-to-end) win.
 - C++ is reserved for **point-cloud generation**, **plane fitting** and

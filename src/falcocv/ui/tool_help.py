@@ -191,6 +191,10 @@ TOOL_HELP["Blob Detector"] = {
          "description": "Constant subtracted from the local mean in adaptive mode."},
         {"name": "polarity", "default": '"Bright Blobs"',
          "description": "'Bright Blobs' detects pixels above threshold. 'Dark Blobs' detects pixels below."},
+        {"name": "blob_mode", "default": '"Outer"',
+         "description": "'Outer' keeps only the outermost contours and matches the historical behaviour. "
+                        "'Nested' also includes isolated regions inside holes, for example dark holes inside "
+                        "a bright part surrounded by a dark background."},
         {"name": "area_min", "default": "100",
          "description": "Minimum blob area in pixels. Smaller blobs are discarded."},
         {"name": "area_max", "default": "1000000",

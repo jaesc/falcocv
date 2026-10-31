@@ -24,6 +24,7 @@ class BlobDetector(BaseTool):
             "adaptive_block_size": 11,
             "adaptive_const": 2,
             "polarity": "Bright Blobs", 
+            "blob_mode": "Outer",
             "area_min": 100,
             "area_max": 1000000,
             "show_contours": True,
@@ -42,6 +43,60 @@ class BlobDetector(BaseTool):
             "count": 0, 
             "results": ToolResults() 
         }
+
+    @staticmethod
+    def _composite_binary_mask(binary, roi):
+        """Place the ROI binary crop back into the full image.
+
+        Axis-aligned crops can be copied directly, using the real crop shape
+        (the clamped ROI may be smaller than the requested one).  Rotated
+        crops must be warped back with the ROI transform; pasting them into
+        an axis-aligned slice is both wrong and shape-dependent.
+        """
+        h_img = int(roi["h_img"])
+        w_img = int(roi["w_img"])
+        mask_full = np.zeros((h_img, w_img), dtype=np.uint8)
+        if binary is None or binary.size == 0:
+            return mask_full
+
+        M_inv = roi.get("M_inv")
+        if M_inv is None:
+            ax = max(0, min(int(roi["ax"]), w_img))
+            ay = max(0, min(int(roi["ay"]), h_img))
+            bh, bw = binary.shape[:2]
+            bw = min(bw, w_img - ax)
+            bh = min(bh, h_img - ay)
+            if bw > 0 and bh > 0:
+                mask_full[ay:ay + bh, ax:ax + bw] = binary[:bh, :bw]
+            return mask_full
+
+        # Rotated ROI: M_inv maps ROI coordinates to image coordinates.
+        rh, rw = binary.shape[:2]
+        corners = np.array(
+            [[0.0, 0.0], [rw, 0.0], [rw, rh], [0.0, rh]],
+            dtype=np.float64,
+        )
+        pts = corners @ M_inv[:, :2].T + M_inv[:, 2]
+        x0 = max(0, int(np.floor(pts[:, 0].min())))
+        y0 = max(0, int(np.floor(pts[:, 1].min())))
+        x1 = min(w_img, int(np.ceil(pts[:, 0].max())) + 1)
+        y1 = min(h_img, int(np.ceil(pts[:, 1].max())) + 1)
+        if x1 <= x0 or y1 <= y0:
+            return mask_full
+
+        M = M_inv.copy()
+        M[0, 2] -= x0
+        M[1, 2] -= y0
+        warped = cv2.warpAffine(
+            binary,
+            M,
+            (x1 - x0, y1 - y0),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+        mask_full[y0:y1, x0:x1] = warped
+        return mask_full
 
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
@@ -75,13 +130,30 @@ class BlobDetector(BaseTool):
             binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
                                           thresh_type, bs, self.params["adaptive_const"])
         
-        # Save Binary Mask Output
-        mask_full = np.zeros(img.data.shape[:2], dtype=np.uint8)
-        mask_full[ay:ay+ah, ax:ax+aw] = binary
-        self.outputs["binary mask"] = mask_full
+        # Save Binary Mask Output.  The ROI crop can be larger than the
+        # clamped image box (rotated ROIs, or ROIs crossing an image edge),
+        # so compositing it with a plain slice raises a shape mismatch.
+        mask_full = self._composite_binary_mask(binary, roi)
+        self.outputs["binary mask"] = VisionImage(mask_full)
 
         # 3. Find Contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # "Outer" keeps the historical RETR_EXTERNAL behaviour.  "Nested"
+        # uses CCOMP and keeps only level-0 contours: one contour per
+        # foreground group, including groups nested inside a hole, while
+        # dropping the hole boundaries themselves.
+        if self.params.get("blob_mode", "Outer") == "Nested":
+            contours, hierarchy = cv2.findContours(
+                binary, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE
+            )
+            if hierarchy is not None:
+                contours = [
+                    cnt for index, cnt in enumerate(contours)
+                    if hierarchy[0][index][3] == -1
+                ]
+        else:
+            contours, _ = cv2.findContours(
+                binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
 
         # 4. Filter and Create Results
         raw_results = []
