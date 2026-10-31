@@ -3,7 +3,7 @@ from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_3d import calib_from_vimg, get_3d_data
-from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.pointcloud_utils import _is_depth_like, propagate_3d
 from falcocv.core.plane_fit import plane_fit as _plane_fit
 
 
@@ -45,21 +45,30 @@ class PlaneFitter(BaseTool):
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
         if img_input is None:
+            self.set_error("Input image is missing")
             self._clear_outputs()
             return
 
         img = img_input if isinstance(img_input, VisionImage) else VisionImage.from_array(img_input)
-        depth = img.data if hasattr(img, "data") else img
-        if depth is None:
+        if not _is_depth_like(img):
+            self.set_error("Input image has no depth data")
             self._clear_outputs()
             return
 
+        depth = img.data
         cloud = get_3d_data(img)
-        if cloud is None or cloud.get("points") is None or len(cloud["points"]) == 0:
+        if cloud is None or cloud.get("points") is None:
+            self.set_error(
+                "Input image has no 3D point cloud; connect a 3D source"
+            )
             self._clear_outputs()
             return
 
         points = cloud["points"]
+        if len(points) == 0:
+            self.set_error("3D point cloud is empty")
+            self._clear_outputs()
+            return
         calib = calib_from_vimg(img)
         rois = self.params.get("rois", [])
 
@@ -88,7 +97,7 @@ class PlaneFitter(BaseTool):
         })
 
         if "error" in output:
-            self.last_error = str(output["error"])
+            self.set_error(str(output["error"]))
             self._clear_outputs()
             return
 
@@ -99,6 +108,19 @@ class PlaneFitter(BaseTool):
         inlier_ratio = float(output["inlier_ratio"])
         rms_error = float(output["rms_error"])
         total = int(output["total_points"])
+
+        if inlier_count <= 0 or total <= 0:
+            self.set_error("Plane fit failed: no inlier points")
+            self._clear_outputs()
+            return
+        if not (
+            np.all(np.isfinite(normal))
+            and np.all(np.isfinite(center))
+            and np.isfinite(distance)
+        ):
+            self.set_error("Plane fit failed: invalid plane parameters")
+            self._clear_outputs()
+            return
 
         selected_indices = np.asarray(output["selected_indices"], dtype=np.int64)
         inlier_mask_sel = np.asarray(output["inlier_mask"], dtype=bool)
