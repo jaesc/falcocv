@@ -237,6 +237,35 @@ Verdict: kept. The extra cost is the number of hypotheses that must be
 measured to guarantee the superset property; the full-image case got faster
 because the coarse vote is 4x cheaper.
 
+### Linear dedupe and local ECC view (2026-10-31)
+
+Two costs found while profiling the monotonicity fix:
+
+- `_dedupe_candidates` compared every candidate with every kept one (O(n^2)).
+  With 32 peaks per hypothesis it reached ~13 ms on a 5 MP frame.
+- `_pyramid_views` built the ECC view (factor 2) for the whole frame even
+  though the ECC only samples a template-sized patch.
+
+Changes:
+
+- Dedupe candidates on a grid of `min_distance` cells and compare only the
+  eight neighbouring cells.  Identical output (proved by a brute-force
+  equivalence test) and ~1 ms instead of ~13 ms on 5 MP.
+- Build the ECC view lazily from a window around the candidate, anchored to
+  the same frame grid (`left = ((ax + wx) // factor) * factor`) and sourced
+  from the frame.  The overlapping pixels are byte-identical to the full view
+  (verified with `np.array_equal`), so the ECC input does not depend on the
+  ROI.  ~0.1 ms instead of a full-frame f2 resize.
+- Measured deltas vs the previous pipeline on the 90-image job: max 0.0003 px,
+  0.00003 deg, 1e-6 scale (floating-point noise only).
+
+ECC at factor 3 was evaluated and **rejected**: compared with factor 2 on the
+same 90 images it moved poses by up to 0.022 px, 0.021 deg and 0.065 % scale,
+above the 0.02 px / 0.01 deg / 0.02 % acceptance gate.  Keep factor 2.
+
+Result: full 5 MP ~90 -> ~85 ms, job ROI ~42 -> ~44 ms (noise), 90/90 both,
+bake-off unchanged (0.064 px / 0.060 deg / 0.080 %).  278 tests.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes

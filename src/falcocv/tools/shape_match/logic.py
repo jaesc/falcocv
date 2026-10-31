@@ -685,23 +685,46 @@ class ShapeMatch(BaseTool):
         different hypotheses and must both reach refinement; merging them by
         position alone can discard the correct scale before the (local) NCC
         scan ever sees it.
+
+        Kept candidates are bucketed on a grid of ``min_distance`` cells, so a
+        candidate only has to be compared with its own and the eight
+        neighbouring cells.  The result is identical to the brute-force
+        comparison but linear instead of quadratic.
         """
+        if min_distance <= 0:
+            return list(candidates)
+        cell = float(min_distance)
+        buckets = {}
         kept = []
         for candidate in candidates:
+            cell_x = int(math.floor(candidate["x"] / cell))
+            cell_y = int(math.floor(candidate["y"] / cell))
             duplicate = False
-            for other in kept:
-                if math.hypot(
-                    candidate["x"] - other["x"], candidate["y"] - other["y"]
-                ) >= min_distance:
-                    continue
-                if abs(candidate["angle"] - other["angle"]) > angle_tolerance:
-                    continue
-                if abs(candidate["scale"] / other["scale"] - 1.0) > scale_tolerance:
-                    continue
-                duplicate = True
-                break
-            if not duplicate:
-                kept.append(candidate)
+            for offset_x in (-1, 0, 1):
+                for offset_y in (-1, 0, 1):
+                    for other in buckets.get((cell_x + offset_x, cell_y + offset_y), ()):
+                        if math.hypot(
+                            candidate["x"] - other["x"],
+                            candidate["y"] - other["y"],
+                        ) >= min_distance:
+                            continue
+                        if abs(candidate["angle"] - other["angle"]) > angle_tolerance:
+                            continue
+                        if (
+                            abs(candidate["scale"] / other["scale"] - 1.0)
+                            > scale_tolerance
+                        ):
+                            continue
+                        duplicate = True
+                        break
+                    if duplicate:
+                        break
+                if duplicate:
+                    break
+            if duplicate:
+                continue
+            kept.append(candidate)
+            buckets.setdefault((cell_x, cell_y), []).append(candidate)
         return kept
 
     def _vote_factor(self, roi_width=0, roi_height=0) -> int:
@@ -1488,45 +1511,92 @@ class ShapeMatch(BaseTool):
             0.0,
         )
 
+    def _local_view(self, frame_gray, ax, ay, x, y, factor):
+        """Crop a candidate window from the frame on the global grid.
+
+        The window starts at a multiple of ``factor`` in frame coordinates and
+        therefore contains exactly the same downscaled pixels as the full-ROI
+        view.  Only the extent differs, and the ECC patch is always inside it.
+        """
+        width, height = self._template_size
+        margin = int(math.ceil(0.5 * math.hypot(width, height))) + 32
+        left = int(math.floor(ax + x - margin))
+        top = int(math.floor(ay + y - margin))
+        right = int(math.ceil(ax + x + margin))
+        bottom = int(math.ceil(ay + y + margin))
+        left = (left // factor) * factor
+        top = (top // factor) * factor
+        right = ((right + factor - 1) // factor) * factor
+        bottom = ((bottom + factor - 1) // factor) * factor
+        frame_h, frame_w = frame_gray.shape[:2]
+        left = max(0, min(left, frame_w - 1))
+        top = max(0, min(top, frame_h - 1))
+        right = max(left + 1, min(right, frame_w))
+        bottom = max(top + 1, min(bottom, frame_h))
+        crop = frame_gray[top:bottom, left:right]
+        small = cv2.resize(
+            crop,
+            (
+                max(1, crop.shape[1] // factor),
+                max(1, crop.shape[0] // factor),
+            ),
+            interpolation=cv2.INTER_AREA,
+        )
+        scale_x = small.shape[1] / float(crop.shape[1])
+        scale_y = small.shape[0] / float(crop.shape[0])
+        return small, (
+            scale_x,
+            scale_y,
+            (ax - left) * scale_x,
+            (ay - top) * scale_y,
+        )
+
     def _ecc_solver(self, gray, x, y, angle, scale,
                     angle_min, angle_max, scale_min, scale_max,
-                    ecc_gray=None, ecc_map=None):
+                    ecc_gray=None, ecc_map=None,
+                    ecc_frame=None, ecc_origin=(0, 0)):
         factor = max(1, int(self._ecc_factor))
         fixed_scale = abs(float(scale_max) - float(scale_min)) < 1e-9
         ecc_motion = cv2.MOTION_EUCLIDEAN if fixed_scale else cv2.MOTION_AFFINE
         pre_refined = False
         pre_coefficient = 0.0
-        if factor > 1 and self._ecc_template_gray is not None and ecc_map is not None:
-            scene = ecc_gray
-            scale_x, scale_y, origin_x, origin_y = ecc_map
-            start = self._ecc_refine(
-                scene,
-                x * scale_x + origin_x,
-                y * scale_y + origin_y,
-                angle,
-                scale,
-                template_gray=self._ecc_template_gray,
-                motion=ecc_motion,
-                template_scale=(
-                    self._ecc_template_gray.shape[1] / float(self._template_size[0]),
-                    self._ecc_template_gray.shape[0] / float(self._template_size[1]),
-                ),
-                scene_scale=(scale_x, scale_y),
-                scene_offset=(origin_x, origin_y),
-            )
-            if start is not None:
-                sx, sy, start_angle, start_scale, start_cc = start
-                candidate = (sx, sy, start_angle, start_scale)
-                if (
-                    abs(start_angle - angle) <= 5.0
-                    and abs(start_scale / scale - 1.0) <= 0.10
-                    and math.hypot(
-                        candidate[0] - x, candidate[1] - y
-                    ) <= 8.0
-                ):
-                    x, y, angle, scale = candidate
-                    pre_refined = True
-                    pre_coefficient = float(start_cc)
+        if factor > 1 and self._ecc_template_gray is not None:
+            if ecc_frame is not None:
+                scene, ecc_map = self._local_view(
+                    ecc_frame, ecc_origin[0], ecc_origin[1], x, y, factor
+                )
+            else:
+                scene = ecc_gray
+            if scene is not None and ecc_map is not None:
+                scale_x, scale_y, origin_x, origin_y = ecc_map
+                start = self._ecc_refine(
+                    scene,
+                    x * scale_x + origin_x,
+                    y * scale_y + origin_y,
+                    angle,
+                    scale,
+                    template_gray=self._ecc_template_gray,
+                    motion=ecc_motion,
+                    template_scale=(
+                        self._ecc_template_gray.shape[1] / float(self._template_size[0]),
+                        self._ecc_template_gray.shape[0] / float(self._template_size[1]),
+                    ),
+                    scene_scale=(scale_x, scale_y),
+                    scene_offset=(origin_x, origin_y),
+                )
+                if start is not None:
+                    sx, sy, start_angle, start_scale, start_cc = start
+                    candidate = (sx, sy, start_angle, start_scale)
+                    if (
+                        abs(start_angle - angle) <= 5.0
+                        and abs(start_scale / scale - 1.0) <= 0.10
+                        and math.hypot(
+                            candidate[0] - x, candidate[1] - y
+                        ) <= 8.0
+                    ):
+                        x, y, angle, scale = candidate
+                        pre_refined = True
+                        pre_coefficient = float(start_cc)
 
         if pre_refined:
             # The coarse affine pass already refined angle/scale; at full
@@ -1654,7 +1724,8 @@ class ShapeMatch(BaseTool):
                           candidate, theta_start, theta_end, scale_start, scale_end,
                           alignment_gx=None, alignment_gy=None, alignment_scale=1.0,
                           search_gray=None, search_map=None,
-                          ecc_gray=None, ecc_map=None, solve=True):
+                          ecc_gray=None, ecc_map=None, solve=True,
+                          ecc_frame=None, ecc_origin=(0, 0)):
         # ``theta_*`` and ``angle`` below are internal OpenCV angles
         # (positive = counter-clockwise); the caller converts the final pose.
         x = float(candidate["x"])
@@ -1690,12 +1761,14 @@ class ShapeMatch(BaseTool):
             x, y, angle, scale, ncc_score, alignment,
             theta_start, theta_end, scale_start, scale_end,
             ecc_gray=ecc_gray, ecc_map=ecc_map,
+            ecc_frame=ecc_frame, ecc_origin=ecc_origin,
         )
 
     def _solve_pose(self, gray, gx, gy, edge_cache, dt_cache, gradient_cache,
                     x, y, angle, scale, ncc_score, alignment,
                     theta_start, theta_end, scale_start, scale_end,
-                    ecc_gray=None, ecc_map=None):
+                    ecc_gray=None, ecc_map=None,
+                    ecc_frame=None, ecc_origin=(0, 0)):
         solver = None
         ecc_cc = None
         visible_fraction = None
@@ -1707,6 +1780,8 @@ class ShapeMatch(BaseTool):
                 theta_start, theta_end, scale_start, scale_end,
                 ecc_gray=ecc_gray,
                 ecc_map=ecc_map,
+                ecc_frame=ecc_frame,
+                ecc_origin=ecc_origin,
             )
             if pose is not None:
                 x, y, angle, scale = pose
@@ -1864,11 +1939,12 @@ class ShapeMatch(BaseTool):
             ]
             views = self._pyramid_views(
                 frame_gray, ax, ay, roi["aw"], roi["ah"],
-                (vote_factor, search_factor, ecc_factor),
+                (vote_factor, search_factor),
             )
             vote_gray, vote_map = views[vote_factor]
             search_gray, search_map = views[search_factor]
-            ecc_gray, ecc_map = views[ecc_factor]
+            ecc_gray, ecc_map = None, None
+            ecc_frame, ecc_origin = frame_gray, (ax, ay)
         else:
             # Rotated ROIs are already resampled by ``extract_roi``; keep the
             # previous crop-resize path for them.
@@ -1877,6 +1953,7 @@ class ShapeMatch(BaseTool):
                 gray_for_match, search_factor
             )
             ecc_gray, ecc_map = self._resized_view(gray_for_match, ecc_factor)
+            ecc_frame, ecc_origin = None, (0, 0)
         # ``spatialGradient`` is the same 3x3 Sobel kernel as two separate
         # ``Sobel`` calls but computes both axes in one pass.  Magnitude and
         # orientation are only needed on Canny edge pixels, so avoid the full
@@ -2077,6 +2154,8 @@ class ShapeMatch(BaseTool):
                 scale_end,
                 ecc_gray=ecc_gray,
                 ecc_map=ecc_map,
+                ecc_frame=ecc_frame,
+                ecc_origin=ecc_origin,
             )
             if refined is None:
                 if diagnostics:

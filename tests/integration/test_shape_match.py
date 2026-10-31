@@ -656,3 +656,42 @@ def test_shape_match_larger_roi_keeps_the_match():
         assert abs(result.y - 190.0) <= 0.5, roi
         assert abs(result.angle - 12.0) <= 0.2, roi
         assert abs(result.scale - 1.05) / 1.05 <= 0.01, roi
+
+def test_shape_match_spatial_dedupe_matches_bruteforce():
+    rng = np.random.default_rng(5)
+    candidates = [
+        {
+            "x": float(rng.uniform(0, 800)),
+            "y": float(rng.uniform(0, 600)),
+            "angle": float(rng.choice([-20.0, -10.0, 0.0, 10.0, 20.0])),
+            "scale": float(rng.choice([0.9, 1.0, 1.1])),
+            "peak": float(rng.uniform(0, 1)),
+        }
+        for _ in range(500)
+    ]
+
+    def bruteforce(items, min_distance, angle_tolerance, scale_tolerance):
+        kept = []
+        for candidate in items:
+            duplicate = False
+            for other in kept:
+                if np.hypot(
+                    candidate["x"] - other["x"], candidate["y"] - other["y"]
+                ) >= min_distance:
+                    continue
+                if abs(candidate["angle"] - other["angle"]) > angle_tolerance:
+                    continue
+                if abs(candidate["scale"] / other["scale"] - 1.0) > scale_tolerance:
+                    continue
+                duplicate = True
+                break
+            if not duplicate:
+                kept.append(candidate)
+        return kept
+
+    fast = ShapeMatch._dedupe_candidates(
+        candidates, 60.0, angle_tolerance=5.0, scale_tolerance=0.05
+    )
+    slow = bruteforce(candidates, 60.0, 5.0, 0.05)
+    assert [(c["x"], c["y"]) for c in fast] == [(c["x"], c["y"]) for c in slow]
+
