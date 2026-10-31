@@ -266,6 +266,18 @@ above the 0.02 px / 0.01 deg / 0.02 % acceptance gate.  Keep factor 2.
 Result: full 5 MP ~90 -> ~85 ms, job ROI ~42 -> ~44 ms (noise), 90/90 both,
 bake-off unchanged (0.064 px / 0.060 deg / 0.080 %).  278 tests.
 
+### Exact-multiple pyramid crops (2026-10-31)
+
+`cv2.resize(..., INTER_AREA)` drops to a slow generic path when the source
+size is not an exact multiple of the factor.  For a 2588x1940 frame the 8x
+view (323.5) cost 9.2 ms while the 4x view cost 0.5 ms.
+
+Fix: crop the source to an exact multiple of the factor before resizing (the
+dropped pixels are at most `factor-1` at the far frame edge).  Full-frame
+pyramid: 9.9 -> 1.8 ms.  5 MP job: ~85 -> ~73 ms.  Bake-off unchanged
+(0.064 px / 0.060 deg / 0.080 %); two occlusion-path images moved 0.13 deg
+because the grid is now exactly 1/8 instead of 0.1252.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes

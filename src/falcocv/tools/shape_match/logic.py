@@ -1475,16 +1475,22 @@ class ShapeMatch(BaseTool):
             right = min(width, right)
             bottom = min(height, bottom)
             crop = frame_gray[top:bottom, left:right]
+            # INTER_AREA falls back to a slow generic path unless the source
+            # size is an exact multiple of the factor; drop the remainder at
+            # the far edge (never more than factor-1 pixels, always outside the
+            # ROI interior) so the fast path is used.
+            crop_w = (crop.shape[1] // factor) * factor
+            crop_h = (crop.shape[0] // factor) * factor
+            if crop_w <= 0 or crop_h <= 0:
+                continue
+            crop = crop[:crop_h, :crop_w]
             small = cv2.resize(
                 crop,
-                (
-                    max(1, crop.shape[1] // factor),
-                    max(1, crop.shape[0] // factor),
-                ),
+                (crop_w // factor, crop_h // factor),
                 interpolation=cv2.INTER_AREA,
             )
-            scale_x = small.shape[1] / float(crop.shape[1])
-            scale_y = small.shape[0] / float(crop.shape[0])
+            scale_x = small.shape[1] / float(crop_w)
+            scale_y = small.shape[0] / float(crop_h)
             views[factor] = (
                 small,
                 (
