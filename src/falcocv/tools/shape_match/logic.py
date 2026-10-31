@@ -71,22 +71,30 @@ _ECC_MIN_CC = 0.85
 _ECC_POLISH_MIN_CC = 0.995
 _MIN_NCC = 0.30
 _MAX_MATCHES = 100
-_MAX_REFINE = 8
-_MAX_KERNEL_CANDIDATES = 64
+_MAX_REFINE = 16
+_MAX_NCC_CANDIDATES = 10
+_MAX_NCC_SCANS = 6
+_MAX_PRE_GATE = 32
+_MAX_SOLVE = 12
+_MAX_KERNEL_CANDIDATES = 1024
+_VOTE_PEAKS_PER_HYPOTHESIS = 32
 
-# Coarse voting is deliberately cheap: a downscaled image, capped edge count
-# and a subset of the strongest model features.  Full-resolution refinement
-# uses the complete model.
+# Coarse voting is deliberately cheap, but must not depend on the ROI extent:
+# the downscale is derived from the template and the edge budget is a fixed
+# per-cell quota.  Full-resolution refinement uses the complete model.
 _VOTE_MODEL_FEATURES = 500
-_VOTE_EDGE_CAP = 4000
+_VOTE_EDGE_QUOTA = 48
 _VOTE_MIN_TEMPLATE_PX = 40
+_VOTE_TARGET_TEMPLATE_PX = 96
+_VOTE_MAX_FACTOR = 4
 _VOTE_EDGE_CELL = 32
+_VOTE_MIN_PEAK = 0.02
 
 # NCC angle/scale scans run on a reduced view of the search ROI.  The factor is
 # derived from the template size so the template keeps enough detail for a
 # reliable NCC peak; nothing here depends on the job or the ROI position.
 _SEARCH_MIN_TEMPLATE_PX = 48
-_SEARCH_MAX_FACTOR = 4
+_SEARCH_MAX_FACTOR = 8
 _ECC_COARSE_MAX_FACTOR = 2
 
 
@@ -644,7 +652,7 @@ class ShapeMatch(BaseTool):
                 scales=np.ascontiguousarray(scales, dtype=np.float32),
                 bins=32,
                 min_scene_mag=5.0,
-                peaks_per_hypothesis=3,
+                peaks_per_hypothesis=_VOTE_PEAKS_PER_HYPOTHESIS,
                 max_candidates=_MAX_KERNEL_CANDIDATES,
             )
         except Exception as exc:
@@ -669,43 +677,55 @@ class ShapeMatch(BaseTool):
         return candidates
 
     @staticmethod
-    def _dedupe_candidates(candidates, min_distance):
+    def _dedupe_candidates(candidates, min_distance,
+                           angle_tolerance=180.0, scale_tolerance=1.0):
+        """Drop only near-identical hypotheses.
+
+        Two peaks at the same position but different angle or scale are
+        different hypotheses and must both reach refinement; merging them by
+        position alone can discard the correct scale before the (local) NCC
+        scan ever sees it.
+        """
         kept = []
         for candidate in candidates:
-            if all(
-                math.hypot(candidate["x"] - other["x"], candidate["y"] - other["y"])
-                >= min_distance
-                for other in kept
-            ):
+            duplicate = False
+            for other in kept:
+                if math.hypot(
+                    candidate["x"] - other["x"], candidate["y"] - other["y"]
+                ) >= min_distance:
+                    continue
+                if abs(candidate["angle"] - other["angle"]) > angle_tolerance:
+                    continue
+                if abs(candidate["scale"] / other["scale"] - 1.0) > scale_tolerance:
+                    continue
+                duplicate = True
+                break
+            if not duplicate:
                 kept.append(candidate)
         return kept
 
-    def _vote_factor(self, roi_width, roi_height) -> int:
-        area = int(roi_width) * int(roi_height)
-        if area >= 2_000_000:
-            factor = 4
-        elif area >= 250_000:
-            factor = 2
-        else:
-            factor = 1
+    def _vote_factor(self, roi_width=0, roi_height=0) -> int:
+        """Vote downscale, derived from the template only.
+
+        The ROI extent must not change the vote resolution: a bigger search
+        area may add candidates but never take detail away from the template.
+        """
         min_template = min(self._template_size) if self._template_size[0] else 0
-        while factor > 1 and min_template / factor < _VOTE_MIN_TEMPLATE_PX:
-            factor //= 2
-        return max(1, factor)
+        if min_template <= 0:
+            return 1
+        factor = max(1, min_template // _VOTE_TARGET_TEMPLATE_PX)
+        return max(1, min(_VOTE_MAX_FACTOR, factor))
 
     @staticmethod
-    def _cap_scene_edges(mag, edges, target=_VOTE_EDGE_CAP, cell=_VOTE_EDGE_CELL):
-        # ``np.nonzero`` allocates two index arrays for every pixel run.  Most
-        # scenes are already below the cap, so a cheap count avoids that work
-        # on the common path.
-        if target > 0 and cv2.countNonZero(edges) <= target:
+    def _cap_scene_edges(mag, edges, cell=_VOTE_EDGE_CELL, quota=_VOTE_EDGE_QUOTA):
+        # A fixed per-cell quota keeps the same edge budget for a given part
+        # regardless of how much background the ROI contains.  A global target
+        # divided by the number of cells made bigger ROIs starve the object.
+        if quota <= 0:
             return edges
         ys, xs = np.nonzero(edges)
         height, width = edges.shape
         cells_x = max(1, (width + cell - 1) // cell)
-        cells_y = max(1, (height + cell - 1) // cell)
-        cells = cells_x * cells_y
-        per_cell = max(8, int(math.ceil(target / cells)))
         keys = (ys // cell) * cells_x + (xs // cell)
         values = mag[ys, xs]
         # Single composite sort key: cell first, then descending magnitude.
@@ -719,7 +739,7 @@ class ShapeMatch(BaseTool):
         boundaries = np.r_[0, np.flatnonzero(np.diff(sorted_keys)) + 1]
         counts = np.diff(np.r_[boundaries, len(sorted_keys)])
         ranks = np.arange(len(sorted_keys)) - np.repeat(boundaries, counts)
-        selected = order[ranks < per_cell]
+        selected = order[ranks < quota]
         capped = np.zeros_like(edges)
         capped[ys[selected], xs[selected]] = 255
         return capped
@@ -733,7 +753,7 @@ class ShapeMatch(BaseTool):
     # ------------------------------------------------------------------
     # NCC / ECC refinement
     # ------------------------------------------------------------------
-    def _ncc_match(self, scene_gray, rendered, center_x, center_y, margin=12, search=12):
+    def _ncc_match(self, scene_gray, rendered, center_x, center_y, margin=10, search=8):
         height, width = rendered.shape[:2]
         left = int(round(center_x)) - width // 2 - margin
         top = int(round(center_y)) - height // 2 - margin
@@ -814,7 +834,7 @@ class ShapeMatch(BaseTool):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
-        offsets = (-0.05, -0.025, 0.0, 0.025, 0.05)
+        offsets = (-0.10, -0.05, 0.0, 0.05, 0.10)
         values = []
         for offset in offsets:
             value = min(scale_max, max(scale_min, scale + offset))
@@ -874,7 +894,8 @@ class ShapeMatch(BaseTool):
 
     def _ecc_refine(self, scene_gray, x, y, angle, scale, template_gray=None,
                     motion=cv2.MOTION_AFFINE,
-                    template_scale=(1.0, 1.0), scene_scale=(1.0, 1.0)):
+                    template_scale=(1.0, 1.0), scene_scale=(1.0, 1.0),
+                    scene_offset=(0.0, 0.0)):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
@@ -915,14 +936,24 @@ class ShapeMatch(BaseTool):
         # so conjugating by both keeps the pose in full-resolution units.
         template_x, template_y = template_scale
         scene_x, scene_y = scene_scale
+        offset_x, offset_y = scene_offset
         if (
             abs(template_x - 1.0) > 1e-9
             or abs(template_y - 1.0) > 1e-9
             or abs(scene_x - 1.0) > 1e-9
             or abs(scene_y - 1.0) > 1e-9
+            or abs(offset_x) > 1e-9
+            or abs(offset_y) > 1e-9
         ):
             template_matrix = np.diag([template_x, template_y, 1.0])
-            scene_matrix = np.diag([1.0 / scene_x, 1.0 / scene_y, 1.0])
+            # ``view = full * scale + offset``, so full = (view - offset)/scale.
+            scene_matrix = np.array(
+                [
+                    [1.0 / scene_x, 0.0, -offset_x / scene_x],
+                    [0.0, 1.0 / scene_y, -offset_y / scene_y],
+                    [0.0, 0.0, 1.0],
+                ]
+            )
             composed = scene_matrix @ composed @ template_matrix
             center_x = (width / 2.0) / template_x
             center_y = (height / 2.0) / template_y
@@ -1315,20 +1346,40 @@ class ShapeMatch(BaseTool):
             scale,
         )
 
+    def _candidate_ncc(self, candidate, search_gray, search_map,
+                       theta_start, theta_end, scale_start, scale_end):
+        """Single-pose NCC for a vote proposal (cheap pre-gate)."""
+        if search_gray is None or search_map is None:
+            return None
+        angle = float(np.clip(candidate["angle"], theta_start, theta_end))
+        scale = float(np.clip(candidate["scale"], scale_start, scale_end))
+        rendered = self._render_search(angle, scale, self._search_template_gray)
+        if rendered is None:
+            return None
+        scale_x, scale_y, origin_x, origin_y = search_map
+        match = self._ncc_match(
+            search_gray,
+            rendered,
+            candidate["x"] * scale_x + origin_x,
+            candidate["y"] * scale_y + origin_y,
+        )
+        if match is None:
+            return None
+        return float(match[2])
+
     def _coarse_pose(self, gray, gx, gy, x, y, angle, scale,
                      angle_min, angle_max, scale_min, scale_max,
                      alignment_gx=None, alignment_gy=None, alignment_scale=1.0,
-                     search_gray=None, search_factor=1):
-        factor = max(1, int(search_factor))
-        if factor > 1 and search_gray is not None and self._search_template_gray is not None:
-            scale_x = search_gray.shape[1] / float(gray.shape[1])
-            scale_y = search_gray.shape[0] / float(gray.shape[0])
+                     search_gray=None, search_map=None):
+        if search_gray is not None and search_map is not None:
+            scale_x, scale_y, origin_x, origin_y = search_map
             scene = search_gray
             template = self._search_template_gray
-            sx = x * scale_x
-            sy = y * scale_y
+            sx = x * scale_x + origin_x
+            sy = y * scale_y + origin_y
         else:
             scale_x = scale_y = 1.0
+            origin_x = origin_y = 0.0
             scene = gray
             template = self._template_gray
             sx = x
@@ -1345,8 +1396,8 @@ class ShapeMatch(BaseTool):
         )
         if scale_result is not None:
             ncc_score, scale, sx, sy = scale_result
-        x = sx / scale_x
-        y = sy / scale_y
+        x = (sx - origin_x) / scale_x
+        y = (sy - origin_y) / scale_y
 
         # Cheap rejection: a real match keeps a healthy NCC even on the reduced
         # search view, so do not pay for full-resolution alignment or a solver
@@ -1376,23 +1427,82 @@ class ShapeMatch(BaseTool):
         height = max(8, int(round(gray.shape[0] / factor)))
         return cv2.resize(gray, (width, height), interpolation=cv2.INTER_AREA)
 
+    @staticmethod
+    def _pyramid_views(frame_gray, ax, ay, aw, ah, factors):
+        """Build ROI views on a grid anchored to the frame origin.
+
+        The crop starts at a multiple of the factor, so the downscaled pixels
+        are the same blocks a full-frame resize would use.  A larger ROI then
+        only adds blocks; it cannot change the sampling phase of the part, and
+        the cost stays proportional to the ROI.
+        """
+        height, width = frame_gray.shape[:2]
+        views = {}
+        for factor in sorted({max(1, int(value)) for value in factors}):
+            if factor <= 1:
+                view = frame_gray[ay:ay + ah, ax:ax + aw]
+                views[factor] = (view, (1.0, 1.0, 0.0, 0.0))
+                continue
+            left = (int(ax) // factor) * factor
+            top = (int(ay) // factor) * factor
+            right = int(math.ceil((ax + aw) / float(factor))) * factor
+            bottom = int(math.ceil((ay + ah) / float(factor))) * factor
+            left = max(0, left)
+            top = max(0, top)
+            right = min(width, right)
+            bottom = min(height, bottom)
+            crop = frame_gray[top:bottom, left:right]
+            small = cv2.resize(
+                crop,
+                (
+                    max(1, crop.shape[1] // factor),
+                    max(1, crop.shape[0] // factor),
+                ),
+                interpolation=cv2.INTER_AREA,
+            )
+            scale_x = small.shape[1] / float(crop.shape[1])
+            scale_y = small.shape[0] / float(crop.shape[0])
+            views[factor] = (
+                small,
+                (
+                    scale_x,
+                    scale_y,
+                    (ax - left) * scale_x,
+                    (ay - top) * scale_y,
+                ),
+            )
+        return views
+
+    @staticmethod
+    def _resized_view(gray, factor):
+        """Resize a crop and return the view plus its ROI-to-view map."""
+        if factor <= 1:
+            return gray, (1.0, 1.0, 0.0, 0.0)
+        width = max(8, int(round(gray.shape[1] / factor)))
+        height = max(8, int(round(gray.shape[0] / factor)))
+        view = cv2.resize(gray, (width, height), interpolation=cv2.INTER_AREA)
+        return view, (
+            view.shape[1] / float(gray.shape[1]),
+            view.shape[0] / float(gray.shape[0]),
+            0.0,
+            0.0,
+        )
+
     def _ecc_solver(self, gray, x, y, angle, scale,
                     angle_min, angle_max, scale_min, scale_max,
-                    search_gray=None, search_factor=1):
+                    ecc_gray=None, ecc_map=None):
         factor = max(1, int(self._ecc_factor))
         fixed_scale = abs(float(scale_max) - float(scale_min)) < 1e-9
         ecc_motion = cv2.MOTION_EUCLIDEAN if fixed_scale else cv2.MOTION_AFFINE
         pre_refined = False
-        if factor > 1 and self._ecc_template_gray is not None:
-            scene = self._reduced_gray(
-                gray, factor, search_gray, search_factor
-            )
-            scale_x = scene.shape[1] / float(gray.shape[1])
-            scale_y = scene.shape[0] / float(gray.shape[0])
+        pre_coefficient = 0.0
+        if factor > 1 and self._ecc_template_gray is not None and ecc_map is not None:
+            scene = ecc_gray
+            scale_x, scale_y, origin_x, origin_y = ecc_map
             start = self._ecc_refine(
                 scene,
-                x * scale_x,
-                y * scale_y,
+                x * scale_x + origin_x,
+                y * scale_y + origin_y,
                 angle,
                 scale,
                 template_gray=self._ecc_template_gray,
@@ -1402,9 +1512,10 @@ class ShapeMatch(BaseTool):
                     self._ecc_template_gray.shape[0] / float(self._template_size[1]),
                 ),
                 scene_scale=(scale_x, scale_y),
+                scene_offset=(origin_x, origin_y),
             )
             if start is not None:
-                sx, sy, start_angle, start_scale, _ = start
+                sx, sy, start_angle, start_scale, start_cc = start
                 candidate = (sx, sy, start_angle, start_scale)
                 if (
                     abs(start_angle - angle) <= 5.0
@@ -1415,6 +1526,19 @@ class ShapeMatch(BaseTool):
                 ):
                     x, y, angle, scale = candidate
                     pre_refined = True
+                    pre_coefficient = float(start_cc)
+
+        if pre_refined:
+            # The coarse affine pass already refined angle/scale; at full
+            # resolution only the translation needs a sub-pixel correction,
+            # and a rendered NCC match is far cheaper than another ECC pass.
+            x, y = self._ncc_translate(gray, x, y, angle, scale)
+            if (
+                not (angle_min - 0.05 <= angle <= angle_max + 0.05)
+                or not (scale_min - 0.05 <= scale <= scale_max + 0.05)
+            ):
+                return None, 0.0
+            return (x, y, angle, scale), pre_coefficient
 
         result = self._ecc_refine(
             gray,
@@ -1422,7 +1546,7 @@ class ShapeMatch(BaseTool):
             y,
             angle,
             scale,
-            motion=cv2.MOTION_TRANSLATION if pre_refined else ecc_motion,
+            motion=ecc_motion,
         )
         if result is None:
             return None, 0.0
@@ -1476,7 +1600,7 @@ class ShapeMatch(BaseTool):
 
         result = self._dt_scan_axis(
             gx, gy, dt, x, y, angle, scale, "scale",
-            max(scale_min, scale - 0.010), min(scale_max, scale + 0.010), 0.005,
+            max(scale_min, scale - 0.020), min(scale_max, scale + 0.020), 0.002,
         )
         if result:
             scale = result[0]
@@ -1529,7 +1653,8 @@ class ShapeMatch(BaseTool):
     def _refine_candidate(self, gray, gx, gy, edge_cache, dt_cache, gradient_cache,
                           candidate, theta_start, theta_end, scale_start, scale_end,
                           alignment_gx=None, alignment_gy=None, alignment_scale=1.0,
-                          search_gray=None, search_factor=1):
+                          search_gray=None, search_map=None,
+                          ecc_gray=None, ecc_map=None, solve=True):
         # ``theta_*`` and ``angle`` below are internal OpenCV angles
         # (positive = counter-clockwise); the caller converts the final pose.
         x = float(candidate["x"])
@@ -1544,7 +1669,7 @@ class ShapeMatch(BaseTool):
             alignment_gy=alignment_gy,
             alignment_scale=alignment_scale,
             search_gray=search_gray,
-            search_factor=search_factor,
+            search_map=search_map,
         )
         if coarse is None:
             return None, {"warning": "ncc_refinement_failed"}
@@ -1558,6 +1683,19 @@ class ShapeMatch(BaseTool):
                 "alignment": alignment,
             }
 
+        if not solve:
+            return (x, y, angle, scale, ncc_score, alignment), None
+        return self._solve_pose(
+            gray, gx, gy, edge_cache, dt_cache, gradient_cache,
+            x, y, angle, scale, ncc_score, alignment,
+            theta_start, theta_end, scale_start, scale_end,
+            ecc_gray=ecc_gray, ecc_map=ecc_map,
+        )
+
+    def _solve_pose(self, gray, gx, gy, edge_cache, dt_cache, gradient_cache,
+                    x, y, angle, scale, ncc_score, alignment,
+                    theta_start, theta_end, scale_start, scale_end,
+                    ecc_gray=None, ecc_map=None):
         solver = None
         ecc_cc = None
         visible_fraction = None
@@ -1567,8 +1705,8 @@ class ShapeMatch(BaseTool):
             pose, ecc_cc = self._ecc_solver(
                 gray, x, y, angle, scale,
                 theta_start, theta_end, scale_start, scale_end,
-                search_gray=search_gray,
-                search_factor=search_factor,
+                ecc_gray=ecc_gray,
+                ecc_map=ecc_map,
             )
             if pose is not None:
                 x, y, angle, scale = pose
@@ -1705,26 +1843,40 @@ class ShapeMatch(BaseTool):
             gray_for_match = cv2.normalize(
                 gray, None, 0, 255, cv2.NORM_MINMAX
             ).astype(np.uint8)
-        factor = self._vote_factor(roi["aw"], roi["ah"])
-        if factor > 1:
-            vote_w = max(1, int(round(roi["aw"] / factor)))
-            vote_h = max(1, int(round(roi["ah"] / factor)))
-            vote_gray = cv2.resize(
-                gray_for_match, (vote_w, vote_h), interpolation=cv2.INTER_AREA
-            )
-        else:
-            vote_gray = gray_for_match
 
+        vote_factor = self._vote_factor()
         search_factor = int(self._search_factor)
-        if search_factor > 1 and self._search_template_gray is not None:
-            search_w = max(8, int(round(roi["aw"] / search_factor)))
-            search_h = max(8, int(round(roi["ah"] / search_factor)))
-            search_gray = cv2.resize(
-                gray_for_match, (search_w, search_h), interpolation=cv2.INTER_AREA
+        ecc_factor = int(self._ecc_factor)
+        vote_map = search_map = ecc_map = None
+        if roi_m_inv is None:
+            # Every coarse view is a crop of one fixed-phase pyramid built from
+            # the whole frame.  A larger search ROI can then only add scene
+            # pixels: the part is voted and scanned on exactly the same pixels
+            # regardless of where the ROI starts.
+            frame = v_img.data
+            frame_gray = self._gray(frame)
+            if frame_gray.dtype != np.uint8:
+                frame_gray = cv2.normalize(
+                    frame_gray, None, 0, 255, cv2.NORM_MINMAX
+                ).astype(np.uint8)
+            gray_for_match = frame_gray[
+                ay:ay + roi["ah"], ax:ax + roi["aw"]
+            ]
+            views = self._pyramid_views(
+                frame_gray, ax, ay, roi["aw"], roi["ah"],
+                (vote_factor, search_factor, ecc_factor),
             )
+            vote_gray, vote_map = views[vote_factor]
+            search_gray, search_map = views[search_factor]
+            ecc_gray, ecc_map = views[ecc_factor]
         else:
-            search_factor = 1
-            search_gray = gray_for_match
+            # Rotated ROIs are already resampled by ``extract_roi``; keep the
+            # previous crop-resize path for them.
+            vote_gray, vote_map = self._resized_view(gray_for_match, vote_factor)
+            search_gray, search_map = self._resized_view(
+                gray_for_match, search_factor
+            )
+            ecc_gray, ecc_map = self._resized_view(gray_for_match, ecc_factor)
         # ``spatialGradient`` is the same 3x3 Sobel kernel as two separate
         # ``Sobel`` calls but computes both axes in one pass.  Magnitude and
         # orientation are only needed on Canny edge pixels, so avoid the full
@@ -1777,8 +1929,8 @@ class ShapeMatch(BaseTool):
             count = min(5, max(3, int(round(scale_span / 0.10)) + 1))
             scales = list(np.linspace(scale_start, scale_end, count))
 
-        factor_x = gray_for_match.shape[1] / vote_gray.shape[1]
-        factor_y = gray_for_match.shape[0] / vote_gray.shape[0]
+        factor_x = 1.0 / vote_map[0]
+        factor_y = 1.0 / vote_map[1]
         coarse = self._kernel_coarse(
             vote_mag,
             vote_theta,
@@ -1788,20 +1940,55 @@ class ShapeMatch(BaseTool):
             model_scale_x=factor_x,
             model_scale_y=factor_y,
         )
+        vx_scale, vy_scale, vx_origin, vy_origin = vote_map
         for candidate in coarse:
-            candidate["x"] *= factor_x
-            candidate["y"] *= factor_y
+            candidate["x"] = (candidate["x"] - vx_origin) / vx_scale
+            candidate["y"] = (candidate["y"] - vy_origin) / vy_scale
         coarse.sort(key=lambda item: item["peak"], reverse=True)
         if coarse:
-            peak_floor = max(0.03, coarse[0]["peak"] * 0.15)
+            peak_floor = max(_VOTE_MIN_PEAK, coarse[0]["peak"] * 0.10)
             coarse = [item for item in coarse if item["peak"] >= peak_floor]
         min_distance = max(10.0, min(self._template_size) * 0.4)
         max_matches = int(self.params["max_matches"])
         limit = _MAX_MATCHES if max_matches <= 0 else min(max_matches, _MAX_MATCHES)
+        # Merge only near-identical hypotheses.  A bigger ROI adds clutter
+        # peaks, and an aggressive distance here used to drop the true
+        # candidate before it was ever refined.
         coarse = self._dedupe_candidates(
-            coarse, max(min_distance, min(self._template_size) * 0.75)
+            coarse,
+            max(8.0, min(self._template_size) * 0.15),
+            angle_tolerance=max(1.0, coarse_angle * 0.5),
+            scale_tolerance=0.05,
         )
-        coarse = coarse[: min(_MAX_REFINE, limit + 2)]
+        # Two-stage NCC: one cheap correlation ranks every proposal; the full
+        # angle/scale scan runs only on the promising ones plus the strongest
+        # vote peaks, so a proposal whose kernel angle/scale is still far off
+        # is not dropped before it has been measured.
+        if search_gray is not None and search_map is not None and len(coarse) > 4:
+            pre_gate = []
+            for candidate in coarse[:_MAX_PRE_GATE]:
+                score = self._candidate_ncc(
+                    candidate,
+                    search_gray,
+                    search_map,
+                    theta_start,
+                    theta_end,
+                    scale_start,
+                    scale_end,
+                )
+                pre_gate.append((score if score is not None else -1.0, candidate))
+            pre_gate.sort(key=lambda item: item[0], reverse=True)
+            ranked = [candidate for _, candidate in pre_gate]
+            chosen = []
+            seen = set()
+            for candidate in ranked[:_MAX_NCC_SCANS] + coarse[:4]:
+                if id(candidate) in seen:
+                    continue
+                seen.add(id(candidate))
+                chosen.append(candidate)
+            coarse = chosen[:_MAX_NCC_CANDIDATES]
+        else:
+            coarse = coarse[:_MAX_NCC_CANDIDATES]
 
         candidates = []
         refined_centers = []
@@ -1809,29 +1996,23 @@ class ShapeMatch(BaseTool):
         dt_cache = [None]
         edge_cache = [None]
         gradient_cache = [None]
-        alignment_scale = factor_x
-        if factor == 1:
+        alignment_scale = 1.0
+        if vote_factor == 1:
             # The vote path only needs the int16 gradients; the alignment
             # score bilinearly samples them and wants float32.
             gx = vote_gx.astype(np.float32)
             gy = vote_gy.astype(np.float32)
             alignment_gx, alignment_gy = gx, gy
         else:
-            gx = gy = None
-            alignment_gx = alignment_gy = None
+            # One full-resolution gradient pair for the whole ROI is far
+            # cheaper than a Sobel patch per proposal, and it is cached for
+            # the occlusion solver too.
+            gx, gy = self._full_gradients(gray_for_match, gradient_cache)
+            alignment_gx, alignment_gy = gx, gy
+        prepared = []
+        short_distance = max(16.0, min(self._template_size) * 0.20)
         for coarse_candidate in coarse:
-            if len(candidates) >= limit:
-                break
-            if any(
-                math.hypot(
-                    coarse_candidate["x"] - accepted_x,
-                    coarse_candidate["y"] - accepted_y,
-                )
-                < min_distance
-                for accepted_x, accepted_y in refined_centers
-            ):
-                continue
-            refined, diagnostics = self._refine_candidate(
+            pose, diagnostics = self._refine_candidate(
                 gray_for_match,
                 gx,
                 gy,
@@ -1847,7 +2028,55 @@ class ShapeMatch(BaseTool):
                 alignment_gy=alignment_gy,
                 alignment_scale=alignment_scale,
                 search_gray=search_gray,
-                search_factor=search_factor,
+                search_map=search_map,
+                solve=False,
+            )
+            if pose is None:
+                if diagnostics:
+                    warnings.append(diagnostics)
+                continue
+            x, y, angle, scale, ncc_score, alignment = pose
+            prepared.append((ncc_score, alignment, x, y, angle, scale))
+
+        # Keep the best NCC per physical location before paying for
+        # ECC/occlusion.  This preserves the extra hypotheses a bigger ROI
+        # produces without running the expensive solver on near-duplicates.
+        prepared.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        shortlist = []
+        for item in prepared:
+            if item[0] < 0.5:
+                continue
+            if any(
+                math.hypot(item[2] - other[2], item[3] - other[3]) < short_distance
+                for other in shortlist
+            ):
+                continue
+            shortlist.append(item)
+            if len(shortlist) >= min(_MAX_SOLVE, limit + 2):
+                break
+        if not shortlist and prepared:
+            shortlist = prepared[:1]
+
+        for ncc_score, _alignment_pre, x, y, angle, scale in shortlist:
+            refined, diagnostics = self._solve_pose(
+                gray_for_match,
+                gx,
+                gy,
+                edge_cache,
+                dt_cache,
+                gradient_cache,
+                x,
+                y,
+                angle,
+                scale,
+                ncc_score,
+                _alignment_pre,
+                theta_start,
+                theta_end,
+                scale_start,
+                scale_end,
+                ecc_gray=ecc_gray,
+                ecc_map=ecc_map,
             )
             if refined is None:
                 if diagnostics:

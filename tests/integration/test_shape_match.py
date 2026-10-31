@@ -345,10 +345,11 @@ def test_shape_match_vote_scaling_helpers():
     template = make_template()
     tool = _tool(template)
     assert 0 < tool._vote_model_x.size <= 500
+    # The vote resolution depends on the template only, never on the ROI.
     assert tool._vote_factor(480, 360) == 1
     tool._template_size = (300, 300)
-    assert tool._vote_factor(1000, 1000) == 2
-    assert tool._vote_factor(2588, 1940) == 4
+    assert tool._vote_factor(1000, 1000) == 3
+    assert tool._vote_factor(2588, 1940) == 3
 
     tool._template_size = (30, 30)
     assert tool._vote_factor(2588, 1940) == 1
@@ -360,7 +361,7 @@ def test_shape_match_vote_scaling_helpers():
         y = index // 20 + 10
         mag[y, x] = float(index + 1)
         edges[y, x] = 255
-    capped = tool._cap_scene_edges(mag, edges, target=10)
+    capped = tool._cap_scene_edges(mag, edges, quota=10)
     assert int((capped > 0).sum()) == 10
 
 
@@ -423,7 +424,7 @@ def test_shape_match_spatial_edge_cap_keeps_weak_regions():
         mag[y, x] = 1.0
         edges[y, x] = 255
 
-    capped = ShapeMatch._cap_scene_edges(mag, edges, target=200)
+    capped = ShapeMatch._cap_scene_edges(mag, edges, quota=9)
     ys, xs = np.nonzero(capped)
     assert np.any((xs < 100) & (ys < 100))
     assert np.any((xs > 100) & (ys > 100))
@@ -618,3 +619,40 @@ def test_shape_match_act_as_fixture_with_fixtured_input():
     output = tool.outputs["output image"]
     assert abs(result.angle - 30.0) <= 0.3
     assert abs(output.angle - result.angle) <= 1e-6
+
+def test_shape_match_larger_roi_keeps_the_match():
+    """A bigger search ROI must never lose a match found in a smaller one."""
+    template = make_template()
+    scene = render_scene(
+        template,
+        cx=300.0,
+        cy=190.0,
+        angle=12.0,
+        scale=1.05,
+        gamma=0.9,
+        noise=3.0,
+        seed=7,
+    )
+    rng = np.random.default_rng(11)
+    for _ in range(60):
+        x0 = int(rng.integers(0, 460))
+        y0 = int(rng.integers(0, 340))
+        w = int(rng.integers(8, 44))
+        h = int(rng.integers(8, 44))
+        if abs(x0 - 300) < 110 and abs(y0 - 190) < 110:
+            continue
+        shade = int(rng.integers(20, 240))
+        cv2.rectangle(scene, (x0, y0), (x0 + w, y0 + h), (shade,) * 3, -1)
+
+    tool = _tool(template)
+    for roi in (
+        [200.0, 90.0, 200.0, 200.0, 0.0],
+        [100.0, 0.0, 380.0, 360.0, 0.0],
+        [0, 0, 0, 0, 0],
+    ):
+        tool.params["search_roi"] = roi
+        result = _run(tool, scene)
+        assert abs(result.x - 300.0) <= 0.5, roi
+        assert abs(result.y - 190.0) <= 0.5, roi
+        assert abs(result.angle - 12.0) <= 0.2, roi
+        assert abs(result.scale - 1.05) / 1.05 <= 0.01, roi

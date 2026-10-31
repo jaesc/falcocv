@@ -94,21 +94,31 @@ cpp/bin/       → local kernel build output (gitignored)
 - **ShapeMatch model** -> `model_b64` stores features, edges, gray and color
   templates. Training ROI is fixture-relative and supports rotation. Do not add
   PatternMatcher-only parameters (`angle_step`, `scale_step`, `use_pyramid`, ...).
-- **ShapeMatch coarse voting** -> vote on a downscaled image (4x for >=2 MP,
-  2x for >=0.25 MP, 1x for small ROIs), keep the template >=40 px, cap scene
-  edges spatially (at least 4000, 8 per 32 px cell) and use the top 500 model
-  features.
-  Refine at full resolution; full gradients, Canny and the distance map stay
-  lazy and are only computed for the occlusion solver.
-- **ShapeMatch search stage** -> NCC angle/scale scans run on a reduced ROI
-  (template >=48 px, max 4x) and reject candidates whose NCC is below
-  `_MIN_NCC` before any full-resolution alignment or solver.  This is what keeps
-  the pipeline at ~4 coarse poses instead of paying for every kernel candidate.
+- **ShapeMatch coarse voting** -> the vote factor depends on the template only
+  (`min_template // 96`, capped at 4x), never on the ROI area.  Cap scene edges
+  with a fixed **48-edge quota per 32 px cell**, independent of the cell count;
+  a global target divided by cells starves the part as the ROI grows.  Keep 32
+  peaks per hypothesis (up to 1024 candidates) and use the top 500 model
+  features.  Full gradients, Canny and the distance map stay lazy.
+- **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
+  >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
+  full angle/scale scan runs on the best ones plus the strongest vote peaks.
+  Candidates whose NCC is below `_MIN_NCC` are rejected before alignment/solver.
+  The alignment score uses one cached full-ROI gradient pair, not a Sobel patch
+  per proposal.
+- **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
+  found by a smaller one.  That is why the vote factor, the edge quota, the
+  candidate floor and the dedupe distance cannot depend on the ROI extent.
+  Coarse views are cropped from a pyramid anchored to the frame origin so the
+  same scene region always uses the same pixels.  Pre-refine dedupe is
+  pose-aware (position + angle + scale); merging by position alone can discard
+  the correct scale before the NCC scan sees it.  Never stop refining early on
+  `max_matches`; rank the measured candidates by final score.
 - **ShapeMatch ECC** -> two levels: affine ECC on a reduced view (factor <=2)
-  then a translation-only pass at full resolution.  The reduced pass must undo
-  its resampling with `template_scale`/`scene_scale`; without that correction
-  the reported scale drifts by up to 0.65 %.  Small templates (factor 1) keep
-  the full-resolution affine + polish path.
+  then a rendered NCC translation at full resolution.  The reduced pass must
+  undo its resampling with `template_scale`/`scene_scale`/`scene_offset`;
+  without that correction the reported scale drifts by up to 0.65 %.  Small
+  templates (factor 1) keep the full-resolution affine + polish path.
 - **ShapeMatch padding** -> the rotated template's padding diagonal must be even,
   otherwise its center lands between pixels and translation is biased by ~0.5 px.
   Render NCC padding with the template's median border color, never zero.

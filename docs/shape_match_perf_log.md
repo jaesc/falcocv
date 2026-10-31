@@ -186,6 +186,57 @@ occlusion refinement.
 - Extended benchmark with 2.7 MP, occlusion, multi-instance, wide-angle and
   fixed-scale cases.
 
+### ROI-superset monotonicity (2026-10-31)
+
+Symptom: enlarging the search ROI (up to the full image) lost matches that a
+smaller ROI found. Measured on the 90-image production job: 84/90 with the job
+ROI, 69/90 with the full image, 19 images lost.
+
+Root causes (all depended on the ROI extent, not on the image content):
+
+- `_cap_scene_edges` divided a global target by the number of cells, so a bigger
+  ROI lowered the per-cell quota (37 -> 8 edges) and the part kept 1,135 -> 307
+  edges.
+- `_vote_factor` chose the downscale from the ROI area (2x -> 4x).
+- Pre-refine dedupe merged candidates at 0.75 x template (303 px); a false peak
+  118 px away discarded the true candidate (rank 2) before refinement.
+- Relative peak floor plus a fixed top-8 refine cap.
+- The kernel kept only 3 peaks per hypothesis.
+
+Fix:
+
+- Vote factor from the template only (`min_template // 96`, max 4x).
+- Fixed 48-edge per-cell quota, independent of the cell count.
+- Coarse views cropped from a pyramid anchored to the frame origin: the same
+  scene region always uses the same downscaled pixels, and the cost stays
+  proportional to the ROI.
+- Pose-aware dedupe (position + angle + scale).
+- 32 peaks per hypothesis, up to 1024 kernel candidates.
+- Two-stage NCC: one single-pose correlation ranks every proposal, then the
+  full angle/scale scan runs on the best ones plus the strongest vote peaks.
+- Alignment from one cached full-ROI gradient pair instead of a Sobel patch per
+  proposal.
+- Reduced ECC affine pass plus a rendered NCC translation at full resolution.
+- No early stop on `max_matches`; all proposals are measured and the output is
+  ranked by final score.
+
+Measured (90-image job, template 404x407, 2588x1940):
+
+| | Before | After |
+|---|---:|---:|
+| Job ROI detections | 84/90 | 90/90 |
+| Full-image detections | 69/90 | 90/90 |
+| ROI superset violations | 19 | 0 |
+| Job ROI median | ~28 ms | ~44 ms |
+| Full-image median | ~150 ms | ~99 ms |
+
+Synthetic bench: 480x360 15.6 -> 55 ms, 1 MP 19.6 -> 104 ms, 2.7 MP 144 ms.
+Bake-off: 13/13, 0.064 px / 0.060 deg / 0.080 %. Full suite 277 passed.
+
+Verdict: kept. The extra cost is the number of hypotheses that must be
+measured to guarantee the superset property; the full-image case got faster
+because the coarse vote is 4x cheaper.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes
