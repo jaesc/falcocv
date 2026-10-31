@@ -278,6 +278,24 @@ pyramid: 9.9 -> 1.8 ms.  5 MP job: ~85 -> ~73 ms.  Bake-off unchanged
 (0.064 px / 0.060 deg / 0.080 %); two occlusion-path images moved 0.13 deg
 because the grid is now exactly 1/8 instead of 0.1252.
 
+### Render cache and rejected micro-optimizations (2026-10-31)
+
+New harness `benchmarks/bench_shape_match_matrix.py`: every case runs with the
+candidate configurations in alternating rounds (thermal drift does not favour
+one), on 480x360, 1 MP, 2.7 MP and a 5 MP scene with a 404 px template.
+
+- `cv2.setNumThreads(1)` around the run helps 480x360 (-10 %) and 1 MP (-6 %)
+  but hurts the 5 MP / 404 px case (+9 %).  Not generic: **rejected**.
+- Building the translation refine from `_render_search` (cropped) instead of
+  the diagonal render moved poses by up to 0.47 px.  **Rejected**: precision
+  is not negotiable for a few milliseconds.
+- Render cache by (template, angle, scale) per run: 103 `_render_search` calls
+  become 36 warps on the 5 MP case, ~3 ms saved, bit-identical pixels (it is
+  the same render).  **Kept**.
+- Reducing the full NCC scans from 6 to 4 and the candidate cap from 10 to 8
+  kept 90/90 and the 13 synthetic scenes, but the saving was inside the noise
+  and it shrinks the safety margin.  **Not applied** for now.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes

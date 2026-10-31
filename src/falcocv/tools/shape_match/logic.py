@@ -177,6 +177,7 @@ class ShapeMatch(BaseTool):
         self._search_factor = 1
         self._ecc_template_gray = None
         self._ecc_factor = 1
+        self._render_cache = None
         self._model_x = np.empty(0, dtype=np.float32)
         self._model_y = np.empty(0, dtype=np.float32)
         self._model_theta = np.empty(0, dtype=np.float32)
@@ -425,6 +426,7 @@ class ShapeMatch(BaseTool):
         self._search_factor = 1
         self._ecc_template_gray = None
         self._ecc_factor = 1
+        self._render_cache = None
         self._template_size = (0, 0)
         self._static_train_fixture = {"x": 0.0, "y": 0.0, "angle": 0.0}
         self.params.update(
@@ -559,6 +561,13 @@ class ShapeMatch(BaseTool):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
+        cache = self._render_cache
+        key = None
+        if cache is not None:
+            key = (id(template), round(float(angle), 4), round(float(scale), 5))
+            cached = cache.get(key)
+            if cached is not None:
+                return cached
         height, width = template.shape[:2]
         diagonal = self._even_diagonal(width, height, scale)
         matrix = self._pose_matrix(angle, scale, diagonal, width, height)
@@ -581,6 +590,13 @@ class ShapeMatch(BaseTool):
         template = self._template_gray if template_gray is None else template_gray
         if template is None:
             return None
+        cache = self._render_cache
+        key = None
+        if cache is not None:
+            key = (id(template), round(float(angle), 4), round(float(scale), 5))
+            cached = cache.get(key)
+            if cached is not None:
+                return cached
         height, width = template.shape[:2]
         diagonal = self._even_diagonal(width, height, scale)
         matrix = self._pose_matrix(angle, scale, diagonal, width, height)
@@ -607,7 +623,10 @@ class ShapeMatch(BaseTool):
             return None
         left = int(center) - half_w
         top = int(center) - half_h
-        return rendered[top:top + 2 * half_h, left:left + 2 * half_w]
+        view = rendered[top:top + 2 * half_h, left:left + 2 * half_w]
+        if cache is not None and key is not None:
+            cache[key] = view
+        return view
 
     # ------------------------------------------------------------------
     # Coarse candidates
@@ -1868,6 +1887,7 @@ class ShapeMatch(BaseTool):
             return
 
         self._ensure_state()
+        self._render_cache = {}
         self.outputs["trained"] = self.is_trained
 
         v_img = source if isinstance(source, VisionImage) else VisionImage.from_array(source)
