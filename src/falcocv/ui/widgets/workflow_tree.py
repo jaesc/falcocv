@@ -1,11 +1,16 @@
 from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem, QAbstractItemView, QMenu, QStyledItemDelegate
 from PyQt6.QtCore import Qt, pyqtSignal, QMimeData, QTimer
 from PyQt6.QtGui import QFont, QColor, QAction, QCursor
+import traceback
 import numpy as np
 from falcocv.ui.style import ALT_BG, DANGER, DARK_BG, HIGHLIGHT, INFO, PANEL_BG, SUCCESS, TEXT, TEXT_MUTED, HANDLE_FILL, TEXT_DIM, MENU_BG, WHITE
 from falcocv.core.config import ConfigManager
 from falcocv.core.tool_base import ToolResults, ToolResult
 from falcocv.core.tool_registry import get_registration_by_class
+
+
+_TOOL_MIME = "application/x-falcocv-tool-uuid"
+_RENDER_ERROR_ROLE = Qt.ItemDataRole.UserRole + 2
 
 
 def _format_array_shape(arr):
@@ -102,7 +107,7 @@ class WorkflowTree(QTreeWidget):
 
     def mimeTypes(self):
         types = super().mimeTypes()
-        types.append("application/x-falcocv-tool-uuid")
+        types.append(_TOOL_MIME)
         return types
 
     def mimeData(self, items):
@@ -111,7 +116,7 @@ class WorkflowTree(QTreeWidget):
             tool_id = items[0].data(0, Qt.ItemDataRole.UserRole) or ""
             if tool_id and tool_id in self._id_to_tool:
                 tool = self._id_to_tool[tool_id]
-                mime.setData("application/x-falcocv-tool-uuid", tool.uuid.encode("utf-8"))
+                mime.setData(_TOOL_MIME, tool.uuid.encode("utf-8"))
         return mime
 
     def keyPressEvent(self, event):
@@ -124,189 +129,328 @@ class WorkflowTree(QTreeWidget):
         super().keyPressEvent(event)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
+        if event.mimeData().hasFormat(_TOOL_MIME) or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             super().dragEnterEvent(event)
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
+        if event.mimeData().hasFormat(_TOOL_MIME) or event.mimeData().hasText():
             event.acceptProposedAction()
         else:
             super().dragMoveEvent(event)
 
+    def _tool_drop_index(self, event, tools):
+        """Return the insertion index in ``tools`` for the current drop point.
+
+        ``indexAt().row()`` is the row inside the item's parent, so it is wrong
+        for child rows and for the Block header items.  Resolve the top-level
+        item and map it back to the workflow list.
+        """
+        item = self.itemAt(event.position().toPoint())
+        if item is None:
+            return len(tools)
+        top = item
+        while top.parent() is not None:
+            top = top.parent()
+        target = self.get_tool_from_item(top)
+        if target is not None and target in tools:
+            index = tools.index(target)
+            if self.dropIndicatorPosition() == QAbstractItemView.DropIndicatorPosition.BelowItem:
+                index += 1
+            return max(0, min(index, len(tools)))
+        # Block header rows are not tools: drop before the first tool or
+        # append after the last one.
+        if top.text(0) == "BLOCK INPUTS":
+            return 0
+        return len(tools)
+
+    @staticmethod
+    def _workflow_contains(root, target, seen=None):
+        if root is target:
+            return True
+        if seen is None:
+            seen = set()
+        if id(root) in seen:
+            return False
+        seen.add(id(root))
+        for tool in root.tools:
+            child = getattr(tool, "workflow", None)
+            if child is not None and WorkflowTree._workflow_contains(child, target, seen):
+                return True
+        return False
+
+    @classmethod
+    def _is_ancestor(cls, tool, workflow):
+        """True when ``workflow`` lives inside ``tool`` (prevents cycles)."""
+        child = getattr(tool, "workflow", None)
+        return child is not None and cls._workflow_contains(child, workflow)
+
+    def _emit_moved(self, source_tree):
+        source_tree.set_workflow(source_tree._workflow)
+        self.set_workflow(self._workflow)
+        source_tree.order_changed.emit()
+        self.order_changed.emit()
+
+    def _move_tool_between(self, source_tree, tool_uuid, index):
+        source_wf = getattr(source_tree, "_workflow", None)
+        target_wf = self._workflow
+        if source_wf is None or target_wf is None:
+            return False
+        tool = next((t for t in source_wf.tools if t.uuid == tool_uuid), None)
+        if tool is None or tool is source_wf.parent_tool:
+            return False
+        if self._is_ancestor(tool, target_wf):
+            return False
+
+        if source_wf is target_wf:
+            current = target_wf.tools.index(tool)
+            if index > current:
+                index -= 1
+            if index == current:
+                return False
+            target_wf.tools.pop(current)
+            target_wf.tools.insert(index, tool)
+            self.set_workflow(target_wf)
+            self.order_changed.emit()
+            return True
+
+        source_wf.remove_tool(tool)
+        target_wf.tools.insert(max(0, min(index, len(target_wf.tools))), tool)
+        self._emit_moved(source_tree)
+        return True
+
+    def _reorder_tool(self, tool_uuid, index):
+        workflow = self._workflow
+        if workflow is None:
+            return False
+        tool = next((t for t in workflow.tools if t.uuid == tool_uuid), None)
+        if tool is None:
+            return False
+        current = workflow.tools.index(tool)
+        if index > current:
+            index -= 1
+        if index == current:
+            return False
+        workflow.tools.pop(current)
+        workflow.tools.insert(max(0, min(index, len(workflow.tools))), tool)
+        self.set_workflow(workflow)
+        self.order_changed.emit()
+        return True
+
     def dropEvent(self, event):
-        # Cross-workflow tree drag (tool move between different WorkflowTree instances)
-        if (event.source() is not self and
-            event.mimeData().hasFormat("application/x-falcocv-tool-uuid")):
-            tool_uuid = bytes(event.mimeData().data("application/x-falcocv-tool-uuid")).decode("utf-8")
-            source_tree = event.source()
-            source_wf = source_tree._workflow
+        mime = event.mimeData()
+        tool_uuid = None
+        if mime.hasFormat(_TOOL_MIME):
+            tool_uuid = bytes(mime.data(_TOOL_MIME)).decode("utf-8")
 
-            tool = next((t for t in source_wf.tools if t.uuid == tool_uuid), None)
-            if tool and self._workflow is not None:
-                source_wf.remove_tool(tool)
-
-                index = self.indexAt(event.position().toPoint()).row()
-                if 0 <= index <= len(self._workflow.tools):
-                    self._workflow.tools.insert(index, tool)
-                else:
-                    self._workflow.add_tool(tool)
-
-                source_tree.set_workflow(source_wf)
-                self.set_workflow(self._workflow)
-
-                source_tree.order_changed.emit()
-                self.order_changed.emit()
-
-            event.acceptProposedAction()
+        if tool_uuid is not None:
+            # The handler moves the tool itself.  Accept as a copy so Qt does
+            # not remove the dragged source rows a second time after we have
+            # already rebuilt both trees.
+            if event.source() is not self:
+                if event.source() is not None:
+                    self._move_tool_between(
+                        event.source(),
+                        tool_uuid,
+                        self._tool_drop_index(event, self._workflow.tools if self._workflow else []),
+                    )
+            else:
+                self._reorder_tool(
+                    tool_uuid,
+                    self._tool_drop_index(event, self._workflow.tools if self._workflow else []),
+                )
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
             return
 
-        if event.mimeData().hasText() and event.source() is not self:
+        if mime.hasText() and event.source() is not self:
             # Drop from Toolbox
-            tool_type = event.mimeData().text()
-            index = self.indexAt(event.position().toPoint()).row()
-            self.tool_dropped.emit(tool_type, index)
-            event.acceptProposedAction()
-        else:
-            # Internal move
-            super().dropEvent(event)
-            # Signal reorder after internal drop
-            self.order_changed.emit()
+            tool_type = mime.text()
+            tools = self._workflow.tools if self._workflow else []
+            self.tool_dropped.emit(tool_type, self._tool_drop_index(event, tools))
+            event.setDropAction(Qt.DropAction.CopyAction)
+            event.accept()
+            return
 
-    def set_workflow(self, workflow):
+        # Foreign MIME data keeps Qt's default handling.
+        super().dropEvent(event)
+
+    def _expanded_state(self):
         expanded = {}
         for i in range(self.topLevelItemCount()):
             item = self.topLevelItem(i)
             tid = item.data(0, Qt.ItemDataRole.UserRole)
-            expanded[tid] = item.isExpanded()
-        self._workflow = workflow
-        self.blockSignals(True)
-        self.clear()
-        self._id_to_tool = {}
-        
-        # Load colors from config
+            key = tid if tid is not None else f"__header__{item.text(0)}"
+            expanded[key] = item.isExpanded()
+        return expanded
+
+    def _restore_expanded(self, expanded):
+        for i in range(self.topLevelItemCount()):
+            item = self.topLevelItem(i)
+            tid = item.data(0, Qt.ItemDataRole.UserRole)
+            key = tid if tid is not None else f"__header__{item.text(0)}"
+            if key in expanded:
+                item.setExpanded(expanded[key])
+
+    def _build_block_ports(self, workflow, title, ports, color, incoming):
+        header = QTreeWidgetItem()
+        header.setText(0, title)
+        header.setFont(0, QFont("Segoe UI", 10, QFont.Weight.Bold))
+        header.setForeground(0, HANDLE_FILL)
+        header.setFlags(Qt.ItemFlag.ItemIsEnabled)  # Not draggable, not droppable
+
+        for name in ports:
+            child = QTreeWidgetItem(header)
+            child.setText(0, f"{name} \u2192" if incoming else f"\u2192 {name}")
+            child.setForeground(0, color)
+            child.setData(0, Qt.ItemDataRole.UserRole, "output" if incoming else "input")
+            child.setData(1, Qt.ItemDataRole.UserRole, name)
+            child.setData(0, Qt.ItemDataRole.UserRole + 1, workflow.parent_tool)
+            if not incoming:
+                source_text = "[ Select Source ]"
+                for src_t, src_o, dst_t, dst_i in workflow.connections:
+                    if dst_t == workflow.parent_tool and dst_i == name:
+                        source_text = f"Linked: {src_t.name}.{src_o}"
+                        break
+                child.setText(1, source_text)
+            child.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+        header.setExpanded(True)
+        return header
+
+    def _build_tool_item(self, workflow, tool, tool_id, c_t_in, c_t_out):
+        tool_item = QTreeWidgetItem()
+        display = f"{tool.prefix} {tool.name}" if tool.prefix else tool.name
+        tool_item.setText(0, display)
+        tool_item.setFont(0, QFont("Consolas", 9, QFont.Weight.Bold))
+        tool_item.setData(0, Qt.ItemDataRole.UserRole, tool_id)
+        # TOOLS are draggable but NOT droppable (we only drop on the root)
+        tool_item.setFlags(
+            Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled |
+            Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled
+        )
+
+        if not getattr(tool, 'enabled', True):
+            tool_item.setForeground(0, QColor(TEXT_MUTED))
+            tool_item.setText(1, "Disabled")
+
+        # Direct child items for Inputs
+        for in_name in tool.inputs:
+            in_item = QTreeWidgetItem(tool_item)
+            in_item.setText(0, f"\u2192 {in_name}")
+            in_item.setForeground(0, c_t_in)
+            in_item.setData(0, Qt.ItemDataRole.UserRole, "input")
+            in_item.setData(1, Qt.ItemDataRole.UserRole, in_name)
+
+            source_text = "[ Click to Link ]"
+            for src_t, out_t, dst_t, in_t in workflow.connections:
+                if dst_t == tool and in_t == in_name:
+                    src_name = src_t.name if src_t != workflow.parent_tool else "System Inputs"
+                    source_text = f"\u21aa {src_name}.{out_t}"
+                    break
+
+            in_item.setText(1, source_text)
+            in_item.setForeground(1, QColor(TEXT_DIM))
+            in_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+
+        # Direct child items for Outputs
+        for out_name in tool.outputs:
+            out_item = QTreeWidgetItem(tool_item)
+            out_item.setText(0, f"{out_name} \u2192")
+            out_item.setForeground(0, c_t_out)
+            out_item.setData(0, Qt.ItemDataRole.UserRole, "output")
+            out_item.setData(0, Qt.ItemDataRole.UserRole + 1, tool)
+            out_item.setData(1, Qt.ItemDataRole.UserRole, out_name)
+
+            # Show current value snippet if small
+            val = tool.get_output(out_name)
+            if isinstance(val, (int, float, str)):
+                out_item.setText(1, str(val))
+            elif isinstance(val, np.ndarray):
+                out_item.setText(1, _format_array_shape(val))
+            elif isinstance(val, ToolResults):
+                out_item.setText(1, f"({val.Count} results)")
+                out_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+
+            out_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
+
+        tool_item.setExpanded(True)
+        return tool_item
+
+    def _build_items(self, workflow):
         c_t_in = QColor(self.config.get_color("tool_input"))
         c_t_out = QColor(self.config.get_color("tool_output"))
         c_b_in = QColor(self.config.get_color("block_input"))
         c_b_out = QColor(self.config.get_color("block_output"))
 
+        top_items = []
+        id_to_tool = {}
         if workflow.parent_tool:
-            block_item = QTreeWidgetItem(self)
-            block_item.setText(0, "BLOCK INPUTS")
-            block_item.setFont(0, QFont("Segoe UI", 10, QFont.Weight.Bold))
-            block_item.setForeground(0, HANDLE_FILL)
-            block_item.setFlags(Qt.ItemFlag.ItemIsEnabled) # Not draggable, not droppable
-            
-            for in_name in workflow.parent_tool.inputs:
-                in_item = QTreeWidgetItem(block_item)
-                in_item.setText(0, f"{in_name} \u2192")
-                in_item.setForeground(0, c_b_in)
-                in_item.setData(0, Qt.ItemDataRole.UserRole, "output")
-                in_item.setData(1, Qt.ItemDataRole.UserRole, in_name)
-                in_item.setData(0, Qt.ItemDataRole.UserRole + 1, workflow.parent_tool)
-                in_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            block_item.setExpanded(True)
+            top_items.append(
+                self._build_block_ports(
+                    workflow, "BLOCK INPUTS", workflow.parent_tool.inputs, c_b_in, True
+                )
+            )
 
         for tool in workflow.tools:
             tool_id = str(id(tool))
-            self._id_to_tool[tool_id] = tool
-            
-            tool_item = QTreeWidgetItem(self)
-            display = f"{tool.prefix} {tool.name}" if tool.prefix else tool.name
-            tool_item.setText(0, display)
-            tool_item.setFont(0, QFont("Consolas", 9, QFont.Weight.Bold))
-            
-            tool_item.setData(0, Qt.ItemDataRole.UserRole, tool_id)
-            # TOOLS are draggable but NOT droppable (we only drop on the root)
-            tool_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled | 
-                                Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled)
-            
-            if not getattr(tool, 'enabled', True):
-                tool_item.setForeground(0, QColor(TEXT_MUTED))
-                tool_item.setText(1, "Disabled")
-            
-            # Direct child items for Inputs
-            for in_name in tool.inputs:
-                in_item = QTreeWidgetItem(tool_item)
-                in_item.setText(0, f"\u2192 {in_name}")
-                in_item.setForeground(0, c_t_in)
-                in_item.setData(0, Qt.ItemDataRole.UserRole, "input")
-                in_item.setData(1, Qt.ItemDataRole.UserRole, in_name)
-                
-                source_text = "[ Click to Link ]"
-                source_color = QColor(TEXT_DIM)
-                for src_t, out_t, dst_t, in_t in workflow.connections:
-                    if dst_t == tool and in_t == in_name:
-                        src_name = src_t.name if src_t != workflow.parent_tool else "System Inputs"
-                        source_text = f"\u21aa {src_name}.{out_t}"
-                        break
-                
-                in_item.setText(1, source_text)
-                in_item.setForeground(1, source_color)
-                in_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-            
-            # Direct child items for Outputs
-            for out_name in tool.outputs:
-                out_item = QTreeWidgetItem(tool_item)
-                out_item.setText(0, f"{out_name} \u2192")
-                out_item.setForeground(0, c_t_out)
-                out_item.setData(0, Qt.ItemDataRole.UserRole, "output")
-                out_item.setData(0, Qt.ItemDataRole.UserRole + 1, tool)
-                out_item.setData(1, Qt.ItemDataRole.UserRole, out_name)
-                
-                # Show current value snippet if small
-                val = tool.get_output(out_name)
-                if isinstance(val, (int, float, str)):
-                    out_item.setText(1, str(val))
-                elif isinstance(val, np.ndarray):
-                    out_item.setText(1, _format_array_shape(val))
-                elif isinstance(val, ToolResults):
-                    out_item.setText(1, f"({val.Count} results)")
-                    out_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
-                
-                out_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-            
-            tool_item.setExpanded(True)
+            id_to_tool[tool_id] = tool
+            try:
+                item = self._build_tool_item(workflow, tool, tool_id, c_t_in, c_t_out)
+            except Exception:
+                # A broken tool must not hide the rest of the workflow.  Keep
+                # its row visible so it can still be selected and fixed.
+                traceback.print_exc()
+                item = QTreeWidgetItem()
+                display = f"{tool.prefix} {tool.name}" if tool.prefix else tool.name
+                item.setText(0, display)
+                item.setText(1, "Render error")
+                item.setForeground(1, QColor(DANGER))
+                item.setToolTip(1, "See the console for the traceback")
+                item.setData(0, Qt.ItemDataRole.UserRole, tool_id)
+                item.setData(0, _RENDER_ERROR_ROLE, True)
+                item.setFlags(
+                    Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled |
+                    Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsDragEnabled
+                )
+            top_items.append(item)
 
         if workflow.parent_tool:
-            out_block_item = QTreeWidgetItem(self)
-            out_block_item.setText(0, "BLOCK OUTPUTS")
-            out_block_item.setFont(0, QFont("Segoe UI", 10, QFont.Weight.Bold))
-            out_block_item.setForeground(0, HANDLE_FILL)
-            out_block_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            
-            for out_name in workflow.parent_tool.outputs:
-                out_item = QTreeWidgetItem(out_block_item)
-                out_item.setText(0, f"\u2192 {out_name}")
-                out_item.setForeground(0, c_b_out) # Use Block Output color
-                out_item.setData(0, Qt.ItemDataRole.UserRole, "input")
-                out_item.setData(1, Qt.ItemDataRole.UserRole, out_name)
-                out_item.setData(0, Qt.ItemDataRole.UserRole + 1, workflow.parent_tool)
-                
-                # Show source
-                source_text = "[ Select Source ]"
-                for src_t, src_o, dst_t, dst_i in workflow.connections:
-                    if dst_t == workflow.parent_tool and dst_i == out_name:
-                        source_text = f"Linked: {src_t.name}.{src_o}"
-                        break
-                out_item.setText(1, source_text)
-                out_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
-            out_block_item.setExpanded(True)
-            
-        self.blockSignals(False)
-        for i in range(self.topLevelItemCount()):
-            item = self.topLevelItem(i)
-            tid = item.data(0, Qt.ItemDataRole.UserRole)
-            if tid in expanded:
-                item.setExpanded(expanded[tid])
-        self.refresh_status()
+            top_items.append(
+                self._build_block_ports(
+                    workflow, "BLOCK OUTPUTS", workflow.parent_tool.outputs, c_b_out, False
+                )
+            )
+        return top_items, id_to_tool
 
-    def refresh_status(self):
+    def set_workflow(self, workflow):
+        """Render ``workflow`` without destroying the old tree on failure."""
+        expanded = self._expanded_state()
+        try:
+            top_items, id_to_tool = self._build_items(workflow)
+        except Exception:
+            # Keep the previous tree: a rendering bug must never leave the
+            # editor looking empty.
+            traceback.print_exc()
+            return
+
+        self.blockSignals(True)
+        try:
+            self.clear()
+            self._workflow = workflow
+            self.addTopLevelItems(top_items)
+            self._id_to_tool = id_to_tool
+        finally:
+            self.blockSignals(False)
+
+        self._restore_expanded(expanded)
+        self.refresh_status(force=True)
+
+    def refresh_status(self, force=False):
         """Update the status column for each tool item with execution time and error state."""
         import time
         now = time.perf_counter()
-        if now - self._last_refresh_time < 0.1: # Limit to 10Hz
+        if not force and now - self._last_refresh_time < 0.1:  # Limit to 10Hz
             return
         self._last_refresh_time = now
         
@@ -482,6 +626,8 @@ class WorkflowTree(QTreeWidget):
 
                 tool = self.get_tool_from_item(item)
                 if not tool: continue
+                if item.data(0, _RENDER_ERROR_ROLE):
+                    continue
                 
                 # 1. Update Tool Level Info
                 if not getattr(tool, 'enabled', True):
@@ -593,7 +739,6 @@ class WorkflowTree(QTreeWidget):
             open_tool_config(tool, parent=self.window())
         except Exception:
             # Never let a configuration error escape into Qt's event loop.
-            import traceback
             traceback.print_exc()
 
     def handle_click(self, item, column):

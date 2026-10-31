@@ -228,8 +228,34 @@ class WorkflowEditor(QWidget):
 
         layout.addWidget(footer_widget)
 
+        # An editor can be constructed around an existing workflow (this is
+        # what the Block config does).  Render it immediately: waiting for a
+        # later refresh made a reopened Block look empty even though its
+        # workflow still contained the tools.
+        self._bind_tools()
+        self.refresh_ui()
+
 
     # ── Tool Handlers ────────────────────────────────────────────
+
+    def _bind_tool(self, tool):
+        tool.set_controller(self.controller)
+        tool.structure_changed.disconnect(self.refresh_ui)
+        tool.structure_changed.connect(self.refresh_ui)
+
+    def _bind_tools(self):
+        for tool in self.workflow.tools:
+            self._bind_tool(tool)
+
+    def detach(self):
+        """Stop listening to the tools of a workflow that is being closed."""
+        for tool in self.workflow.tools:
+            tool.structure_changed.disconnect(self.refresh_ui)
+
+    def _mark_parent_dirty(self):
+        parent = self.workflow.parent_tool
+        if parent is not None:
+            parent.mark_dirty()
 
     def handle_add_tool(self, tool_type, index=None):
         was_looping = self.btn_loop.isChecked()
@@ -249,39 +275,57 @@ class WorkflowEditor(QWidget):
         else:
             self.workflow.add_tool(tool)
 
-        tool.set_controller(self.controller)
-            
+        self._bind_tool(tool)
         self.refresh_ui()
+        self._mark_parent_dirty()
         
         if was_looping:
             self.controller.run_loop_start()
 
     def on_tool_pasted(self, tool):
-        tool.set_controller(self.controller)
+        self._bind_tool(tool)
         self.refresh_ui()
+        self._mark_parent_dirty()
 
     def setup_tool_connections(self, tool):
-        tool.set_controller(self.controller)
-        try:
-            tool.structure_changed.disconnect(self.refresh_ui)
-        except Exception:
-            # Not connected yet; ignore.
-            pass
-        tool.structure_changed.connect(self.refresh_ui)
+        self._bind_tool(tool)
 
     def on_reorder(self):
         was_looping = self.btn_loop.isChecked()
         if was_looping: self.controller.run_loop_stop()
-        
-        new_tools = []
+
+        tree_tools = []
         for i in range(self.tree.topLevelItemCount()):
             item = self.tree.topLevelItem(i)
             tool = self.tree.get_tool_from_item(item)
             if tool:
-                new_tools.append(tool)
-        self.workflow.tools = new_tools
-        self.refresh_ui()
-        
+                tree_tools.append(tool)
+
+        current = list(self.workflow.tools)
+        if sorted(map(id, tree_tools)) != sorted(map(id, current)):
+            # A failed render, a rejected drop or a refresh in flight can
+            # leave the view without a row.  The workflow is authoritative:
+            # never delete a tool to make the model match a broken view.
+            print(
+                "[WorkflowEditor] tree/workflow mismatch; restoring from workflow",
+                file=sys.stderr,
+            )
+            self.refresh_ui()
+            if was_looping: self.controller.run_loop_start()
+            return
+
+        for tool in tree_tools:
+            tool.set_controller(self.controller)
+
+        if tree_tools == current:
+            # The drop handler already applied and rendered the order.
+            self.tree.refresh_status(force=True)
+        else:
+            self.workflow.tools = tree_tools
+            self.refresh_ui()
+
+        self._mark_parent_dirty()
+
         if was_looping: self.controller.run_loop_start()
 
     def on_deletion(self, tool):
@@ -290,6 +334,7 @@ class WorkflowEditor(QWidget):
         
         self.workflow.remove_tool(tool)
         self.refresh_ui()
+        self._mark_parent_dirty()
         self.controller.mark_dirty()
         
         if was_looping: self.controller.run_loop_start()
@@ -312,15 +357,7 @@ class WorkflowEditor(QWidget):
         self.controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
         self.controller.execution_finished.connect(self._on_execution_finished)
         self.workflow = self.controller.workflow
-        for tool in self.workflow.tools:
-            tool.set_controller(self.controller)
-            try:
-                tool.structure_changed.disconnect(self.refresh_ui)
-            except Exception:
-                # Not connected yet; ignore.
-                pass
-            tool.structure_changed.connect(self.refresh_ui)
-
+        self._bind_tools()
         self.refresh_ui()
 
     def update_record_list(self):

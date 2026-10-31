@@ -124,6 +124,12 @@ cpp/bin/       → local kernel build output (gitignored)
   Render NCC padding with the template's median border color, never zero.
   Crop the padding before `matchTemplate` (`_render_search`); a rotated rectangle
   is centrally symmetric so the crop stays centred.
+- **Workflow tree rebuilds** -> `WorkflowEditor` renders its workflow in
+  `__init__` (the Block config reuses an existing workflow); `WorkflowTree.set_workflow`
+  builds the items before clearing and keeps a render-error row; `on_reorder`
+  never deletes tools missing from the view; and cross-tree drops accept
+  `CopyAction` because the handler moves the tool itself (Qt would otherwise
+  remove the source rows a second time).
 
 ## Build
 

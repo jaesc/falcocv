@@ -663,6 +663,7 @@ class MainWindow(QMainWindow):
     def _connect_modification_signals(self):
         """Hook tree and tool signals to dirty tracking."""
         self.editor.tree.order_changed.connect(self._mark_modified)
+        self.editor.tree.order_changed.connect(self._connect_tool_signals)
         self.editor.tree.tool_deleted.connect(self._mark_modified)
         self.editor.tree.tool_dropped.connect(self._mark_modified)
         self.editor.tree.tool_dropped.connect(self._connect_tool_signals)

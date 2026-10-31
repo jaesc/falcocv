@@ -98,6 +98,7 @@ class BlockConfig(QWidget):
         self._previous_active_editor = Toolbox._active_editor
         self.editor = WorkflowEditor(self.tool.workflow)
         self.tool.data_changed.connect(self.refresh_ui)
+        self.tool.structure_changed.connect(self._on_structure_changed)
         self.tabs.addTab(self.editor, "Workflow")
         from falcocv.core.config import ConfigManager
         saved = ConfigManager().get_tool_splitter("Block")
@@ -119,7 +120,6 @@ class BlockConfig(QWidget):
         input_vbox = QVBoxLayout(input_container)
         input_vbox.addWidget(QLabel(f"<b style='color: {c_in};'>INPUTS (Block External Ports)</b>"))
         self.input_table = PortTable(self.tool, "inputs")
-        self.input_table.ports_updated.connect(self.editor.refresh_ui)
         input_vbox.addWidget(self.input_table)
         self.content_layout.addWidget(input_container)
         
@@ -127,7 +127,6 @@ class BlockConfig(QWidget):
         output_vbox = QVBoxLayout(output_container)
         output_vbox.addWidget(QLabel(f"<b style='color: {c_out};'>OUTPUTS (Block External Ports)</b>"))
         self.output_table = PortTable(self.tool, "outputs")
-        self.output_table.ports_updated.connect(self.editor.refresh_ui)
         output_vbox.addWidget(self.output_table)
         self.content_layout.addWidget(output_container)
         
@@ -135,15 +134,22 @@ class BlockConfig(QWidget):
 
     @safe_refresh
     def refresh_ui(self):
-        wf = self.tool.workflow
         self.editor.tree.refresh_status()
         self.editor.update_viewer_image()
+
+    def _on_structure_changed(self):
+        if self.editor is not None:
+            self.editor.refresh_ui()
 
     def on_config_closed(self):
         from falcocv.core.config import ConfigManager
         from falcocv.ui.widgets.toolbox import Toolbox
+        wf = self.tool.workflow
         ConfigManager().set_tool_splitter("Block", self.editor.splitter.sizes())
         self.editor.update_image_counter()
+        # The editor is hidden now; drop the callbacks it registered on the
+        # tools so a later structure change cannot rebuild a hidden tree.
+        self.editor.detach()
         Toolbox.set_active_editor(self._previous_active_editor)
         time_ms = wf.last_execution_time_ms
         if wf.last_error:

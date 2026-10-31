@@ -31,6 +31,10 @@ class Block(BaseTool):
 
     def deserialize(self, data: dict, job_manager=None):
         super().deserialize(data, job_manager)
+        # Jobs saved while the parallel mode existed keep these keys in their
+        # params; the mode is gone, so do not carry them forward.
+        for legacy in ("execution_mode", "max_workers"):
+            self.params.pop(legacy, None)
         self.port_metadata = data.get("port_metadata", {"inputs": {}, "outputs": {}})
         for in_name in self.port_metadata.get("inputs", {}):
             self.inputs[in_name] = None
