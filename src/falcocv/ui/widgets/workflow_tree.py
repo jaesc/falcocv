@@ -628,6 +628,9 @@ class WorkflowTree(QTreeWidget):
                 if not tool: continue
                 if item.data(0, _RENDER_ERROR_ROLE):
                     continue
+
+                item.setToolTip(0, "")
+                item.setToolTip(1, "")
                 
                 # 1. Update Tool Level Info
                 if not getattr(tool, 'enabled', True):
@@ -646,6 +649,8 @@ class WorkflowTree(QTreeWidget):
                         item.setText(1, f"{tool.last_execution_time_ms:.1f} ms  \u26a0")
                         item.setForeground(1, COLOR_ERR)
                         item.setForeground(0, COLOR_ERR)
+                        item.setToolTip(0, str(tool.last_error))
+                        item.setToolTip(1, str(tool.last_error))
                     else:
                         item.setText(1, f"{tool.last_execution_time_ms:.1f} ms")
                         item.setForeground(1, COLOR_OK)

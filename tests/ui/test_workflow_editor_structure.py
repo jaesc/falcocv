@@ -7,7 +7,7 @@ refreshed, reordered or edited while the config is open.
 
 import pytest
 from PyQt6.QtCore import QMimeData, QPointF, Qt
-from PyQt6.QtGui import QDropEvent
+from PyQt6.QtGui import QColor, QDropEvent
 
 pytestmark = pytest.mark.ui
 
@@ -15,9 +15,11 @@ from falcocv.core.workflow import Workflow
 from falcocv.tools.block.config import BlockConfig
 from falcocv.tools.block.logic import Block
 from falcocv.tools.image_loader.logic import ImageLoader
+from falcocv.ui.style import DANGER
+from falcocv.ui.widgets.job_config_dialog import JobConfigDialog
 from falcocv.ui.widgets.tool_config_dialog import ToolConfigDialog
 from falcocv.ui.widgets.workflow_editor import WorkflowEditor
-from falcocv.ui.widgets.workflow_tree import _TOOL_MIME
+from falcocv.ui.widgets.workflow_tree import WorkflowTree, _TOOL_MIME
 
 
 def _workflow(*names):
@@ -211,6 +213,40 @@ def test_move_a_tool_into_a_block_workflow(qtbot):
     assert main_wf.tools == [block]
     assert block.workflow.tools == [moved]
     assert inner.tree.topLevelItemCount() == 3  # 2 headers + tool
+
+
+def test_tree_marks_tool_errors_red_and_shows_tooltip(qtbot):
+    workflow = Workflow()
+    tool = ImageLoader("bad")
+    workflow.add_tool(tool)
+    tree = WorkflowTree()
+    qtbot.addWidget(tree)
+    tree.set_workflow(workflow)
+
+    tool.last_error = "No matches found"
+    tree.refresh_status(force=True)
+    item = tree.topLevelItem(0)
+
+    assert "\u26a0" in item.text(1)
+    assert item.foreground(1).color().name().lower() == QColor(DANGER).name().lower()
+    assert item.toolTip(1) == "No matches found"
+
+    tool.last_error = None
+    tree.refresh_status(force=True)
+    assert item.toolTip(1) == ""
+    assert item.text(1) == ""
+
+
+def test_job_config_stop_on_error_checkbox(qtbot):
+    workflow = Workflow()
+    dialog = JobConfigDialog(workflow)
+    qtbot.addWidget(dialog)
+
+    dialog.chk_stop_on_error.setChecked(True)
+    assert workflow.stop_on_error is True
+
+    dialog.chk_stop_on_error.setChecked(False)
+    assert workflow.stop_on_error is False
 
 
 def test_moving_a_block_into_its_own_workflow_is_refused(qtbot):

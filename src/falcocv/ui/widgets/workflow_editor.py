@@ -347,7 +347,9 @@ class WorkflowEditor(QWidget):
 
     def refresh_values(self):
         """Lightweight refresh of values and status."""
-        self.tree.refresh_status()
+        # A run just finished: bypass the 10 Hz throttle so errors are red
+        # immediately, not on the next timer tick.
+        self.tree.refresh_status(force=True)
         self.update_record_list()
         self.update_image_counter()
 

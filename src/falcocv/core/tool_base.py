@@ -90,15 +90,24 @@ class BaseTool(abc.ABC):
 
     def execute(self, advance=False):
         start_ns = time.perf_counter_ns()
+        self.last_error = None
         try:
             self.run(advance=advance)
-            self.last_error = None
         except Exception as e:
             self.last_error = type(e).__name__ + ": " + str(e)
         finally:
             end_ns = time.perf_counter_ns()
             self.last_execution_time_ms = (end_ns - start_ns) / 1e6
         self.data_changed.emit()
+
+    def set_error(self, message: str) -> None:
+        """Mark the tool as failed without raising an exception.
+
+        The workflow treats the tool as failed and honours its
+        ``stop_on_error`` policy.  Outputs are kept so callers can inspect
+        partial results or a zero count.
+        """
+        self.last_error = str(message)
 
     @abc.abstractmethod
     def run(self, advance=False):

@@ -34,7 +34,7 @@ class JobConfigDialog(QDialog):
         self.chk_stop_on_error = QCheckBox("Stop pipeline on first error")
         self.chk_stop_on_error.setToolTip(
             "If enabled, the pipeline will stop executing subsequent tools "
-            "as soon as any tool raises an error."
+            "as soon as any tool reports an error."
         )
         self.chk_stop_on_error.setChecked(workflow.stop_on_error)
         self.chk_stop_on_error.toggled.connect(self._on_stop_on_error_changed)

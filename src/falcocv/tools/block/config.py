@@ -134,7 +134,7 @@ class BlockConfig(QWidget):
 
     @safe_refresh
     def refresh_ui(self):
-        self.editor.tree.refresh_status()
+        self.editor.tree.refresh_status(force=True)
         self.editor.update_viewer_image()
 
     def _on_structure_changed(self):
