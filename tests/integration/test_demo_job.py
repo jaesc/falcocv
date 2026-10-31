@@ -42,6 +42,10 @@ def test_demo_job_ok_image():
 
 def test_demo_job_missing_hole_is_ng():
     workflow, holes, measurement = _run("11_ng_missing_hole.jpg")
-    assert workflow.last_error is None
     assert holes == 1
     assert measurement.outputs["count"] == 0
+    # The configured distance needs two blobs; with one missing, Measurement
+    # must fail rather than silently returning an empty measurement.
+    assert workflow.last_error is not None
+    assert "Measurement" in workflow.last_error
+    assert "not found" in workflow.last_error

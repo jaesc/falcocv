@@ -338,6 +338,7 @@ class MeasurementTool(BaseTool):
 
         img_input = self.inputs.get("input image")
         if img_input is None:
+            self.set_error("Input image is missing")
             self.data_changed.emit()
             return
 
@@ -353,18 +354,43 @@ class MeasurementTool(BaseTool):
             measurements = self.params.get("overlay_measurements", [])
             px_per_mm = float(self.params.get("pixels_per_mm", 1.0) or 1.0)
             results = ToolResults()
+            row_errors = []
             layer = vision_img.get_overlay_layer("default")
             layer.elements = [e for e in layer.elements if e.source_tool != self.name]
+
+            def _source_label(row, side):
+                return (
+                    f"{row.get(f'source{side}', '')}."
+                    f"{row.get(f'ref_id{side}', '')} "
+                    f"({row.get(f'type{side}', 'POINT')})"
+                )
 
             for row_idx, row in enumerate(measurements):
                 if not row.get("enabled", True):
                     continue
 
                 mode = row.get("mode", "distance")
+                valid_types = MODE_VALID_TYPES.get(mode)
+                if valid_types is None:
+                    row_errors.append(
+                        f"Measurement M{row_idx}: unknown mode {mode!r}"
+                    )
+                    continue
+
                 items = _enumerate_elements(vision_img)
                 e1 = _find_element(items, row.get("source1", ""), row.get("ref_id1", ""),
                                    row.get("type1", "POINT"), row_idx)
                 if e1 is None:
+                    row_errors.append(
+                        f"Measurement M{row_idx}: source1 "
+                        f"{_source_label(row, 1)} not found"
+                    )
+                    continue
+                if e1["type"] not in valid_types:
+                    row_errors.append(
+                        f"Measurement M{row_idx}: type {e1['type']} is not "
+                        f"valid for {mode}"
+                    )
                     continue
 
                 color = tuple(row.get("color", [0, 255, 255]))
@@ -406,6 +432,16 @@ class MeasurementTool(BaseTool):
                     e2 = _find_element(items, row.get("source2", ""), row.get("ref_id2", ""),
                                        row.get("type2", "POINT"), row_idx)
                     if e2 is None:
+                        row_errors.append(
+                            f"Measurement M{row_idx}: source2 "
+                            f"{_source_label(row, 2)} not found"
+                        )
+                        continue
+                    if e2["type"] not in valid_types:
+                        row_errors.append(
+                            f"Measurement M{row_idx}: type {e2['type']} is not "
+                            f"valid for {mode}"
+                        )
                         continue
 
                     if mode == "angle":
@@ -458,8 +494,11 @@ class MeasurementTool(BaseTool):
             self.outputs["output image"] = vision_img
             self.outputs["count"] = len(results)
             self.outputs["results"] = results
+            if row_errors:
+                self.set_error("; ".join(row_errors))
             self._copy_overlays_to_input(vision_img, v_img)
-        except Exception:
+        except Exception as exc:
+            self.set_error(f"Measurement failed: {type(exc).__name__}: {exc}")
             import traceback
             traceback.print_exc()
         finally:
