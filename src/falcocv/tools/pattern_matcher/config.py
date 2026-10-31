@@ -22,6 +22,7 @@ from PyQt6.QtCore import QRectF, QTimer, Qt, QThread, pyqtSignal as Signal
 from falcocv.ui.style import ALT_BG, BORDER, SUCCESS, WARNING, disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -258,7 +259,7 @@ class PatternMatcherConfig(QWidget):
         pyr_lyt.addWidget(QLabel("Pyramid Levels")); pyr_lyt.addWidget(self.spin_pyr); layout.addWidget(pyr_group)
 
         res_group = QGroupBox("Expected Results"); res_lyt = QVBoxLayout(res_group)
-        self.spin_max = QSpinBox(); self.spin_max.setRange(0, 100); self.spin_max.setValue(self.tool.params["max_matches"]); self.spin_max.setSpecialValueText("All"); self.spin_max.valueChanged.connect(lambda v: self._set_param("max_matches", v))
+        self.spin_max = QSpinBox(); self.spin_max.setRange(0, 100); self.spin_max.setValue(self.tool.params["max_matches"]); self.spin_max.setSpecialValueText("All"); self.spin_max.setToolTip("Maximum number of matches to return (0 = all). This does not control the minimum-result error policy."); self.spin_max.valueChanged.connect(lambda v: self._set_param("max_matches", v))
         res_lyt.addWidget(QLabel("Number of matches (0 = All)")); res_lyt.addWidget(self.spin_max)
 
         self.chk_fixture = QCheckBox("Act as Fixture (Anchor)")
@@ -267,6 +268,10 @@ class PatternMatcherConfig(QWidget):
         res_lyt.addWidget(self.chk_fixture)
 
         layout.addWidget(res_group)
+
+        self.spin_min_results = add_min_results_group(
+            layout, self.tool, "Minimum matches:", 100, "matches"
+        )
 
         # Visibility checkboxes
         vis_group = QGroupBox("Visibility"); vis_lyt = QVBoxLayout(vis_group)

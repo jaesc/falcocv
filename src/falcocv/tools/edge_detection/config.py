@@ -22,6 +22,7 @@ from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -177,6 +178,10 @@ class EdgeDetectionConfig(QWidget):
         w_lyt.addWidget(QLabel("Max Width (px):"))
         w_lyt.addWidget(self.spin_max_w)
         self.controls_layout.addWidget(self.width_group)
+
+        self.spin_min_results = add_min_results_group(
+            self.controls_layout, self.tool, "Minimum edges:", 1, "edges"
+        )
 
         vis_group = QGroupBox("Visibility")
         vis_lyt = QVBoxLayout(vis_group)

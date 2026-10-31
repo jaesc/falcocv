@@ -109,6 +109,19 @@ class BaseTool(abc.ABC):
         """
         self.last_error = str(message)
 
+    def fail_if_below_min_results(
+        self, count: int, singular: str = "result", plural: str | None = None
+    ) -> None:
+        """Apply the tool's ``min_results`` policy to ``count``.
+
+        ``min_results == 0`` disables the check.  A positive value marks the
+        tool as failed when fewer results were produced.
+        """
+        minimum = int(self.params.get("min_results", 0) or 0)
+        if minimum > 0 and count < minimum:
+            noun = singular if count == 1 else (plural or f"{singular}s")
+            self.set_error(f"Found {count} {noun}; minimum is {minimum}")
+
     @abc.abstractmethod
     def run(self, advance=False):
         pass

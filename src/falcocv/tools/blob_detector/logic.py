@@ -25,6 +25,7 @@ class BlobDetector(BaseTool):
             "adaptive_const": 2,
             "polarity": "Bright Blobs", 
             "blob_mode": "Outer",
+            "min_results": 1,
             "area_min": 100,
             "area_max": 1000000,
             "show_contours": True,
@@ -105,6 +106,7 @@ class BlobDetector(BaseTool):
             self.outputs["binary mask"] = None
             self.outputs["count"] = 0
             self.outputs["results"] = ToolResults()
+            self.set_error("Input image is missing")
             return
             
         img = img_input if isinstance(img_input, VisionImage) else VisionImage.from_array(img_input)
@@ -267,6 +269,7 @@ class BlobDetector(BaseTool):
         self.outputs["binary mask"] = VisionImage(mask_full)
         self.outputs["count"] = results.Count
         self.outputs["results"] = results
+        self.fail_if_below_min_results(results.Count, "blob", "blobs")
         self._copy_overlays_to_input(vision_img, img)
         self.data_changed.emit()
 

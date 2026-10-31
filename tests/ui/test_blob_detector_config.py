@@ -18,3 +18,16 @@ def test_blob_mode_combo_updates_the_tool(qtbot):
 
     config.combo_blob_mode.setCurrentText("Outer blobs")
     assert detector.params["blob_mode"] == "Outer"
+
+
+def test_min_results_spin_updates_the_tool(qtbot):
+    detector = BlobDetector("Blob Detector")
+    config = BlobDetectorConfig(detector)
+    qtbot.addWidget(config)
+
+    assert config.spin_min_results.value() == 1
+    config.spin_min_results.setValue(3)
+    assert detector.params["min_results"] == 3
+
+    config.spin_min_results.setValue(0)
+    assert detector.params["min_results"] == 0

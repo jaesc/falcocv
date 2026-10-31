@@ -152,6 +152,7 @@ class PatternMatcher(BaseTool):
             "scale_end": 1.0,
             "scale_step": 0.1,
             "pyramid_levels": 3,
+            "min_results": 1,
             "max_matches": 1,
             "show_labels": True,
             "show_search_roi": True,
@@ -423,7 +424,10 @@ class PatternMatcher(BaseTool):
         self.outputs["count"] = 0
         self.outputs["results"] = ToolResults()
         self.outputs["trained"] = self.is_trained
-        if img_input is None: self.data_changed.emit(); return
+        if img_input is None:
+            self.set_error("Input image is missing")
+            self.data_changed.emit()
+            return
 
         # Ensure we work with a VisionImage so overlays and fixturing metadata
         # are preserved when producing outputs. If the input is already a
@@ -460,7 +464,11 @@ class PatternMatcher(BaseTool):
                 thickness=2,
             )
 
-        if not self.is_trained: self.outputs["output image"] = vision_img; self.data_changed.emit(); return
+        if not self.is_trained:
+            self.outputs["output image"] = vision_img
+            self.set_error("PatternMatcher is not trained")
+            self.data_changed.emit()
+            return
 
         # Search
         levels = int(self.params["pyramid_levels"])
@@ -480,6 +488,7 @@ class PatternMatcher(BaseTool):
 
         if roi_img is None or roi_img.size == 0:
             self.outputs["output image"] = vision_img
+            self.set_error("Input ROI is empty")
             self.data_changed.emit()
             return
         # Extract raw data for OpenCV
@@ -713,6 +722,7 @@ class PatternMatcher(BaseTool):
 
         self.outputs["count"] = len(final_results)
         self.outputs["results"] = final_results
+        self.fail_if_below_min_results(len(final_results), "match", "matches")
         self._copy_overlays_to_input(vision_img, v_img)
         self.data_changed.emit()
 

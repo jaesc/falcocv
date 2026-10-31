@@ -20,6 +20,7 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.style import SUCCESS, WARNING, disabled_css
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     configure_params_splitter,
     connect_execution_time,
     create_execution_footer,
@@ -237,6 +238,10 @@ class ShapeMatchConfig(QWidget):
         self.spin_max_matches.setRange(0, 100)
         self.spin_max_matches.setSpecialValueText("All")
         self.spin_max_matches.setValue(int(self.tool.params.get("max_matches", 1)))
+        self.spin_max_matches.setToolTip(
+            "Maximum number of matches to return (0 = all). "
+            "This does not control the minimum-result error policy."
+        )
         self.spin_max_matches.valueChanged.connect(
             lambda value: self._set_param("max_matches", value)
         )
@@ -249,6 +254,10 @@ class ShapeMatchConfig(QWidget):
         )
         results_layout.addWidget(self.chk_fixture)
         layout.addWidget(results_group)
+
+        self.spin_min_results = add_min_results_group(
+            layout, self.tool, "Minimum matches:", 100, "matches"
+        )
 
         visibility_group = QGroupBox("Visibility")
         visibility_layout = QVBoxLayout(visibility_group)

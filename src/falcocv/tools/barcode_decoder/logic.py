@@ -41,6 +41,7 @@ class BarcodeDecoder(BaseTool):
             "act_as_fixture": False,
             "fixture_angle_offset": 0.0,
             "max_count": 1,
+            "min_results": 1,
             "qr_params": {"eps_x": 0.1, "eps_y": 0.1},
             # Kept for backwards compatibility with saved jobs.  The UI no
             # longer exposes them because the 1D pipeline uses pyzbar+zxing-cpp.
@@ -84,6 +85,7 @@ class BarcodeDecoder(BaseTool):
             self.outputs["output image"] = None
             self.outputs["count"] = 0
             self.outputs["results"] = ToolResults()
+            self.set_error("Input image is missing")
             return
 
         roi = extract_roi(img, self.params["roi"])
@@ -193,6 +195,7 @@ class BarcodeDecoder(BaseTool):
             results.append(res)
         self.outputs["count"] = results.Count
         self.outputs["results"] = results
+        self.fail_if_below_min_results(results.Count, "code", "codes")
 
         # Output VisionImage
         out_img = VisionImage(img.data, x=img.x, y=img.y, angle=img.angle)

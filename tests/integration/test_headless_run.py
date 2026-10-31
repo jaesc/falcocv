@@ -24,6 +24,9 @@ def _blob_params():
         "polarity": "Bright Blobs",
         "area_min": 50,
         "area_max": 100000,
+        # This pipeline deliberately runs Filters before its source in one
+        # test, so Blob receives no image; keep the empty result valid.
+        "min_results": 0,
         "show_contours": False,
         "show_centroids": False,
         "show_labels": False,
@@ -76,11 +79,14 @@ def test_headless_preserves_manual_tool_order(tmp_path):
     job_path = _save_pipeline(tmp_path, image_path, reverse_order=True)
 
     report, code = run_job(job_path)
-    assert code == 0
+    # Filters runs before its source and Blob therefore receives no image;
+    # that is now a tool error, but the runner must still keep the manual order.
+    assert code == 1
 
     # The list order is the contract: Filters executes before its source and
     # therefore sees None on the first run.  The runner must not reorder it.
     assert [tool["name"] for tool in report["tools"]] == ["Filters", "Loader", "Blob"]
+    assert report["tools"][2]["error"] == "Input image is missing"
     filters = report["tools"][0]
     assert filters["outputs"]["output image"] is None
 

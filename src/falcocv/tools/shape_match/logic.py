@@ -144,6 +144,7 @@ class ShapeMatch(BaseTool):
             "scale_start": 0.9,
             "scale_end": 1.1,
             "min_score": 0.45,
+            "min_results": 1,
             "max_matches": 1,
             "max_features": 800,
             "origin_x": 0.0,
@@ -1891,6 +1892,7 @@ class ShapeMatch(BaseTool):
 
         source = self.inputs.get("input image")
         if source is None:
+            self.set_error("Input image is missing")
             self.data_changed.emit()
             return
 
@@ -1937,12 +1939,14 @@ class ShapeMatch(BaseTool):
             )
 
         if not self.is_trained:
+            self.set_error("ShapeMatch is not trained")
             self.data_changed.emit()
             return
 
         roi_src = roi["roi_src"]
         raw = roi_src.data if isinstance(roi_src, VisionImage) else roi_src
         if raw is None or raw.size == 0:
+            self.set_error("Input ROI is empty")
             self.data_changed.emit()
             return
         gray = self._gray(raw)
@@ -2320,6 +2324,7 @@ class ShapeMatch(BaseTool):
         self.outputs["count"] = len(results)
         self.outputs["results"] = results
         self.outputs["warnings"] = warnings
+        self.fail_if_below_min_results(len(results), "match", "matches")
         self._copy_overlays_to_input(vision_img, v_img)
         self.data_changed.emit()
 

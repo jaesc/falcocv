@@ -6,6 +6,7 @@ from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -88,6 +89,10 @@ class BarcodeDecoderConfig(QWidget):
         )
         fixture_row.addWidget(self.spin_fixture_offset)
         self.controls_layout.addLayout(fixture_row)
+
+        self.spin_min_results = add_min_results_group(
+            self.controls_layout, self.tool, "Minimum codes:", 100, "codes"
+        )
 
         # Visibility checkboxes
         vis_group = QGroupBox("Visibility")

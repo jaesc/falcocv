@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QRectF, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -137,6 +138,9 @@ class BlobDetectorConfig(QWidget):
         f_lyt.addWidget(QLabel("Sort By:"))
         f_lyt.addWidget(self.combo_sort)
         self.controls_layout.addWidget(f_group)
+        self.spin_min_results = add_min_results_group(
+            self.controls_layout, self.tool, "Minimum blobs:", 1000, "blobs"
+        )
 
         # --- VISIBILITY ---
         vis_group = QGroupBox("Visibility")

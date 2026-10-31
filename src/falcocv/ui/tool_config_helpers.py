@@ -10,10 +10,13 @@ Provides a uniform layout for parameter panel + viewer:
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSpinBox,
     QSplitter,
+    QVBoxLayout,
     QWidget,
 )
 from PyQt6.QtCore import Qt
@@ -28,6 +31,7 @@ __all__ = [
     "save_params_splitter",
     "create_execution_footer",
     "connect_execution_time",
+    "add_min_results_group",
 ]
 
 
@@ -91,6 +95,47 @@ def save_params_splitter(splitter: QSplitter, tool_type: str) -> None:
     sizes = splitter.sizes()
     if sizes and len(sizes) >= 2 and sizes[0] > 0 and sizes[1] > 0:
         ConfigManager().set_tool_splitter(tool_type, sizes)
+
+
+def add_min_results_group(
+    layout: QVBoxLayout,
+    tool,
+    label: str,
+    maximum: int,
+    noun: str = "results",
+    default: int = 1,
+) -> QSpinBox:
+    """Add the shared ``min_results`` error policy control.
+
+    ``0`` disables the check; any positive value marks the tool as failed
+    when its result count is lower.  The workflow's ``stop_on_error`` flag
+    decides whether the pipeline stops.
+    """
+    group = QGroupBox("Error Handling")
+    group_layout = QVBoxLayout(group)
+
+    if "min_results" not in tool.params:
+        tool.params["min_results"] = int(default)
+
+    spin = QSpinBox()
+    spin.setRange(0, max(1, int(maximum)))
+    spin.setSpecialValueText("No error")
+    value = int(tool.params.get("min_results", default))
+    spin.setValue(max(0, min(value, spin.maximum())))
+    spin.setToolTip(
+        f"Fail when fewer than this many {noun} are found. "
+        "Set to 0 to disable the check."
+    )
+
+    def _changed(value: int) -> None:
+        tool.params["min_results"] = int(value)
+        tool.mark_dirty()
+
+    spin.valueChanged.connect(_changed)
+    group_layout.addWidget(QLabel(label))
+    group_layout.addWidget(spin)
+    layout.addWidget(group)
+    return spin
 
 
 def create_execution_footer(parent: QWidget) -> tuple[QWidget, QLabel]:

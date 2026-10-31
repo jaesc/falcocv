@@ -46,6 +46,7 @@ class EdgeDetection(BaseTool):
             "max_edge_width": 9999,
             "gaussian_sigma": 1.0,
             "subpixel": True,
+            "min_results": 1,
             "roi": [0, 0, 0, 0, 0],
             "show_search_roi": True,
             "show_direction_arrow": True,
@@ -68,6 +69,7 @@ class EdgeDetection(BaseTool):
             self.outputs["output image"] = None
             self.outputs["count"] = 0
             self.outputs["results"] = ToolResults()
+            self.set_error("Input image is missing")
             return
 
         img = img_input if isinstance(img_input, VisionImage) else VisionImage.from_array(img_input)
@@ -80,6 +82,7 @@ class EdgeDetection(BaseTool):
             self.outputs["output image"] = img
             self.outputs["count"] = 0
             self.outputs["results"] = ToolResults()
+            self.set_error("ROI is empty")
             self.data_changed.emit()
             return
 
@@ -166,6 +169,7 @@ class EdgeDetection(BaseTool):
         else:
             self.outputs["count"] = 0
             self.outputs["results"] = ToolResults()
+        self.fail_if_below_min_results(self.outputs["count"], "edge", "edges")
         self._copy_overlays_to_input(vision_img, img)
         self.data_changed.emit()
 
