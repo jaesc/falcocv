@@ -1258,7 +1258,12 @@ TOOL_HELP["OCR"] = {
         {"name": "model_type", "default": "Server", "description": "Server: higher accuracy. Mobile: faster."},
         {"name": "expected_text", "default": "", "description": "Expected text for Verify mode."},
         {"name": "min_region_confidence", "default": 0.5, "description": "Minimum recognition confidence to accept the text."},
-        {"name": "roi", "default": "—", "description": "Search region [x, y, w, h, angle]."},
+        {"name": "min_results", "default": "1", "description": "Minimum number of text regions required. 0 disables the check; below the minimum the tool is marked as failed."},
+        {"name": "verify_trim", "default": "True", "description": "Trim leading/trailing whitespace before comparing in Verify mode."},
+        {"name": "verify_ignore_case", "default": "False", "description": "Compare case-insensitively in Verify mode."},
+        {"name": "verify_ignore_whitespace", "default": "False", "description": "Ignore all whitespace when comparing in Verify mode."},
+        {"name": "verify_ignore_accents", "default": "False", "description": "Ignore Unicode accents when comparing in Verify mode."},
+        {"name": "roi", "default": "-", "description": "Search region [x, y, w, h, angle]."},
     ],
     "ocr_modes": {
         "read": {"name": "Read", "how_it_works": "Runs the ROI through PP-OCRv5 SVTR recognition. Returns recognized text.",

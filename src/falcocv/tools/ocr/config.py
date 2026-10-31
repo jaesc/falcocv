@@ -20,6 +20,7 @@ from falcocv.ui.widgets.viewer import ImageViewer
 from falcocv.ui.style import ALT_BG, BORDER, SUCCESS, CAUTION, WHITE
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -101,6 +102,40 @@ class OCRConfigWidget(QWidget):
         )
         verify_lyt.addWidget(QLabel("Expected text:"))
         verify_lyt.addWidget(self.txt_expected)
+
+        self.chk_verify_trim = QCheckBox("Trim whitespace")
+        self.chk_verify_trim.setChecked(bool(self.tool.params.get("verify_trim", True)))
+        self.chk_verify_trim.toggled.connect(
+            lambda v: self._set_param("verify_trim", v)
+        )
+        verify_lyt.addWidget(self.chk_verify_trim)
+
+        self.chk_verify_case = QCheckBox("Ignore case")
+        self.chk_verify_case.setChecked(
+            bool(self.tool.params.get("verify_ignore_case", False))
+        )
+        self.chk_verify_case.toggled.connect(
+            lambda v: self._set_param("verify_ignore_case", v)
+        )
+        verify_lyt.addWidget(self.chk_verify_case)
+
+        self.chk_verify_whitespace = QCheckBox("Ignore whitespace")
+        self.chk_verify_whitespace.setChecked(
+            bool(self.tool.params.get("verify_ignore_whitespace", False))
+        )
+        self.chk_verify_whitespace.toggled.connect(
+            lambda v: self._set_param("verify_ignore_whitespace", v)
+        )
+        verify_lyt.addWidget(self.chk_verify_whitespace)
+
+        self.chk_verify_accents = QCheckBox("Ignore accents")
+        self.chk_verify_accents.setChecked(
+            bool(self.tool.params.get("verify_ignore_accents", False))
+        )
+        self.chk_verify_accents.toggled.connect(
+            lambda v: self._set_param("verify_ignore_accents", v)
+        )
+        verify_lyt.addWidget(self.chk_verify_accents)
         left_outer.addWidget(verify_group)
 
         # ── Recognition params ──
@@ -118,6 +153,10 @@ class OCRConfigWidget(QWidget):
         h = QHBoxLayout(); h.addWidget(QLabel("Min confidence:")); h.addWidget(s)
         rec_lyt.addLayout(h)
         left_outer.addWidget(rec_group)
+
+        self.spin_min_results = add_min_results_group(
+            left_outer, self.tool, "Minimum text regions:", 100, "text regions"
+        )
 
         # ── Visibility ──
         vis_group = QGroupBox("Visibility")

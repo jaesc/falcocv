@@ -2,6 +2,9 @@
 
 """OCR tool using PP-OCRv5 (ONNX Runtime) — pure recognition."""
 
+import re
+import unicodedata
+
 import numpy as np
 import cv2
 
@@ -33,6 +36,11 @@ class OCR(BaseTool):
             "copy_overlays_to_input": True,
             "min_region_confidence": 0.5,
             "split_lines": False,
+            "min_results": 1,
+            "verify_trim": True,
+            "verify_ignore_case": False,
+            "verify_ignore_whitespace": False,
+            "verify_ignore_accents": False,
         }
         self.inputs = {"input image": None}
         self.outputs = {
@@ -51,6 +59,37 @@ class OCR(BaseTool):
         self._engine.config.split_lines = self.params.get("split_lines", False)
         return self._engine
 
+    def _normalize_verify_text(self, text: str) -> str:
+        text = str(text or "")
+        if self.params.get("verify_trim", True):
+            text = text.strip()
+        if self.params.get("verify_ignore_whitespace", False):
+            text = re.sub(r"\s+", "", text)
+        if self.params.get("verify_ignore_accents", False):
+            text = "".join(
+                ch for ch in unicodedata.normalize("NFKD", text)
+                if not unicodedata.combining(ch)
+            )
+        if self.params.get("verify_ignore_case", False):
+            text = text.casefold()
+        return text
+
+    def _check_verify(self, result: OCRResult | None) -> None:
+        expected = str(self.params.get("expected_text", "") or "")
+        expected_norm = self._normalize_verify_text(expected)
+        if not expected_norm:
+            self.set_error("Expected text is empty")
+            return
+
+        found = result.text if result is not None else ""
+        found_norm = self._normalize_verify_text(found)
+        if not found_norm:
+            self.set_error("Verification failed: no text found")
+        elif found_norm != expected_norm:
+            self.set_error(
+                f"Verification failed: expected {expected!r}, got {found!r}"
+            )
+
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
         if img_input is None:
@@ -58,6 +97,7 @@ class OCR(BaseTool):
             self.outputs["text"] = ""
             self.outputs["confidence"] = 0.0
             self.outputs["count"] = 0
+            self.set_error("Input image is missing")
             self.data_changed.emit()
             return
 
@@ -80,6 +120,7 @@ class OCR(BaseTool):
         mode = self.params.get("mode", "Read")
 
         result: OCRResult | None = None
+        engine_error: str | None = None
         try:
             if mode == "Read":
                 result = engine.read(roi_src)
@@ -88,7 +129,8 @@ class OCR(BaseTool):
                 result = engine.verify(roi_src, expected)
             elif mode == "Locate":
                 result = engine.locate(roi_src)
-        except Exception:
+        except Exception as exc:
+            engine_error = f"{type(exc).__name__}: {exc}"
             import traceback
             traceback.print_exc()
 
@@ -100,6 +142,15 @@ class OCR(BaseTool):
             self.outputs["text"] = ""
             self.outputs["confidence"] = 0.0
             self.outputs["count"] = 0
+
+        if engine_error:
+            self.set_error(f"OCR engine failed: {engine_error}")
+        else:
+            self.fail_if_below_min_results(
+                self.outputs["count"], "text region", "text regions"
+            )
+            if mode == "Verify":
+                self._check_verify(result)
 
         out_img = VisionImage(img.data, x=img.x, y=img.y, angle=img.angle)
         out_img.inherit_overlays_from(img)

@@ -8,6 +8,7 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.tools.barcode_decoder.logic import BarcodeDecoder
 from falcocv.tools.blob_detector.logic import BlobDetector
 from falcocv.tools.edge_detection.logic import EdgeDetection
+from falcocv.tools.ocr.logic import OCR
 from falcocv.tools.pattern_matcher.logic import PatternMatcher
 from falcocv.tools.shape_match.logic import ShapeMatch
 
@@ -100,6 +101,7 @@ def test_supported_tools_default_to_one_required_result():
     assert BlobDetector().params["min_results"] == 1
     assert EdgeDetection().params["min_results"] == 1
     assert BarcodeDecoder().params["min_results"] == 1
+    assert OCR().params["min_results"] == 1
 
 
 def test_shape_match_errors_below_min_results():

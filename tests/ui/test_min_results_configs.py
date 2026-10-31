@@ -10,6 +10,8 @@ from falcocv.tools.blob_detector.config import BlobDetectorConfig
 from falcocv.tools.blob_detector.logic import BlobDetector
 from falcocv.tools.edge_detection.config import EdgeDetectionConfig
 from falcocv.tools.edge_detection.logic import EdgeDetection
+from falcocv.tools.ocr.config import OCRConfigWidget
+from falcocv.tools.ocr.logic import OCR
 from falcocv.tools.pattern_matcher.config import PatternMatcherConfig
 from falcocv.tools.pattern_matcher.logic import PatternMatcher
 from falcocv.tools.shape_match.config import ShapeMatchConfig
@@ -24,8 +26,9 @@ from falcocv.tools.shape_match.logic import ShapeMatch
         (BlobDetector, BlobDetectorConfig, 1000),
         (EdgeDetection, EdgeDetectionConfig, 1),
         (BarcodeDecoder, BarcodeDecoderConfig, 100),
+        (OCR, OCRConfigWidget, 100),
     ],
-    ids=["shape", "pattern", "blob", "edge", "barcode"],
+    ids=["shape", "pattern", "blob", "edge", "barcode", "ocr"],
 )
 def test_min_results_control_updates_the_tool(qtbot, tool_cls, config_cls, maximum):
     tool = tool_cls()
