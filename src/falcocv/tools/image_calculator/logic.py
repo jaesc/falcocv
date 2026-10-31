@@ -8,6 +8,7 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.core.config import ConfigManager
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output, composite_roi_to_full
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.tool_inputs import image_input_error
 
 OPERATION_DEFS = {
     "add": {
@@ -234,6 +235,28 @@ class ImageCalculatorTool(BaseTool):
     def run(self, advance=False):
         img_a = self.inputs.get("image_A")
         img_b = self.inputs.get("image_B")
+
+        problem = image_input_error(img_a, "Input image A")
+        if problem:
+            self.set_error(problem)
+            self.outputs["output image"] = None
+            self.data_changed.emit()
+            return
+
+        # Image B is optional for single-input operations, but an enabled
+        # two-input operation must not silently fall back to A.
+        needs_b = any(
+            op.get("enabled", True)
+            and OPERATION_DEFS.get(op.get("type"), {}).get("inputs", 1) >= 2
+            for op in self.params.get("ops", [])
+        )
+        if needs_b:
+            problem = image_input_error(img_b, "Input image B")
+            if problem:
+                self.set_error(problem)
+                self.outputs["output image"] = None
+                self.data_changed.emit()
+                return
 
         if img_a is not None and isinstance(img_a, VisionImage):
             v_img = img_a

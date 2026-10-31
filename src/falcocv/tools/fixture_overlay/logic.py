@@ -8,6 +8,7 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.core.overlay_layer import OverlayType
 from falcocv.core.pointcloud_utils import propagate_3d
 from falcocv.core.config import ConfigManager
+from falcocv.core.tool_inputs import image_input_error
 
 
 def _make_label(elem, idx):
@@ -99,7 +100,9 @@ class FixtureOverlay(BaseTool):
         self.outputs["output image"] = None
 
         img = self.inputs.get("input image")
-        if img is None:
+        problem = image_input_error(img)
+        if problem:
+            self.set_error(problem)
             self.data_changed.emit()
             return
 
@@ -113,17 +116,26 @@ class FixtureOverlay(BaseTool):
         st = self.params.get("selected_source_tool")
         rid = self.params.get("selected_ref_id")
         tp = self.params.get("selected_type")
-        if st is not None and rid is not None:
+        if st is not None or rid is not None:
+            if not st or rid is None:
+                self.set_error("Fixture source is incomplete")
+                self.data_changed.emit()
+                return
             items = _enumerate_elements(v_img)
             found = next((it for it in items
                           if it["source_tool"] == st
                           and it["ref_id"] == rid
                           and it["type"] == tp), None)
-            if found:
-                cx, cy, angle = _compute_fixture(found["elem"])
-                out.x = cx
-                out.y = cy
-                out.angle = angle
+            if found is None:
+                self.set_error(
+                    f"Source element not found: {st}.{rid} ({tp})"
+                )
+                self.data_changed.emit()
+                return
+            cx, cy, angle = _compute_fixture(found["elem"])
+            out.x = cx
+            out.y = cy
+            out.angle = angle
 
         self.outputs["output image"] = out
         self.data_changed.emit()

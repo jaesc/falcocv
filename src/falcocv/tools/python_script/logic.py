@@ -112,6 +112,10 @@ class PythonScriptTool(BaseTool):
     def run(self, advance=False):
         self._sync_ports()
         if not self.params.get("script_path") and not self.params.get("script_code", "").strip():
+            for name in self.outputs:
+                self.outputs[name] = None
+            self.set_error("No script configured")
+            self.data_changed.emit()
             return
         self._load_module()
         if not self._instance:

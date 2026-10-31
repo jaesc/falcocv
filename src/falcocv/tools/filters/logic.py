@@ -7,6 +7,7 @@ from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output, composite_roi_to_full
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.tool_inputs import image_input_error
 from falcocv.core.config import ConfigManager
 
 # ---------------------------------------------------------------------------
@@ -419,7 +420,9 @@ class FiltersTool(BaseTool):
 
     def run(self, advance=False):
         img = self.inputs.get("input image")
-        if img is None:
+        problem = image_input_error(img)
+        if problem:
+            self.set_error(problem)
             self.outputs["output image"] = None
             self.data_changed.emit()
             return

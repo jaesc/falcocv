@@ -21,6 +21,7 @@ from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.tool_inputs import image_input_error
 from falcocv.core.classifier.inference import ClassifierInferenceEngine
 from falcocv.core.classifier.projection import ProjectionHead
 from falcocv.core.classifier.classifier_memory import ClassifierMemoryBank
@@ -186,7 +187,9 @@ class Classifier(BaseTool):
 
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
-        if img_input is None:
+        problem = image_input_error(img_input)
+        if problem:
+            self.set_error(problem)
             self.outputs["output image"] = None
             self.outputs["class_label"] = ""
             self.outputs["score"] = 0.0
@@ -238,13 +241,18 @@ class Classifier(BaseTool):
         label_text = ""
         scr = 0.0
         passed = False
-        if self._trained and self._inference is not None:
+        inference_ready = self._trained and self._inference is not None
+        if not inference_ready and not self._recording:
+            self.set_error("Classifier is not trained")
+        elif inference_ready:
             try:
                 result = self._inference.predict(roi_src)
                 label_text = result.get("label", "")
                 scr = result.get("score", 0.0)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.set_error(
+                    f"Classifier inference failed: {type(exc).__name__}: {exc}"
+                )
 
         if label_text:
             expected = self.params.get("expected_class", "")

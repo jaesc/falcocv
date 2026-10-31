@@ -5,6 +5,7 @@ from falcocv.core.tool_base import ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi
+from falcocv.core.tool_inputs import image_input_error
 
 
 class HistogramResult(ToolResult):
@@ -37,7 +38,9 @@ class HistogramTool(BaseTool):
 
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
-        if img_input is None:
+        problem = image_input_error(img_input)
+        if problem:
+            self.set_error(problem)
             self.outputs["output image"] = None
             self.outputs["results"] = ToolResults()
             self.data_changed.emit()

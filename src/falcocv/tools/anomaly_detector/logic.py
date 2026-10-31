@@ -19,6 +19,7 @@ from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.tool_inputs import image_input_error
 from falcocv.core.anomaly.detector import PatchCoreDetector, AnomalyResult
 
 
@@ -95,7 +96,9 @@ class AnomalyDetector(BaseTool):
 
     def run(self, advance=False):
         img_input = self.inputs.get("input image")
-        if img_input is None:
+        problem = image_input_error(img_input)
+        if problem:
+            self.set_error(problem)
             self.outputs["output image"] = None
             self.outputs["score"] = 0.0
             self.outputs["pass"] = False
@@ -128,7 +131,10 @@ class AnomalyDetector(BaseTool):
         score = 0.0
         passed = False
         result: AnomalyResult | None = None
-        if self._trained and self._detector is not None:
+        inference_ready = self._trained and self._detector is not None
+        if not inference_ready and not self._recording:
+            self.set_error("Anomaly detector is not trained")
+        elif inference_ready:
             try:
                 result = self._detector.predict(
                     roi_src, build_heatmap=self.params.get("show_heatmap", True),
@@ -136,8 +142,10 @@ class AnomalyDetector(BaseTool):
                 score = result.score
                 threshold = self.params.get("threshold", 0.5)
                 passed = score < threshold
-            except Exception:
-                pass
+            except Exception as exc:
+                self.set_error(
+                    f"Anomaly inference failed: {type(exc).__name__}: {exc}"
+                )
 
         # Build output base
         show_hm = self.params.get("show_heatmap", True) and result is not None
