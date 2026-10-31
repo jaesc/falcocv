@@ -35,6 +35,7 @@ class WorkflowEditor(QWidget):
         self.controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
         from falcocv.core.config import ConfigManager
         WorkflowEditor._global_show_overlays = ConfigManager().get_show_overlays()
+        self.controller.execution_started.connect(self._on_execution_started)
         self.controller.execution_finished.connect(self._on_execution_finished)
         
         layout = QVBoxLayout(self)
@@ -357,6 +358,7 @@ class WorkflowEditor(QWidget):
         self._last_records = None
         self.controller = WorkflowController(workflow or Workflow())
         self.controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
+        self.controller.execution_started.connect(self._on_execution_started)
         self.controller.execution_finished.connect(self._on_execution_finished)
         self.workflow = self.controller.workflow
         self._bind_tools()
@@ -577,9 +579,18 @@ class WorkflowEditor(QWidget):
     def run_workflow(self, advance=False):
         self.controller.run(advance=advance)
 
+    def _on_execution_started(self):
+        # The controller clears every tool's timing/error before emitting this.
+        self.tree.refresh_status(force=True)
+        self.label_error.setText("")
+        self.label_total_time.setText("Running...")
+
     def _on_execution_finished(self, result):
         self.refresh_values()
         self.update_viewer_image()
+        if self.btn_loop.isChecked() and not self.controller.is_looping():
+            self.btn_loop.setChecked(False)
+            self.btn_loop.setText("RUN LOOP")
         time_ms = result.get("total_time_ms", 0)
         self.label_total_time.setText(f"{time_ms:.1f} ms")
         error = result.get("error")

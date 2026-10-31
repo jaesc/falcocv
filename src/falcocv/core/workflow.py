@@ -59,10 +59,20 @@ class Workflow:
     def remove_connection(self, dst_tool, in_name):
         self.connections = [c for c in self.connections if not (c[2] == dst_tool and c[3] == in_name)]
 
+    def reset_execution_status(self):
+        """Clear the previous run's timing and error state for every tool."""
+        self.last_error = None
+        for tool in self.tools:
+            tool.last_execution_time_ms = 0.0
+            tool.last_error = None
+            child = getattr(tool, "workflow", None)
+            if child is not None:
+                child.reset_execution_status()
+
     def run(self, advance=False):
         import time
         start_ns = time.perf_counter_ns()
-        self.last_error = None
+        self.reset_execution_status()
         
         # Optimize: Group connections by destination tool
         conns_by_dst = {}

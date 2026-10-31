@@ -42,6 +42,8 @@ class WorkflowController:
         if self._running:
             return
         self._running = True
+        # Clear the previous run's status before the UI hears execution_started.
+        self.workflow.reset_execution_status()
         self._set_state(ControllerState.RUNNING)
         self.execution_started.emit()
         try:
@@ -50,6 +52,15 @@ class WorkflowController:
             self.last_error = self.workflow.last_error
         finally:
             self._running = False
+            self.last_error = self.workflow.last_error
+            # A loop must not restart after an error when the job asks the
+            # pipeline to stop on the first failure.
+            if (
+                self._looping
+                and self.workflow.stop_on_error
+                and self.last_error
+            ):
+                self._looping = False
             self._set_state(ControllerState.IDLE)
             self.execution_finished.emit({
                 "total_time_ms": self.last_execution_time_ms,

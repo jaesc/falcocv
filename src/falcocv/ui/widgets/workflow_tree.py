@@ -83,7 +83,6 @@ class WorkflowTree(QTreeWidget):
             }}
             QTreeWidget::item:selected {{
                 background-color: {PANEL_BG};
-                color: {TEXT};
                 border-left: 3px solid {HIGHLIGHT};
             }}
             QTreeWidget::item:hover {{
