@@ -69,10 +69,27 @@ class Workflow:
             if child is not None:
                 child.reset_execution_status()
 
+    def clear_run_data(self):
+        """Drop inputs and outputs carried over from the previous run.
+
+        Only references are dropped (``None`` assignments); image buffers are
+        never copied, zeroed or scanned.  The cost is O(number of tool ports),
+        independent of image size.
+        """
+        for tool in self.tools:
+            for name in tool.inputs:
+                tool.inputs[name] = None
+            for name in tool.outputs:
+                tool.outputs[name] = None
+            child = getattr(tool, "workflow", None)
+            if child is not None:
+                child.clear_run_data()
+
     def run(self, advance=False):
         import time
         start_ns = time.perf_counter_ns()
         self.reset_execution_status()
+        self.clear_run_data()
         
         # Optimize: Group connections by destination tool
         conns_by_dst = {}
@@ -101,7 +118,8 @@ class Workflow:
                     import traceback
                     err_msg = f"{type(e).__name__}: {e}"
                     tool.last_error = err_msg
-                    self.last_error = f"{tool.name}: {err_msg}"
+                    if self.last_error is None:
+                        self.last_error = f"{tool.name}: {err_msg}"
                     print(f"Workflow error in {tool.name}:\n{traceback.format_exc()}")
                     if self.stop_on_error:
                         break
@@ -114,7 +132,8 @@ class Workflow:
                 tool.last_execution_time_ms = 0.0
 
             if tool.last_error:
-                self.last_error = f"{tool.name}: {tool.last_error}"
+                if self.last_error is None:
+                    self.last_error = f"{tool.name}: {tool.last_error}"
                 if self.stop_on_error:
                     break
         

@@ -60,6 +60,21 @@ def test_workflow_continues_without_stop_on_error():
     assert workflow.last_error == "A: boom"
 
 
+def test_workflow_keeps_the_first_error_when_tools_keep_failing():
+    first = DummyTool("A", fail=True)
+    second = DummyTool("B", fail=True)
+    workflow = Workflow()
+    workflow.add_tool(first)
+    workflow.add_tool(second)
+    workflow.stop_on_error = False
+
+    workflow.run()
+
+    assert first.last_error == "boom"
+    assert second.last_error == "boom"
+    assert workflow.last_error == "A: boom"
+
+
 def test_exception_uses_the_same_error_channel():
     class RaisingTool(DummyTool):
         def run(self, advance=False):
