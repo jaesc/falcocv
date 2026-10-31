@@ -317,6 +317,30 @@ Validation:
 
 Verdict: kept.
 
+### Vote-feature budget 400/300 (2026-10-31)
+
+Tested lowering `_VOTE_MODEL_FEATURES` from 500 to 400 and 300:
+
+- In-process A/B on the 5 MP / 404 px case: 500 = 54.5 ms, 400 = 53.3 ms,
+  300 = 55.1 ms.  The ~1 ms difference is inside the run-to-run noise.
+- 90-image job: 90/90 in both ROI modes with the same poses as the 500 run.
+- Bake-off: bit-identical summary (0.063 px / 0.034 deg / 0.081 %).
+- Verdict: **reverted to 500**.  A 20 % reduction of the vote features is a
+  robustness margin (the 300 case already broke a bright-border synthetic
+  scene in an earlier iteration) and the measured gain does not justify it.
+
+### Scene-edge quota 32 (2026-10-31)
+
+Lowering `_VOTE_EDGE_QUOTA` from 48 to 32 kept 90/90 and the bake-off summary
+bit-identical, but the in-process A/B showed no gain:
+
+- 2.7 MP: 45.7 -> 46.4 ms
+- 5 MP / 404 px: 54.2 -> 56.4 ms
+
+The weaker vote does not reduce the rest of the pipeline, so the saved kernel
+work is lost (and the run-to-run noise is larger than the difference).
+**Reverted to 48**: it keeps the stronger vote for the same wall time.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes
