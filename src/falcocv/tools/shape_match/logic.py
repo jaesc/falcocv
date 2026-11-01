@@ -11,8 +11,10 @@ The native ``_falco_kernel`` extension is required for matching.
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import math
+import uuid
 
 import cv2
 import numpy as np
@@ -41,7 +43,11 @@ except ImportError:
         _kernel_score = None
         _kernel_vote = None
 
-MODEL_VERSION = 2
+MODEL_VERSION = 3
+_MIN_FEATURES = 20
+_MAX_FEATURES_LIMIT = 5000
+_CANNY_FALLBACK_MIN_EDGES = 20
+_CANNY_FALLBACK_PERCENTILE = 90.0
 
 # Angle conventions
 # -----------------
@@ -147,6 +153,9 @@ class ShapeMatch(BaseTool):
             "min_results": 1,
             "max_matches": 1,
             "max_features": 800,
+            "edge_low": 50,
+            "edge_high": 150,
+            "min_gradient": 0.0,
             "origin_x": 0.0,
             "origin_y": 0.0,
             "show_search_roi": True,
@@ -158,6 +167,8 @@ class ShapeMatch(BaseTool):
             "copy_overlays_to_input": True,
             "model_b64": None,
             "train_image_b64": None,
+            "train_image_token": None,
+            "train_mask_b64": None,
             "train_fixture": [0.0, 0.0, 0.0],
             "is_trained": False,
             "template_size": [0, 0],
@@ -191,6 +202,17 @@ class ShapeMatch(BaseTool):
         self._vote_model_mag = np.empty(0, dtype=np.float32)
         self._template_edges = None
         self._template_size = (0, 0)
+        self._train_mask = None
+        self._model_mask = None
+        self._model_training_signature = None
+        self._model_stale = False
+        self._model_load_error = None
+        self._model_canny_fallback = False
+        self._model_canny_count = 0
+        self._model_candidate_count = 0
+        self._model_edge_low = _EDGE_LOW
+        self._model_edge_high = _EDGE_HIGH
+        self._train_mask_ignored_fraction = 0.0
 
     # ------------------------------------------------------------------
     # Model
@@ -204,6 +226,46 @@ class ShapeMatch(BaseTool):
             and self._template_size[0] > 0
         )
 
+    @property
+    def is_model_stale(self) -> bool:
+        return self._model_stale
+
+    @property
+    def model_load_error(self) -> str | None:
+        return self._model_load_error
+
+    def _mask_digest(self) -> str:
+        if self._train_mask is None:
+            return ""
+        return hashlib.sha1(
+            np.ascontiguousarray(self._train_mask).tobytes()
+        ).hexdigest()
+
+    def _training_signature(self) -> tuple:
+        roi = tuple(
+            round(float(value), 3)
+            for value in self.params.get("train_roi", [])
+        )
+        return (
+            roi,
+            int(self.params.get("edge_low", _EDGE_LOW)),
+            int(self.params.get("edge_high", _EDGE_HIGH)),
+            round(float(self.params.get("min_gradient", 0.0)), 6),
+            int(self.params.get("max_features", 800)),
+            str(self.params.get("train_image_token") or ""),
+            self._mask_digest(),
+        )
+
+    def refresh_stale_state(self) -> bool:
+        """Mark the loaded model stale when training inputs changed."""
+        if self._model_training_signature is None:
+            self._model_stale = False
+            return False
+        self._model_stale = (
+            self._training_signature() != self._model_training_signature
+        )
+        return self._model_stale
+
     def _gray(self, image: np.ndarray) -> np.ndarray:
         if image.ndim == 3:
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -216,28 +278,158 @@ class ShapeMatch(BaseTool):
         theta = np.arctan2(gy, gx).astype(np.float32)
         return gx, gy, mag, theta
 
-    def _build_model(self, image: np.ndarray) -> None:
+    def training_crop(self) -> np.ndarray:
+        """Return the training crop in template coordinates."""
+        image = self._static_train_image
+        if image is None:
+            raise ValueError("No training image captured.")
+        if image.size == 0:
+            raise ValueError("Training image is empty.")
+
+        roi_data = self.params["train_roi"]
+        if len(roi_data) == 4:
+            x, y, w, h = (float(value) for value in roi_data)
+            angle = 0.0
+        elif len(roi_data) == 5:
+            x, y, w, h, angle = (float(value) for value in roi_data)
+        else:
+            raise ValueError(
+                f"train_roi must have 4 or 5 elements, got {len(roi_data)}"
+            )
+
+        if w <= 0 or h <= 0:
+            return image
+
+        fixture = self._static_train_fixture
+        if (
+            abs(fixture.get("x", 0.0)) > 0.01
+            or abs(fixture.get("y", 0.0)) > 0.01
+            or abs(fixture.get("angle", 0.0)) > 0.01
+        ):
+            tmp = VisionImage(
+                image,
+                x=fixture["x"],
+                y=fixture["y"],
+                angle=fixture["angle"],
+            )
+            x, y, w, h, angle = tmp.fixture_to_image([x, y, w, h, angle])
+
+        image_h, image_w = image.shape[:2]
+        x1 = max(int(x), 0)
+        y1 = max(int(y), 0)
+        x2 = min(int(x + w), image_w)
+        y2 = min(int(y + h), image_h)
+        if x2 <= x1 or y2 <= y1:
+            raise ValueError(
+                f"Training ROI is outside the image ({image_w}x{image_h})."
+            )
+        center = (x1 + (x2 - x1) / 2.0, y1 + (y2 - y1) / 2.0)
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        warped = cv2.warpAffine(
+            image, matrix, (image_w, image_h), flags=cv2.INTER_LINEAR
+        )
+        return warped[y1:y2, x1:x2]
+
+    def _validate_training_params(self) -> tuple[int, int, float, int]:
+        low_value = self.params.get("edge_low", _EDGE_LOW)
+        high_value = self.params.get("edge_high", _EDGE_HIGH)
+        try:
+            low_float = float(low_value)
+            high_float = float(high_value)
+        except (TypeError, ValueError):
+            raise ValueError("edge_low and edge_high must be integers.")
+        if not (low_float.is_integer() and high_float.is_integer()):
+            raise ValueError("edge_low and edge_high must be integers.")
+        low = int(low_float)
+        high = int(high_float)
+        if not (0 <= low < high <= 255):
+            raise ValueError(
+                "edge_low/edge_high must satisfy 0 <= edge_low < edge_high <= 255 "
+                f"(got {low}/{high})."
+            )
+
+        try:
+            min_gradient = float(self.params.get("min_gradient", 0.0))
+        except (TypeError, ValueError):
+            raise ValueError("min_gradient must be a finite value >= 0.")
+        if not math.isfinite(min_gradient) or min_gradient < 0.0:
+            raise ValueError("min_gradient must be a finite value >= 0.")
+
+        max_features_value = self.params.get("max_features", 800)
+        try:
+            max_features_float = float(max_features_value)
+        except (TypeError, ValueError):
+            raise ValueError("max_features must be an integer.")
+        if not max_features_float.is_integer():
+            raise ValueError("max_features must be an integer.")
+        max_features = int(max_features_float)
+        if not (_MIN_FEATURES <= max_features <= _MAX_FEATURES_LIMIT):
+            raise ValueError(
+                f"max_features must be between {_MIN_FEATURES} and "
+                f"{_MAX_FEATURES_LIMIT} (got {max_features})."
+            )
+        return low, high, min_gradient, max_features
+
+    def _build_model(
+        self, image: np.ndarray, mask: np.ndarray | None = None
+    ) -> None:
+        low, high, min_gradient, max_features = self._validate_training_params()
         gray = self._gray(image)
         height, width = gray.shape[:2]
+
+        if mask is not None:
+            mask = np.asarray(mask, dtype=np.uint8)
+            if mask.ndim != 2 or mask.shape[:2] != (height, width):
+                raise ValueError(
+                    f"Training mask shape {mask.shape[:2]} does not match "
+                    f"the template {width}x{height}; redraw the mask."
+                )
+            keep = mask > 0
+        else:
+            keep = np.ones((height, width), dtype=bool)
+
         _, _, mag, theta = self._gradient(gray)
-        edges = cv2.Canny(gray, _EDGE_LOW, _EDGE_HIGH)
+        edges = cv2.Canny(gray, low, high)
+        edges[~keep] = 0
 
         ys, xs = np.nonzero(edges)
-        if len(xs) < 20:
-            threshold = np.percentile(mag, 90)
-            ys, xs = np.nonzero(mag >= threshold)
+        canny_count = int(xs.size)
+        canny_fallback = False
+        if canny_count < _CANNY_FALLBACK_MIN_EDGES:
+            masked_mag = mag[keep]
+            if masked_mag.size == 0:
+                raise ValueError("Training mask removes every pixel.")
+            threshold = float(
+                np.percentile(masked_mag, _CANNY_FALLBACK_PERCENTILE)
+            )
+            ys, xs = np.nonzero((mag >= threshold) & keep)
+            canny_fallback = True
 
-        if len(xs) == 0:
-            raise ValueError("Template has no usable edges.")
+        if xs.size == 0:
+            raise ValueError(
+                "Template has no usable edges after masking."
+            )
 
-        values = mag[ys, xs]
-        order = np.argsort(values)[::-1]
-        limit = max(20, int(self.params["max_features"]))
-        order = order[:limit]
+        values = mag[ys, xs].astype(np.float32)
+        if min_gradient > 0.0:
+            selected = values >= min_gradient
+            xs = xs[selected]
+            ys = ys[selected]
+            values = values[selected]
+
+        candidate_count = int(xs.size)
+        if candidate_count < _MIN_FEATURES:
+            raise ValueError(
+                f"Not enough features after filtering ({candidate_count}); "
+                "lower edge_low/edge_high/min_gradient or reduce the mask."
+            )
+
+        angles = theta[ys.astype(int), xs.astype(int)].astype(np.float32)
+        order = np.argsort(values)[::-1][:max_features]
         xs = xs[order].astype(np.float32)
         ys = ys[order].astype(np.float32)
         values = values[order].astype(np.float32)
-        angles = theta[ys.astype(int), xs.astype(int)].astype(np.float32)
+        angles = angles[order].astype(np.float32)
 
         total = float(values.sum())
         if total <= 0:
@@ -248,17 +440,26 @@ class ShapeMatch(BaseTool):
         self._model_theta = angles
         self._model_mag = values / total
         self._template_edges = edges
+        self._model_canny_fallback = canny_fallback
+        self._model_canny_count = canny_count
+        self._model_candidate_count = candidate_count
+        self._model_edge_low = low
+        self._model_edge_high = high
+        self._model_mask = None if mask is None else mask.copy()
+
         if gray.dtype == np.uint8:
-            template_gray = gray
+            template_gray = gray.copy()
         else:
             template_gray = cv2.normalize(
                 gray, None, 0, 255, cv2.NORM_MINMAX
             ).astype(np.uint8)
         self._template_gray = np.ascontiguousarray(template_gray)
         self._update_template_border()
+        if mask is not None:
+            self._template_gray[mask == 0] = self._template_border
         self._update_search_template()
         if image.ndim == 3:
-            color = image
+            color = image.copy()
         else:
             color = cv2.cvtColor(template_gray, cv2.COLOR_GRAY2BGR)
         self._template_color = np.ascontiguousarray(color)
@@ -326,64 +527,163 @@ class ShapeMatch(BaseTool):
         self._vote_model_mag = weights / total if total > 0 else weights
 
     def train_pattern(self) -> None:
-        image = self._static_train_image
-        if image is None:
-            raise ValueError("No training image captured.")
-        if image.size == 0:
-            raise ValueError("Training image is empty.")
-
-        roi_data = self.params["train_roi"]
-        if len(roi_data) == 4:
-            x, y, w, h = (float(v) for v in roi_data)
-            angle = 0.0
-        elif len(roi_data) == 5:
-            x, y, w, h, angle = (float(v) for v in roi_data)
-        else:
-            raise ValueError(
-                f"train_roi must have 4 or 5 elements, got {len(roi_data)}"
-            )
-
-        if w <= 0 or h <= 0:
-            crop = image
-        else:
-            fixture = self._static_train_fixture
-            if (
-                abs(fixture.get("x", 0.0)) > 0.01
-                or abs(fixture.get("y", 0.0)) > 0.01
-                or abs(fixture.get("angle", 0.0)) > 0.01
-            ):
-                tmp = VisionImage(
-                    image,
-                    x=fixture["x"],
-                    y=fixture["y"],
-                    angle=fixture["angle"],
-                )
-                x, y, w, h, angle = tmp.fixture_to_image([x, y, w, h, angle])
-
-            image_h, image_w = image.shape[:2]
-            x1 = max(int(x), 0)
-            y1 = max(int(y), 0)
-            x2 = min(int(x + w), image_w)
-            y2 = min(int(y + h), image_h)
-            if x2 <= x1 or y2 <= y1:
+        crop = self.training_crop()
+        mask = self._train_mask
+        if mask is not None:
+            mask = np.asarray(mask, dtype=np.uint8)
+            if mask.ndim != 2 or mask.shape[:2] != crop.shape[:2]:
                 raise ValueError(
-                    f"Training ROI is outside the image ({image_w}x{image_h})."
+                    f"Training mask shape {mask.shape} does not match the "
+                    f"template {crop.shape[1]}x{crop.shape[0]}; redraw the mask."
                 )
-            center = (x1 + (x2 - x1) / 2.0, y1 + (y2 - y1) / 2.0)
-            matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-            warped = cv2.warpAffine(
-                image, matrix, (image_w, image_h), flags=cv2.INTER_LINEAR
-            )
-            crop = warped[y1:y2, x1:x2]
+            if np.all(mask > 0):
+                mask = None
+                self._train_mask = None
+                self.params["train_mask_b64"] = None
+        self._refresh_train_mask_stats()
 
-        self._build_model(crop)
+        previous_state = (
+            self._model_x,
+            self._model_y,
+            self._model_theta,
+            self._model_mag,
+            self._vote_model_x,
+            self._vote_model_y,
+            self._vote_model_theta,
+            self._vote_model_mag,
+            self._template_edges,
+            self._template_gray,
+            self._template_color,
+            self._template_border,
+            self._search_template_gray,
+            self._search_factor,
+            self._ecc_template_gray,
+            self._ecc_factor,
+            self._render_cache,
+            self._template_size,
+            self._model_mask,
+            self._model_canny_fallback,
+            self._model_canny_count,
+            self._model_candidate_count,
+            self._model_edge_low,
+            self._model_edge_high,
+            list(self.params.get("template_size", [0, 0])),
+            self.outputs.get("trained", False),
+        )
+        try:
+            self._build_model(crop, mask)
+        except Exception:
+            (
+                self._model_x,
+                self._model_y,
+                self._model_theta,
+                self._model_mag,
+                self._vote_model_x,
+                self._vote_model_y,
+                self._vote_model_theta,
+                self._vote_model_mag,
+                self._template_edges,
+                self._template_gray,
+                self._template_color,
+                self._template_border,
+                self._search_template_gray,
+                self._search_factor,
+                self._ecc_template_gray,
+                self._ecc_factor,
+                self._render_cache,
+                self._template_size,
+                self._model_mask,
+                self._model_canny_fallback,
+                self._model_canny_count,
+                self._model_candidate_count,
+                self._model_edge_low,
+                self._model_edge_high,
+                template_size,
+                trained,
+            ) = previous_state
+            self.params["template_size"] = template_size
+            self.outputs["trained"] = trained
+            self.refresh_stale_state()
+            raise
+
+        self._model_training_signature = self._training_signature()
+        self._model_stale = False
+        self._model_load_error = None
         self.params["is_trained"] = True
+        self._store_train_mask_param()
         self._save_model()
         self.data_changed.emit()
 
     def train_from_roi(self, x, y, w, h, a=0.0) -> None:
         self.params["train_roi"] = [x, y, w, h, a]
         self.train_pattern()
+
+    def get_train_mask(self):
+        return None if self._train_mask is None else self._train_mask.copy()
+
+    @property
+    def has_train_mask(self) -> bool:
+        return self._train_mask is not None
+
+    def _refresh_train_mask_stats(self) -> None:
+        if self._train_mask is None or self._train_mask.size == 0:
+            self._train_mask_ignored_fraction = 0.0
+            return
+        self._train_mask_ignored_fraction = (
+            float(np.count_nonzero(self._train_mask == 0))
+            / float(self._train_mask.size)
+        )
+
+    def set_train_mask(self, mask) -> None:
+        """Replace the working training mask (255 = keep, 0 = ignore)."""
+        if mask is None:
+            self._train_mask = None
+        else:
+            values = np.asarray(mask)
+            if values.ndim != 2:
+                raise ValueError("Training mask must be a 2D array.")
+            if self._static_train_image is None:
+                raise ValueError("Capture a training image before editing the mask.")
+            crop = self.training_crop()
+            if values.shape[:2] != crop.shape[:2]:
+                raise ValueError(
+                    f"Training mask shape {values.shape[:2]} does not match "
+                    f"the template {crop.shape[1]}x{crop.shape[0]}; redraw the mask."
+                )
+            values = np.where(values > 0, 255, 0).astype(np.uint8)
+            self._train_mask = None if np.all(values > 0) else np.ascontiguousarray(values)
+        self._refresh_train_mask_stats()
+        self._store_train_mask_param()
+        self.refresh_stale_state()
+        self.data_changed.emit()
+
+    def clear_train_mask(self) -> None:
+        self.set_train_mask(None)
+
+    def train_mask_ignored_fraction(self) -> float:
+        return self._train_mask_ignored_fraction
+
+    def _store_train_mask_param(self) -> None:
+        if self._train_mask is None:
+            self.params["train_mask_b64"] = None
+            return
+        ok, buffer = cv2.imencode(".png", self._train_mask)
+        if not ok:
+            raise ValueError("Could not encode the ShapeMatch training mask.")
+        self.params["train_mask_b64"] = base64.b64encode(buffer).decode("ascii")
+
+    def _restore_train_mask_from_params(self) -> None:
+        encoded = self.params.get("train_mask_b64")
+        if not encoded:
+            self._train_mask = None
+            return
+        raw = base64.b64decode(encoded)
+        buffer = np.frombuffer(raw, dtype=np.uint8)
+        mask = cv2.imdecode(buffer, cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise ValueError("Could not restore the ShapeMatch training mask.")
+        self._train_mask = np.ascontiguousarray(mask.astype(np.uint8))
+        self._refresh_train_mask_stats()
 
     def save_train_image(self) -> None:
         source = self.inputs.get("input image")
@@ -407,12 +707,14 @@ class ShapeMatch(BaseTool):
             fixture["y"],
             fixture["angle"],
         ]
+        self.params["train_image_token"] = uuid.uuid4().hex
         ok, buffer = cv2.imencode(".png", data)
         if ok:
             self.params["train_image_b64"] = base64.b64encode(buffer).decode("ascii")
+        self.refresh_stale_state()
         self.data_changed.emit()
 
-    def clear_training(self, keep_image=False) -> None:
+    def _clear_model_state(self) -> None:
         self._model_x = np.empty(0, dtype=np.float32)
         self._model_y = np.empty(0, dtype=np.float32)
         self._model_theta = np.empty(0, dtype=np.float32)
@@ -431,24 +733,50 @@ class ShapeMatch(BaseTool):
         self._ecc_factor = 1
         self._render_cache = None
         self._template_size = (0, 0)
-        self._static_train_fixture = {"x": 0.0, "y": 0.0, "angle": 0.0}
+        self._model_mask = None
+        self._model_training_signature = None
+        self._model_stale = False
+        self._model_canny_fallback = False
+        self._model_canny_count = 0
+        self._model_candidate_count = 0
+        self._model_edge_low = _EDGE_LOW
+        self._model_edge_high = _EDGE_HIGH
         self.params.update(
             {
                 "model_b64": None,
                 "is_trained": False,
                 "template_size": [0, 0],
+            }
+        )
+        self.outputs["trained"] = False
+
+    def clear_training(self, keep_image=False) -> None:
+        self._clear_model_state()
+        self._train_mask = None
+        self._refresh_train_mask_stats()
+        self._model_load_error = None
+        self._static_train_fixture = {"x": 0.0, "y": 0.0, "angle": 0.0}
+        self.params.update(
+            {
+                "train_mask_b64": None,
                 "train_fixture": [0.0, 0.0, 0.0],
             }
         )
         if not keep_image:
             self._static_train_image = None
             self.params["train_image_b64"] = None
-        self.outputs["trained"] = False
+            self.params["train_image_token"] = None
         self.data_changed.emit()
 
     def _save_model(self) -> None:
         if self._template_color is None or self._template_gray is None:
             raise ValueError("Cannot save an empty ShapeMatch model.")
+        mask = (
+            self._train_mask
+            if self._train_mask is not None
+            else np.zeros(0, dtype=np.uint8)
+        )
+        token = str(self.params.get("train_image_token") or "")
         buffer = io.BytesIO()
         np.savez_compressed(
             buffer,
@@ -461,6 +789,31 @@ class ShapeMatch(BaseTool):
             gray=self._template_gray,
             color=self._template_color,
             size=np.array(self._template_size, dtype=np.int32),
+            mask=mask,
+            edge_low=np.array([int(self._model_edge_low)], dtype=np.int32),
+            edge_high=np.array([int(self._model_edge_high)], dtype=np.int32),
+            min_gradient=np.array(
+                [float(self.params.get("min_gradient", 0.0))],
+                dtype=np.float32,
+            ),
+            max_features=np.array(
+                [int(self.params.get("max_features", 800))],
+                dtype=np.int32,
+            ),
+            train_roi=np.array(
+                self.params.get("train_roi", [0, 0, 0, 0, 0]),
+                dtype=np.float64,
+            ),
+            train_image_token=np.array([token], dtype="U64"),
+            canny_fallback=np.array(
+                [int(self._model_canny_fallback)], dtype=np.int32
+            ),
+            canny_count=np.array(
+                [int(self._model_canny_count)], dtype=np.int32
+            ),
+            candidate_count=np.array(
+                [int(self._model_candidate_count)], dtype=np.int32
+            ),
         )
         self.params["model_b64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
 
@@ -470,10 +823,30 @@ class ShapeMatch(BaseTool):
             return
         raw = base64.b64decode(encoded)
         with np.load(io.BytesIO(raw), allow_pickle=False) as data:
-            if int(data["version"][0]) != MODEL_VERSION:
-                raise ValueError("Unsupported ShapeMatch model version; retrain.")
-            if "gray" not in data or "color" not in data:
-                raise ValueError("ShapeMatch model has no template images; retrain.")
+            if "version" not in data.files:
+                raise ValueError(
+                    "ShapeMatch model is incomplete (version); retrain the tool."
+                )
+            version = int(data["version"][0])
+            if version != MODEL_VERSION:
+                raise ValueError(
+                    f"Unsupported ShapeMatch model version ({version}); "
+                    "retrain the tool."
+                )
+            required = {
+                "x", "y", "theta", "mag", "edges", "gray", "color", "size",
+                "mask", "edge_low", "edge_high", "min_gradient",
+                "max_features", "train_roi", "train_image_token",
+                "canny_fallback", "canny_count", "candidate_count",
+            }
+            missing = sorted(required - set(data.files))
+            if missing:
+                raise ValueError(
+                    "ShapeMatch model is incomplete ("
+                    + ", ".join(missing)
+                    + "); retrain the tool."
+                )
+
             self._model_x = data["x"].astype(np.float32)
             self._model_y = data["y"].astype(np.float32)
             self._model_theta = data["theta"].astype(np.float32)
@@ -484,7 +857,43 @@ class ShapeMatch(BaseTool):
             self._update_template_border()
             self._update_search_template()
             self._template_size = (int(data["size"][0]), int(data["size"][1]))
+
+            mask_data = data["mask"]
+            model_mask = (
+                None
+                if mask_data.size == 0
+                else np.ascontiguousarray(mask_data.astype(np.uint8))
+            )
+            if self._train_mask is None and model_mask is not None:
+                self._train_mask = model_mask.copy()
+                self._refresh_train_mask_stats()
+            self._model_mask = model_mask
+            self._model_edge_low = int(data["edge_low"][0])
+            self._model_edge_high = int(data["edge_high"][0])
+            self._model_canny_fallback = bool(int(data["canny_fallback"][0]))
+            self._model_canny_count = int(data["canny_count"][0])
+            self._model_candidate_count = int(data["candidate_count"][0])
+            token = str(data["train_image_token"][0])
+            mask_digest = (
+                hashlib.sha1(model_mask.tobytes()).hexdigest()
+                if model_mask is not None
+                else ""
+            )
+            self._model_training_signature = (
+                tuple(
+                    round(float(value), 3)
+                    for value in data["train_roi"].reshape(-1)
+                ),
+                int(data["edge_low"][0]),
+                int(data["edge_high"][0]),
+                round(float(data["min_gradient"][0]), 6),
+                int(data["max_features"][0]),
+                token,
+                mask_digest,
+            )
+            self._model_load_error = None
             self._rebuild_vote_model()
+            self.refresh_stale_state()
             self.outputs["trained"] = True
 
     def _restore_state_from_params(self) -> None:
@@ -502,7 +911,13 @@ class ShapeMatch(BaseTool):
                 "y": float(fixture[1]),
                 "angle": float(fixture[2]),
             }
+        self._restore_train_mask_from_params()
         if self.params.get("is_trained"):
+            if not self.params.get("model_b64"):
+                raise ValueError(
+                    "ShapeMatch is marked trained but has no model; "
+                    "retrain the tool."
+                )
             self._load_model()
 
     def _ensure_state(self) -> None:
@@ -513,15 +928,79 @@ class ShapeMatch(BaseTool):
             if image is None:
                 raise ValueError("Could not restore the ShapeMatch training image.")
             self._static_train_image = image
+        if self._train_mask is None and self.params.get("train_mask_b64"):
+            self._restore_train_mask_from_params()
         if self._template_gray is None and self.params.get("model_b64"):
-            self._load_model()
+            try:
+                self._load_model()
+            except Exception as exc:
+                self._model_load_error = (
+                    "ShapeMatch model could not be loaded: "
+                    f"{exc}"
+                )
+                self._clear_model_state()
+                self.params["model_b64"] = None
+                self.params["is_trained"] = False
 
     def deserialize(self, data: dict, job_manager=None) -> None:
         super().deserialize(data, job_manager)
+        self._model_load_error = None
+        self.last_error = None
         for key in list(self.params):
             if key not in self._param_keys:
                 del self.params[key]
-        self._restore_state_from_params()
+        try:
+            if self.params.get("train_image_b64"):
+                raw = base64.b64decode(self.params["train_image_b64"])
+                buffer = np.frombuffer(raw, dtype=np.uint8)
+                image = cv2.imdecode(buffer, cv2.IMREAD_UNCHANGED)
+                if image is None:
+                    raise ValueError(
+                        "Could not restore the ShapeMatch training image."
+                    )
+                self._static_train_image = image
+            fixture = self.params.get("train_fixture", [0.0, 0.0, 0.0])
+            if len(fixture) >= 3:
+                self._static_train_fixture = {
+                    "x": float(fixture[0]),
+                    "y": float(fixture[1]),
+                    "angle": float(fixture[2]),
+                }
+        except Exception as exc:
+            self._model_load_error = (
+                "ShapeMatch training state could not be loaded: "
+                f"{exc}"
+            )
+            self.set_error(self._model_load_error)
+
+        try:
+            self._restore_train_mask_from_params()
+        except Exception as exc:
+            self._train_mask = None
+            self.params["train_mask_b64"] = None
+            self._model_load_error = (
+                "ShapeMatch training mask could not be loaded: "
+                f"{exc}"
+            )
+            self.set_error(self._model_load_error)
+
+        if self.params.get("is_trained"):
+            try:
+                if not self.params.get("model_b64"):
+                    raise ValueError(
+                        "ShapeMatch is marked trained but has no model; "
+                        "retrain the tool."
+                    )
+                self._load_model()
+            except Exception as exc:
+                self._model_load_error = (
+                    "ShapeMatch model could not be loaded: "
+                    f"{exc}"
+                )
+                self._clear_model_state()
+                self.params["model_b64"] = None
+                self.params["is_trained"] = False
+                self.set_error(self._model_load_error)
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -789,10 +1268,11 @@ class ShapeMatch(BaseTool):
         capped[ys[selected], xs[selected]] = 255
         return capped
 
-    @staticmethod
-    def _scene_edges(gray, cache):
+    def _scene_edges(self, gray, cache):
         if cache[0] is None:
-            cache[0] = cv2.Canny(gray, _EDGE_LOW, _EDGE_HIGH)
+            cache[0] = cv2.Canny(
+                gray, int(self._model_edge_low), int(self._model_edge_high)
+            )
         return cache[0]
 
     # ------------------------------------------------------------------
@@ -1898,7 +2378,8 @@ class ShapeMatch(BaseTool):
 
         self._ensure_state()
         self._render_cache = {}
-        self.outputs["trained"] = self.is_trained
+        self.refresh_stale_state()
+        self.outputs["trained"] = self.is_trained and not self._model_stale
 
         v_img = source if isinstance(source, VisionImage) else VisionImage.from_array(source)
         vision_img = VisionImage(
@@ -1937,6 +2418,18 @@ class ShapeMatch(BaseTool):
                 color=(255, 128, 0),
                 thickness=2,
             )
+
+        if self._model_load_error:
+            self.set_error(self._model_load_error)
+            self.data_changed.emit()
+            return
+
+        if self._model_stale:
+            self.set_error(
+                "Training parameters changed; retrain ShapeMatch."
+            )
+            self.data_changed.emit()
+            return
 
         if not self.is_trained:
             self.set_error("ShapeMatch is not trained")
@@ -1997,7 +2490,11 @@ class ShapeMatch(BaseTool):
         # orientation are only needed on Canny edge pixels, so avoid the full
         # ``cv2.magnitude`` pass on large ROIs.
         vote_gx, vote_gy = cv2.spatialGradient(vote_gray)
-        vote_edges = cv2.Canny(vote_gray, _EDGE_LOW, _EDGE_HIGH)
+        vote_edges = cv2.Canny(
+            vote_gray,
+            int(self._model_edge_low),
+            int(self._model_edge_high),
+        )
         edge_y, edge_x = np.nonzero(vote_edges)
         vote_mag = np.zeros(vote_gray.shape, dtype=np.float32)
         if edge_y.size:

@@ -299,9 +299,9 @@ def test_shape_match_job_roundtrip(tmp_path):
     workflow = Workflow()
     loader = ImageLoader("Loader")
     matcher = _tool(template)
-    matcher.inputs["input image"] = VisionImage(scene)
-    matcher.params["train_roi"] = [240, 145, 120, 90, 0]
+    matcher.inputs["input image"] = VisionImage(template)
     matcher.save_train_image()
+    matcher.train_pattern()
     loader.params.update({"mode": "File", "file_path": str(image_path)})
     workflow.add_tool(loader)
     workflow.add_tool(matcher)

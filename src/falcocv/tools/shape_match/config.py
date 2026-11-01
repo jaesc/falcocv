@@ -36,6 +36,9 @@ class ShapeMatchConfig(QWidget):
         super().__init__()
         self.tool = tool
         self._picking_origin = False
+        self._syncing_training = False
+        self._preview_scale_x = 1.0
+        self._preview_scale_y = 1.0
         self.tool._active_roi_key = None
 
         self.main_layout = QVBoxLayout(self)
@@ -127,6 +130,76 @@ class ShapeMatchConfig(QWidget):
         self.label_state = QLabel("Not trained")
         self.label_state.setWordWrap(True)
         layout.addWidget(self.label_state)
+
+        features_group = QGroupBox("Feature Extraction")
+        features_layout = QVBoxLayout(features_group)
+
+        edge_row = QHBoxLayout()
+        edge_row.addWidget(QLabel("Canny low:"))
+        self.spin_edge_low = QSpinBox()
+        self.spin_edge_low.setRange(0, 254)
+        self.spin_edge_low.setValue(int(self.tool.params.get("edge_low", 50)))
+        edge_row.addWidget(self.spin_edge_low)
+        edge_row.addWidget(QLabel("high:"))
+        self.spin_edge_high = QSpinBox()
+        self.spin_edge_high.setRange(1, 255)
+        self.spin_edge_high.setValue(int(self.tool.params.get("edge_high", 150)))
+        edge_row.addWidget(self.spin_edge_high)
+        features_layout.addLayout(edge_row)
+
+        gradient_row = QHBoxLayout()
+        gradient_row.addWidget(QLabel("Min gradient:"))
+        self.spin_min_gradient = QDoubleSpinBox()
+        self.spin_min_gradient.setRange(0.0, 5000.0)
+        self.spin_min_gradient.setDecimals(1)
+        self.spin_min_gradient.setSingleStep(5.0)
+        self.spin_min_gradient.setValue(
+            float(self.tool.params.get("min_gradient", 0.0))
+        )
+        gradient_row.addWidget(self.spin_min_gradient)
+        gradient_row.addStretch()
+        features_layout.addLayout(gradient_row)
+
+        features_row = QHBoxLayout()
+        features_row.addWidget(QLabel("Max features:"))
+        self.spin_max_features = QSpinBox()
+        self.spin_max_features.setRange(20, 5000)
+        self.spin_max_features.setSingleStep(50)
+        self.spin_max_features.setValue(
+            int(self.tool.params.get("max_features", 800))
+        )
+        features_row.addWidget(self.spin_max_features)
+        features_row.addStretch()
+        features_layout.addLayout(features_row)
+
+        self.label_features = QLabel("")
+        self.label_features.setWordWrap(True)
+        features_layout.addWidget(self.label_features)
+        layout.addWidget(features_group)
+
+        mask_group = QGroupBox("Training Mask")
+        mask_layout = QVBoxLayout(mask_group)
+        self.label_mask = QLabel("Mask: none")
+        self.label_mask.setWordWrap(True)
+        mask_layout.addWidget(self.label_mask)
+        mask_row = QHBoxLayout()
+        self.btn_edit_mask = QPushButton("Edit Mask...")
+        self.btn_edit_mask.clicked.connect(self._on_edit_mask)
+        self.btn_clear_mask = QPushButton("Clear Mask")
+        self.btn_clear_mask.clicked.connect(self._on_clear_mask)
+        mask_row.addWidget(self.btn_edit_mask)
+        mask_row.addWidget(self.btn_clear_mask)
+        mask_row.addStretch()
+        mask_layout.addLayout(mask_row)
+        layout.addWidget(mask_group)
+
+        for widget in (
+            self.spin_edge_low,
+            self.spin_edge_high,
+            self.spin_min_gradient,
+            self.spin_max_features,
+        ):
+            widget.valueChanged.connect(self._on_training_param_changed)
 
         origin_group = QGroupBox("Tool Origin Offset")
         origin_layout = QVBoxLayout(origin_group)
@@ -318,8 +391,73 @@ class ShapeMatchConfig(QWidget):
             self.tool.mark_dirty()
             self.refresh_ui(auto_fit=True)
         except Exception as exc:
+            self.tool.refresh_stale_state()
             self.label_state.setText(f"Training failed: {exc}")
             self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+            self.label_features.setText("")
+            self._update_mask_status()
+
+    def _on_training_param_changed(self):
+        if self._syncing_training:
+            return
+        self.tool.params["edge_low"] = int(self.spin_edge_low.value())
+        self.tool.params["edge_high"] = int(self.spin_edge_high.value())
+        self.tool.params["min_gradient"] = float(self.spin_min_gradient.value())
+        self.tool.params["max_features"] = int(self.spin_max_features.value())
+        self.tool.mark_dirty()
+
+    def _sync_training_controls(self):
+        self._syncing_training = True
+        try:
+            self.spin_edge_low.setValue(int(self.tool.params.get("edge_low", 50)))
+            self.spin_edge_high.setValue(int(self.tool.params.get("edge_high", 150)))
+            self.spin_min_gradient.setValue(
+                float(self.tool.params.get("min_gradient", 0.0))
+            )
+            self.spin_max_features.setValue(
+                int(self.tool.params.get("max_features", 800))
+            )
+        finally:
+            self._syncing_training = False
+
+    def _on_edit_mask(self):
+        if self.tool._static_train_image is None:
+            self.label_state.setText("Capture a training image before editing the mask.")
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+            return
+        try:
+            crop = self.tool.training_crop()
+            mask = self.tool.get_train_mask()
+            from .mask_editor import ShapeMatchMaskDialog
+
+            dialog = ShapeMatchMaskDialog(crop, mask, self)
+            if dialog.exec():
+                self.tool.set_train_mask(dialog.mask)
+                self.tool.mark_dirty()
+                self.refresh_ui()
+        except Exception as exc:
+            self.label_state.setText(f"Mask failed: {exc}")
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+
+    def _on_clear_mask(self):
+        try:
+            self.tool.clear_train_mask()
+            self.tool.mark_dirty()
+            self.refresh_ui()
+        except Exception as exc:
+            self.label_state.setText(f"Mask failed: {exc}")
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+
+    def _update_mask_status(self):
+        has_image = self.tool._static_train_image is not None
+        has_mask = self.tool.has_train_mask
+        self.btn_edit_mask.setEnabled(has_image)
+        self.btn_clear_mask.setEnabled(has_image and has_mask)
+        if not has_mask:
+            self.label_mask.setText("Mask: none")
+        else:
+            ignored = self.tool.train_mask_ignored_fraction() * 100.0
+            self.label_mask.setText(f"Mask: {ignored:.1f}% ignored")
 
     def _on_pick_origin_clicked(self, checked):
         self._picking_origin = bool(checked)
@@ -331,6 +469,8 @@ class ShapeMatchConfig(QWidget):
     def _on_template_clicked(self, x, y):
         if not self._picking_origin or not self.tool.is_trained:
             return
+        x = float(x) * self._preview_scale_x
+        y = float(y) * self._preview_scale_y
         width, height = self.tool._template_size
         origin_x = x - width / 2.0
         origin_y = y - height / 2.0
@@ -377,6 +517,10 @@ class ShapeMatchConfig(QWidget):
         key = self.record_selector.currentData()
         if key is None:
             return
+
+        self._sync_training_controls()
+        self.tool.refresh_stale_state()
+        self._update_mask_status()
 
         if key == "output image":
             image_data = self.tool.outputs.get("output image")
@@ -439,58 +583,112 @@ class ShapeMatchConfig(QWidget):
         if not is_search:
             self.search_roi_editor.btn_edit.setChecked(False)
 
-        if self.tool.is_trained:
+        if self.tool._model_load_error:
+            self.label_state.setText(self.tool._model_load_error)
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+            self.label_features.setText("")
+            self.template_viewer.set_image(None)
+        elif self.tool.is_model_stale:
+            self.label_state.setText(
+                "STALE — training parameters changed. Retrain ShapeMatch."
+            )
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+            self._update_feature_status()
+            self._update_template_preview()
+        elif self.tool.is_trained:
             self.label_state.setText(
                 f"Trained: {self.tool._model_x.size} features, "
                 f"{self.tool._template_size[0]}x{self.tool._template_size[1]} px"
             )
             self.label_state.setStyleSheet(f"color: {SUCCESS}; font-weight: bold;")
+            self._update_feature_status()
             self._update_template_preview()
         else:
             self.label_state.setText("Not trained")
             self.label_state.setStyleSheet("")
+            self.label_features.setText("")
             self.template_viewer.set_image(None)
+
+    def _update_feature_status(self):
+        count = int(self.tool._model_x.size)
+        low = int(getattr(self.tool, "_model_edge_low", 50))
+        high = int(getattr(self.tool, "_model_edge_high", 150))
+        canny = int(getattr(self.tool, "_model_canny_count", 0))
+        text = f"{count} features · Canny {low}/{high} · {canny} edges"
+        if getattr(self.tool, "_model_canny_fallback", False):
+            text += " · fallback: top 10 % Sobel"
+        self.label_features.setText(text)
 
     def _update_template_preview(self):
-        if self.tool._template_color is None:
+        source = self.tool._template_color
+        if source is None:
             self.template_viewer.set_image(None)
             return
-        template = self.tool._template_color.copy()
-        height, width = template.shape[:2]
-        edges = self.tool._template_edges
-        if edges is not None:
-            template[edges > 0] = (255, 255, 0)
 
-        count = min(int(self.tool._model_x.size), 200)
+        height, width = source.shape[:2]
+        scale = min(250.0 / width, 250.0 / height, 2.0)
+        thumb_w = max(1, int(round(width * scale)))
+        thumb_h = max(1, int(round(height * scale)))
+        interpolation = (
+            cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        )
+        thumb = cv2.resize(
+            source, (thumb_w, thumb_h), interpolation=interpolation
+        )
+        thumb = (thumb.astype(np.float32) * 0.60).astype(np.uint8)
+
+        self._preview_scale_x = width / float(thumb_w)
+        self._preview_scale_y = height / float(thumb_h)
+        sx = thumb_w / float(width)
+        sy = thumb_h / float(height)
+
+        count = int(self.tool._model_x.size)
         for index in range(count):
-            px = int(round(float(self.tool._model_x[index]) + width / 2.0))
-            py = int(round(float(self.tool._model_y[index]) + height / 2.0))
-            if not (0 <= px < width and 0 <= py < height):
-                continue
-            theta = float(self.tool._model_theta[index])
-            ex = int(round(px + 4.0 * np.cos(theta)))
-            ey = int(round(py + 4.0 * np.sin(theta)))
-            cv2.line(template, (px, py), (ex, ey), (0, 255, 255), 1)
-            cv2.circle(template, (px, py), 1, (0, 255, 0), -1)
+            px = int(round(
+                (float(self.tool._model_x[index]) + width / 2.0) * sx
+            ))
+            py = int(round(
+                (float(self.tool._model_y[index]) + height / 2.0) * sy
+            ))
+            if 0 <= px < thumb_w and 0 <= py < thumb_h:
+                cv2.circle(thumb, (px, py), 1, (0, 255, 255), -1)
 
-        preview = VisionImage.from_array(template)
+        if self.tool.is_model_stale:
+            cv2.putText(
+                thumb,
+                "STALE - RETRAIN",
+                (4, 14),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.40,
+                (0, 0, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+        preview = VisionImage.from_array(thumb)
         layer = preview.get_overlay_layer("default", source_tool=self.tool.name)
-        origin_x = width / 2.0 + float(self.tool.params.get("origin_x", 0.0))
-        origin_y = height / 2.0 + float(self.tool.params.get("origin_y", 0.0))
+        origin_x = (
+            width / 2.0 + float(self.tool.params.get("origin_x", 0.0))
+        ) * sx
+        origin_y = (
+            height / 2.0 + float(self.tool.params.get("origin_y", 0.0))
+        ) * sy
         layer.add_axes(
             (int(round(origin_x)), int(round(origin_y))),
             angle=0,
-            length=30,
+            length=20,
             color_x=(0, 0, 255),
             color_y=(0, 255, 0),
             thickness=2,
         )
         layer.add_point(
             (int(round(origin_x)), int(round(origin_y))),
-            radius=4,
+            radius=3,
             color=(255, 255, 255),
         )
-        self.template_viewer.set_image(preview, auto_fit=True, render_overlays_flag=True)
+        self.template_viewer.set_image(
+            preview, auto_fit=True, render_overlays_flag=True
+        )
 
     def on_config_closed(self):
         save_params_splitter(self.content_layout, "ShapeMatch")

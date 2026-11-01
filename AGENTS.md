@@ -99,6 +99,12 @@ cpp/bin/       → local kernel build output (gitignored)
 - **ShapeMatch model** -> `model_b64` stores features, edges, gray and color
   templates. Training ROI is fixture-relative and supports rotation. Do not add
   PatternMatcher-only parameters (`angle_step`, `scale_step`, `use_pyramid`, ...).
+- **ShapeMatch training model v3** -> `model_b64` is v3 only; v2 models are
+  rejected and must be retrained. The model stores the training mask and
+  `edge_low`/`edge_high`/`min_gradient`/`max_features`. Changing any of those,
+  the training ROI, or the training image marks the model **STALE** and blocks
+  matching until retrained. The Canny→top-10 % Sobel fallback is allowed but
+  shown in the training status.
 - **ShapeMatch coarse voting** -> the vote factor depends on the template only
   (`min_template // 96`, capped at 4x), never on the ROI area.  Cap scene edges
   with a fixed **48-edge quota per 32 px cell**, independent of the cell count;
