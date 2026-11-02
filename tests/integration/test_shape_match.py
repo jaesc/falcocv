@@ -26,6 +26,7 @@ def _tool(template, max_matches=1):
             "min_score": 0.25,
             "max_matches": max_matches,
             "max_features": 800,
+            "match_mode": "hybrid",
             "show_search_roi": False,
             "show_found_region": False,
             "show_found_origin": False,
@@ -340,6 +341,7 @@ def test_shape_match_drops_legacy_params():
     )
     for key in ("angle_step", "scale_step", "use_kernel", "use_pyramid"):
         assert key not in tool.params
+    assert tool.params["match_mode"] == "hybrid"
 
 def test_shape_match_vote_scaling_helpers():
     template = make_template()
@@ -421,6 +423,12 @@ def test_geometric_alignment_pre_gate_detects():
     assert abs(result.x - 240.0) <= 0.5
     assert abs(result.y - 180.0) <= 0.5
     assert abs(result.angle - 12.0) <= 0.1
+
+
+def test_default_match_mode_is_geometry():
+    tool = ShapeMatch()
+    assert tool.params["match_mode"] == "geometry"
+    assert tool.params["pre_gate_scorer"] == "ncc"
 
 
 def test_geometry_only_mode_detects_baseline():

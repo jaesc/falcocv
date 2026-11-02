@@ -341,7 +341,7 @@ class ShapeMatchConfig(QWidget):
             "Geometry only (prototype)", "geometry"
         )
         mode_index = self.combo_match_mode.findData(
-            str(self.tool.params.get("match_mode", "hybrid"))
+            str(self.tool.params.get("match_mode", "geometry"))
         )
         self.combo_match_mode.setCurrentIndex(
             mode_index if mode_index >= 0 else 0
@@ -428,7 +428,7 @@ class ShapeMatchConfig(QWidget):
             self.combo_pre_gate.setCurrentIndex(index)
             self.combo_pre_gate.blockSignals(False)
         self.combo_pre_gate.setEnabled(
-            str(self.tool.params.get("match_mode", "hybrid")) != "geometry"
+            str(self.tool.params.get("match_mode", "geometry")) != "geometry"
         )
 
     def _on_match_mode_changed(self, _index=None):
@@ -438,7 +438,7 @@ class ShapeMatchConfig(QWidget):
             self._sync_pre_gate_control()
 
     def _sync_match_mode_control(self):
-        value = str(self.tool.params.get("match_mode", "hybrid"))
+        value = str(self.tool.params.get("match_mode", "geometry"))
         index = self.combo_match_mode.findData(value)
         if index >= 0 and index != self.combo_match_mode.currentIndex():
             self.combo_match_mode.blockSignals(True)

@@ -451,7 +451,9 @@ A per-tool `match_mode="geometry"` prototype was added:
 - no grayscale ECC;
 - pre-gate uses gradient alignment;
 - full refinement uses edge distance + gradient alignment + native ICP;
-- the default remains `"hybrid"`.
+- the default is now `"geometry"`; `"hybrid"` remains a legacy fallback and is
+  preserved when explicitly stored in an existing job.  Jobs without a
+  `match_mode` field migrate to `"hybrid"` on load to preserve old behavior.
 
 On the synthetic baseline and 5 MP scene it recovers the object without gray
 verification.  The first real-job attempt lost detections because the geometry
@@ -520,10 +522,11 @@ Timings are noisy on this machine; geometry remains at or near hybrid speed
 with unchanged detections and pose deltas.  The remaining cost is mostly ICP
 scheduling and the full-map fallback for large ROIs.
 
-Verdict: prototype kept as experimental; **not production default**.  Keep
-`hybrid` and the existing ncc path until the geometry mode passes the
-precision and visual-validation gates; speed is now close enough to continue
-with native batching rather than algorithm changes.
+Verdict: geometry is now the default, but still marked experimental for
+precision/validation.  `hybrid` and the ncc path remain available as a legacy
+fallback until the geometry mode passes the production precision gate; speed is
+now close enough to continue with native batching rather than algorithm
+changes.
 
 ### Vote-feature budget 400/300 (2026-10-31)
 

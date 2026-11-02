@@ -196,7 +196,7 @@ class ShapeMatch(BaseTool):
             "min_score": 0.45,
             "min_results": 1,
             "max_matches": 1,
-            "match_mode": "hybrid",
+            "match_mode": "geometry",
             "pre_gate_scorer": "ncc",
             "max_features": 800,
             "edge_low": 50,
@@ -1310,7 +1310,11 @@ class ShapeMatch(BaseTool):
                 self.params["is_trained"] = False
 
     def deserialize(self, data: dict, job_manager=None) -> None:
+        params_data = data.get("params") or {}
+        legacy_match_mode = "match_mode" not in params_data
         super().deserialize(data, job_manager)
+        if legacy_match_mode:
+            self.params["match_mode"] = "hybrid"
         self._model_load_error = None
         self.last_error = None
         for key in list(self.params):
@@ -2943,7 +2947,7 @@ class ShapeMatch(BaseTool):
         angle = float(np.clip(candidate["angle"], theta_start, theta_end))
         scale = float(np.clip(candidate["scale"], scale_start, scale_end))
 
-        if str(self.params.get("match_mode", "hybrid")) == "geometry":
+        if str(self.params.get("match_mode", "geometry")) == "geometry":
             if gx is None:
                 gx, gy = self._full_gradients(gray, gradient_cache)
             score = self._alignment_score(gx, gy, x, y, angle, scale)
@@ -2985,7 +2989,7 @@ class ShapeMatch(BaseTool):
                     theta_start, theta_end, scale_start, scale_end,
                     ecc_gray=None, ecc_map=None,
                     ecc_frame=None, ecc_origin=(0, 0)):
-        if str(self.params.get("match_mode", "hybrid")) == "geometry":
+        if str(self.params.get("match_mode", "geometry")) == "geometry":
             if gx is None:
                 gx, gy = self._full_gradients(gray, gradient_cache)
             local_gx, local_gy, dt, offset_x, offset_y = (
@@ -3388,7 +3392,7 @@ class ShapeMatch(BaseTool):
         # vote peaks, so a proposal whose kernel angle/scale is still far off
         # is not dropped before it has been measured.
         geometry_mode = str(
-            self.params.get("match_mode", "hybrid")
+            self.params.get("match_mode", "geometry")
         ) == "geometry"
         pre_gate_scorer = str(
             self.params.get("pre_gate_scorer", _PRE_GATE_SCORER)

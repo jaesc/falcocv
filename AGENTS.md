@@ -140,10 +140,13 @@ cpp/bin/       → local kernel build output (gitignored)
   full scan and ECC still use grayscale, so this is not yet full illumination
   invariance.
 - **ShapeMatch geometry-only mode** -> the per-tool `match_mode` parameter
-  defaults to `"hybrid"`.  `"geometry"` skips `matchTemplate` and ECC, using
-  edge distance, gradient alignment and ICP.  After score-sorting the geometry
-  shortlist it matches every hybrid detection on `test1` and adds one Shape
-  Match_2 image.  Geometry refinement now uses a local edge/distance window
+  defaults to `"geometry"`; `"hybrid"` remains selectable as a legacy fallback.
+  Geometry skips `matchTemplate` and ECC, using edge distance, gradient
+  alignment and ICP.  Existing jobs with an explicit `"hybrid"` value keep it,
+  and jobs that predate the field migrate to `"hybrid"` on load (including the
+  current `test1`/demo jobs until their tools are changed).  After score-sorting
+  the geometry shortlist it matches every hybrid detection on `test1` and adds
+  one Shape Match_2 image.  Geometry refinement now uses a local edge/distance window
   when it is much smaller than the ROI, and the native kernel batches
   fixed-angle/scale translation scoring plus angle/scale axis scans.  Full
   geometry gradients use `cv2.spatialGradient` on `uint8` (exactly equivalent
@@ -243,7 +246,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   pose/score on a real job; do not reintroduce it without the benchmark gate.
 - The normal preview shows only the selected features. Candidates are shown
   only in the manual editor; there is no coverage warning.
-- Latest verification: `410 passed, 3 skipped, 3 xfailed`;
+- Latest verification: `411 passed, 3 skipped, 3 xfailed`;
   `falcocv self-test` PASS. Synthetic ShapeMatch matrix: 0.001-0.003 px,
   <=0.010 deg, <=0.035 % scale error.
 - Next work: validate spatial coverage on a general production job, then

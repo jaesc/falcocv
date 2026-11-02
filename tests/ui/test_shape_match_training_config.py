@@ -83,10 +83,18 @@ def test_pre_gate_selector_writes_tool_param(qtbot):
     config.combo_pre_gate.setCurrentIndex(index)
     assert tool.params["pre_gate_scorer"] == "alignment"
 
-    assert config.combo_match_mode.currentData() == "hybrid"
-    mode_index = config.combo_match_mode.findData("geometry")
-    assert mode_index >= 0
-    config.combo_match_mode.setCurrentIndex(mode_index)
+    assert config.combo_match_mode.currentData() == "geometry"
+    assert not config.combo_pre_gate.isEnabled()
+
+    hybrid_index = config.combo_match_mode.findData("hybrid")
+    assert hybrid_index >= 0
+    config.combo_match_mode.setCurrentIndex(hybrid_index)
+    assert tool.params["match_mode"] == "hybrid"
+    assert config.combo_pre_gate.isEnabled()
+
+    geometry_index = config.combo_match_mode.findData("geometry")
+    assert geometry_index >= 0
+    config.combo_match_mode.setCurrentIndex(geometry_index)
     assert tool.params["match_mode"] == "geometry"
     assert not config.combo_pre_gate.isEnabled()
 
