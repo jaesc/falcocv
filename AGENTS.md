@@ -166,8 +166,8 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 ```
 
 ## Key facts
-- Python 3.13.x (only supported version), branch: `main` / working branch
-  `public_refactor`.
+- Python 3.13.x (only supported version), branch: `main` (release) / `dev`
+  (active development).
 - No PyInstaller/Inno distribution build; distribution is the PyPI wheel/sdist.
 - `config.json` lives in `%APPDATA%/FalcoCV/config.json` (or XDG config).
 - Models live in the user data dir and are downloaded from GitHub Releases.
@@ -181,3 +181,25 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   `http://localhost:8000`; HMI: `http://localhost:8000/?id=<project_id>`.
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
+
+## Current handoff (2026-11-02)
+
+- `dev` contains the ShapeMatch v3 work; `main` is the 1.0.2 release.
+- ShapeMatch Phase 1 (`a97c54c`): model v3, training mask, Canny /
+  `min_gradient` / `max_features` controls, display-resolution preview, stale
+  detection and the retrained demo job.
+- ShapeMatch Phase 2 (`d91ecc7`): separate manual feature editor in
+  `tools/shape_match/feature_editor.py`. Fixed `max_features` budget,
+  add/remove, undo (`Ctrl+Z`), reset to auto, manual flags persisted in the
+  model, and manual features prioritized in the 500-feature vote subset.
+- ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
+- Top-N by magnitude remains the default. Automatic orientation coverage was
+  prototyped and rejected because it changed pose/score on a real job; do not
+  reintroduce it without the benchmark gate.
+- The normal preview shows only the selected features. Candidates are shown
+  only in the manual editor; there is no coverage warning.
+- Latest verification: `393 passed, 3 skipped, 3 xfailed`;
+  `falcocv self-test` PASS.
+- Next work: manual-editor polish or the M1/I1 roadmap. No release planned.
+  Resume on another machine with `git pull origin dev`,
+  `pip install -e ".[dev]"` and the test command above.
