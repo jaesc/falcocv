@@ -581,6 +581,30 @@ translation share of the solver.
 
 ## What did not work (do not repeat)
 
+### Solver search subset (2026-11-02)
+
+Tried running the coarse geometry passes on a spatially covered subset of the
+model (1000 of 5000 features) while keeping the last pass, the occlusion polish
+and the reported score on the full model.  A dense, highly textured template was
+used because the standard synthetic template only yields ~580 features, below
+the 2000-feature threshold.
+
+- Speed: 66.0 -> 51.5 ms with the subset on the first pass only (-22 %), and
+  63.9 -> 42.3 ms with the subset on the first two passes (-34 %).
+- Pose: with two subset passes, two of eight comparable cases moved by
+  9 px / 0.43 deg and 14 px / 4.1 deg (6.3 % scale).
+- Restricting the subset to the first pass reduced but did not remove the
+  divergence: the same case still moved 14 px / 4.2 deg.
+- Detections: the subset found one match where the full model found none, and
+  the reverse also happened, so the count is not stable on that template.
+- A retry fallback (rerun with the full model when the subset result scores
+  below the starting pose) did not catch the divergent cases: the wrong basin
+  scored higher, not lower.
+
+Verdict: **reverted**.  A reduced search model changes which local optimum wins
+on dense or self-similar parts, so the gain cannot be taken without a
+pose/robustness gate.  The per-scan `features` plumbing was removed with it.
+
 ### Solver convergence stop (2026-11-02)
 
 Tried to skip the remaining geometry-solver iterations when a refinement pass
