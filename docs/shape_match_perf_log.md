@@ -581,6 +581,25 @@ translation share of the solver.
 
 ## What did not work (do not repeat)
 
+### Solver convergence stop (2026-11-02)
+
+Tried to skip the remaining geometry-solver iterations when a refinement pass
+leaves the pose unchanged, instead of always running three passes.
+
+- Exact stop (no movement at all): bit-identical by construction, but it never
+  triggered on the synthetic suite (every scene kept 161 translation poses and
+  nine axis scans).
+- Tolerance stop (0.01 deg / 0.0001 scale / 0.01 px): triggered in about a
+  third of the synthetic scenes and in none of the real job tools.  Pose delta
+  stayed at 0.0001 deg but the wall-time change ranged from -6.7 % to +5.5 %
+  across scenes, i.e. inside the noise of the saved work.
+- A looser 0.25 deg threshold triggered more often but moved the angle by up
+  to 0.0002 deg for the same unmeasurable gain.
+
+Verdict: **reverted**.  The third pass almost always moves the pose at the
+0.01 deg level, so the saved work is a fraction of one stage and cannot be told
+apart from run-to-run noise.
+
 ### Sub-pixel dipoles + uniform probes
 
 - Tried: parabolic sub-pixel edge positions and chain-sampled probes replacing
