@@ -581,6 +581,29 @@ translation share of the solver.
 
 ## What did not work (do not repeat)
 
+### Levenberg-Marquardt pose solve (2026-11-02)
+
+Tried replacing the three geometry-scan passes with a Levenberg-Marquardt
+refinement on the edge distance map: four parameters (x, y, theta, scale), a
+Huber-weighted distance residual, analytic Jacobian columns and per-step
+damping.  The occlusion polish and the final score stayed identical, and the
+scan path remained as the fallback when the solve scored worse than the start.
+
+- Slower, not faster: 22.2 vs 14.0 ms on the synthetic baseline scene, 34.3 vs
+  17.8 ms on occlusion30, 114.1 vs 104.1 ms on the 2.7 MP scene.  The solve
+  needs a handful of damped attempts per iteration and each one evaluates the
+  distance field and its two gradients over every model feature, which is more
+  work than the batched native scans it replaced.
+- Pose: up to 0.43 px, 0.28 % scale, and 1.33 deg on the occlusion30 scene.
+  The distance objective is badly conditioned on occluded parts, so the solve
+  settles in a different local minimum and the occlusion polish does not always
+  recover it.
+
+Verdict: **reverted**.  Gaussian-Newton on this objective has to be faster than
+the native scans before the pose question matters, and it is not.  The batched
+kernel scans already evaluate a pose grid cheaply; an analytic solve pays a
+Python-level cost per iteration.
+
 ### Pose-lane batching in the native score (2026-11-02)
 
 Tried evaluating four translation poses at once in
