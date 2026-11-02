@@ -175,6 +175,10 @@ class ShapeMatchConfig(QWidget):
         self.label_features = QLabel("")
         self.label_features.setWordWrap(True)
         features_layout.addWidget(self.label_features)
+
+        self.btn_edit_features = QPushButton("Edit Features...")
+        self.btn_edit_features.clicked.connect(self._on_edit_features)
+        features_layout.addWidget(self.btn_edit_features)
         layout.addWidget(features_group)
 
         mask_group = QGroupBox("Training Mask")
@@ -448,6 +452,24 @@ class ShapeMatchConfig(QWidget):
             self.label_state.setText(f"Mask failed: {exc}")
             self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
 
+    def _on_edit_features(self):
+        if not self.tool.is_trained or self.tool.is_model_stale:
+            self.label_state.setText(
+                "Retrain ShapeMatch before editing features."
+            )
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+            return
+        try:
+            from .feature_editor import ShapeMatchFeatureEditorDialog
+
+            dialog = ShapeMatchFeatureEditorDialog(self.tool, self)
+            if dialog.exec():
+                self.tool.mark_dirty()
+                self.refresh_ui()
+        except Exception as exc:
+            self.label_state.setText(f"Feature editor failed: {exc}")
+            self.label_state.setStyleSheet(f"color: {WARNING}; font-weight: bold;")
+
     def _update_mask_status(self):
         has_image = self.tool._static_train_image is not None
         has_mask = self.tool.has_train_mask
@@ -521,6 +543,9 @@ class ShapeMatchConfig(QWidget):
         self._sync_training_controls()
         self.tool.refresh_stale_state()
         self._update_mask_status()
+        self.btn_edit_features.setEnabled(
+            self.tool.is_trained and not self.tool.is_model_stale
+        )
 
         if key == "output image":
             image_data = self.tool.outputs.get("output image")
@@ -596,9 +621,11 @@ class ShapeMatchConfig(QWidget):
             self._update_feature_status()
             self._update_template_preview()
         elif self.tool.is_trained:
+            suffix = " (manual)" if self.tool.is_manual_edit else ""
             self.label_state.setText(
                 f"Trained: {self.tool._model_x.size} features, "
                 f"{self.tool._template_size[0]}x{self.tool._template_size[1]} px"
+                f"{suffix}"
             )
             self.label_state.setStyleSheet(f"color: {SUCCESS}; font-weight: bold;")
             self._update_feature_status()

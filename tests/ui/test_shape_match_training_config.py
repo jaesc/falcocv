@@ -1,11 +1,29 @@
 """ShapeMatch training UI: controls, stale banner and mask editor."""
 
+import cv2
 import numpy as np
+from PyQt6.QtWidgets import QDialog
 
 from falcocv.accuracy.synthetic import make_template
 from falcocv.tools.shape_match.config import ShapeMatchConfig
+from falcocv.tools.shape_match.feature_editor import (
+    ShapeMatchFeatureEditorDialog,
+)
 from falcocv.tools.shape_match.mask_editor import ShapeMatchMaskDialog
 from falcocv.tools.shape_match.logic import ShapeMatch
+
+
+def _manual_tool():
+    image = np.zeros((400, 600, 3), dtype=np.uint8)
+    for y in range(30, 370, 35):
+        for x in range(30, 570, 35):
+            cv2.rectangle(image, (x, y), (x + 18, y + 18), (255, 255, 255), -1)
+    tool = ShapeMatch()
+    tool._static_train_image = image
+    tool.params["train_roi"] = [0, 0, 600, 400, 0]
+    tool.params["max_features"] = 800
+    tool.train_pattern()
+    return tool
 
 
 def test_training_controls_write_params_and_show_status(qtbot):
@@ -105,3 +123,46 @@ def test_mask_dialog_starts_with_full_mask_and_can_paint(qtbot):
     dialog._set_mode(255)
     dialog.canvas.mask[:] = 255
     assert np.all(dialog.mask == 255)
+
+
+def test_feature_editor_removes_adds_undoes_and_applies(qtbot):
+    tool = _manual_tool()
+    dialog = ShapeMatchFeatureEditorDialog(tool)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(50)
+
+    assert len(dialog._selected) == 800
+    assert "800 / 800" in dialog.label_status.text()
+
+    selected = next(iter(dialog._selected))
+    dialog._set_mode("remove")
+    dialog._on_click(int(dialog._xs[selected]), int(dialog._ys[selected]))
+    assert len(dialog._selected) == 799
+
+    unselected = next(
+        index for index in range(len(dialog._xs))
+        if index not in dialog._selected
+    )
+    dialog._set_mode("add")
+    dialog._on_click(int(dialog._xs[unselected]), int(dialog._ys[unselected]))
+    assert len(dialog._selected) == 800
+    assert dialog._undo_stack
+
+    dialog._undo()
+    assert len(dialog._selected) == 799
+
+    unselected_after_undo = next(
+        index for index in range(len(dialog._xs))
+        if index not in dialog._selected and index != unselected
+    )
+    x = int(dialog._xs[unselected_after_undo])
+    y = int(dialog._ys[unselected_after_undo])
+    dialog.viewer.mouse_clicked.emit(x, y)
+    dialog.viewer.mouse_clicked.emit(x, y)
+    assert len(dialog._selected) == 800
+    dialog._apply()
+    assert dialog.result() == QDialog.DialogCode.Accepted
+    assert tool.is_manual_edit is True
+    assert tool._model_x.size == 800
+    assert int(tool._model_manual.sum()) >= 1

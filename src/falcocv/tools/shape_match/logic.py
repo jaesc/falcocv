@@ -204,6 +204,8 @@ class ShapeMatch(BaseTool):
         self._template_size = (0, 0)
         self._train_mask = None
         self._model_mask = None
+        self._model_manual = np.zeros(0, dtype=np.uint8)
+        self._manual_edit = False
         self._model_training_signature = None
         self._model_stale = False
         self._model_load_error = None
@@ -233,6 +235,10 @@ class ShapeMatch(BaseTool):
     @property
     def model_load_error(self) -> str | None:
         return self._model_load_error
+
+    @property
+    def is_manual_edit(self) -> bool:
+        return self._manual_edit
 
     def _mask_digest(self) -> str:
         if self._train_mask is None:
@@ -439,6 +445,8 @@ class ShapeMatch(BaseTool):
         self._model_y = ys - height / 2.0
         self._model_theta = angles
         self._model_mag = values / total
+        self._model_manual = np.zeros(self._model_x.size, dtype=np.uint8)
+        self._manual_edit = False
         self._template_edges = edges
         self._model_canny_fallback = canny_fallback
         self._model_canny_count = canny_count
@@ -518,7 +526,34 @@ class ShapeMatch(BaseTool):
             self._vote_model_mag = np.empty(0, dtype=np.float32)
             return
         count = min(_VOTE_MODEL_FEATURES, self._model_x.size)
-        order = np.argsort(self._model_mag)[::-1][:count]
+        manual = np.asarray(self._model_manual, dtype=np.uint8).reshape(-1)
+        if manual.size != self._model_x.size:
+            manual = np.zeros(self._model_x.size, dtype=np.uint8)
+        manual_index = np.flatnonzero(manual)
+        if manual_index.size:
+            manual_index = manual_index[
+                np.argsort(self._model_mag[manual_index])[::-1]
+            ]
+            if manual_index.size >= count:
+                order = manual_index[:count]
+            else:
+                chosen = {int(index) for index in manual_index}
+                remainder = [
+                    int(index)
+                    for index in np.argsort(self._model_mag)[::-1]
+                    if int(index) not in chosen
+                ]
+                order = np.concatenate(
+                    [
+                        manual_index,
+                        np.asarray(
+                            remainder[: count - manual_index.size],
+                            dtype=np.int64,
+                        ),
+                    ]
+                )
+        else:
+            order = np.argsort(self._model_mag)[::-1][:count]
         self._vote_model_x = self._model_x[order].astype(np.float32)
         self._vote_model_y = self._model_y[order].astype(np.float32)
         self._vote_model_theta = self._model_theta[order].astype(np.float32)
@@ -562,6 +597,8 @@ class ShapeMatch(BaseTool):
             self._render_cache,
             self._template_size,
             self._model_mask,
+            self._model_manual,
+            self._manual_edit,
             self._model_canny_fallback,
             self._model_canny_count,
             self._model_candidate_count,
@@ -593,6 +630,8 @@ class ShapeMatch(BaseTool):
                 self._render_cache,
                 self._template_size,
                 self._model_mask,
+                self._model_manual,
+                self._manual_edit,
                 self._model_canny_fallback,
                 self._model_canny_count,
                 self._model_candidate_count,
@@ -662,6 +701,167 @@ class ShapeMatch(BaseTool):
 
     def train_mask_ignored_fraction(self) -> float:
         return self._train_mask_ignored_fraction
+
+    def training_candidates(self) -> dict:
+        """Return the Canny/Sobel candidates available for manual editing."""
+        if self._template_gray is None or self._template_edges is None:
+            raise ValueError("ShapeMatch is not trained.")
+        if self.refresh_stale_state():
+            raise ValueError(
+                "Training parameters changed; retrain ShapeMatch."
+            )
+
+        gray = self._template_gray
+        _, _, mag, theta = self._gradient(gray)
+        if self._model_canny_fallback:
+            mask = self._train_mask
+            if mask is None:
+                mask = self._model_mask
+            if mask is None:
+                keep = np.ones(gray.shape[:2], dtype=bool)
+            else:
+                mask = np.asarray(mask, dtype=np.uint8)
+                if mask.shape[:2] != gray.shape[:2]:
+                    raise ValueError(
+                        "Training mask does not match the template; retrain "
+                        "ShapeMatch."
+                    )
+                keep = mask > 0
+            masked_mag = mag[keep]
+            if masked_mag.size == 0:
+                raise ValueError(
+                    "No candidate pixels are available for feature editing."
+                )
+            threshold = float(
+                np.percentile(masked_mag, _CANNY_FALLBACK_PERCENTILE)
+            )
+            ys, xs = np.nonzero((mag >= threshold) & keep)
+        else:
+            ys, xs = np.nonzero(self._template_edges)
+
+        values = mag[ys, xs].astype(np.float32)
+        min_gradient = float(self.params.get("min_gradient", 0.0))
+        if min_gradient > 0.0:
+            keep_gradient = values >= min_gradient
+            xs = xs[keep_gradient]
+            ys = ys[keep_gradient]
+            values = values[keep_gradient]
+
+        if xs.size == 0:
+            raise ValueError(
+                "No candidate pixels are available for feature editing."
+            )
+
+        angles = theta[ys.astype(int), xs.astype(int)].astype(np.float32)
+        return {
+            "x": xs.astype(np.int32),
+            "y": ys.astype(np.int32),
+            "theta": angles,
+            "mag": values,
+        }
+
+    def selected_candidate_indices(self, candidates: dict | None = None) -> list[int]:
+        """Map the stored model features back to candidate pixel indices."""
+        if candidates is None:
+            candidates = self.training_candidates()
+        width, height = self._template_size
+        if width <= 0 or height <= 0:
+            raise ValueError("ShapeMatch has no template size; retrain.")
+        px = np.rint(self._model_x + width / 2.0).astype(np.int64)
+        py = np.rint(self._model_y + height / 2.0).astype(np.int64)
+        lookup = {
+            (int(x), int(y)): index
+            for index, (x, y) in enumerate(
+                zip(candidates["x"], candidates["y"])
+            )
+        }
+        selected = []
+        missing = []
+        for x, y in zip(px, py):
+            index = lookup.get((int(x), int(y)))
+            if index is None:
+                missing.append((int(x), int(y)))
+            else:
+                selected.append(index)
+        if missing:
+            raise ValueError(
+                "ShapeMatch model features do not match the training "
+                "candidates; retrain the tool."
+            )
+        return selected
+
+    def manual_candidate_indices(self, candidates: dict | None = None) -> set[int]:
+        selected = self.selected_candidate_indices(candidates)
+        if self._model_manual.size != len(selected):
+            return set()
+        return {
+            index
+            for index, flag in zip(selected, self._model_manual)
+            if int(flag)
+        }
+
+    def apply_manual_selection(
+        self,
+        candidates: dict,
+        selected,
+        manual=None,
+        edited: bool = True,
+    ) -> None:
+        """Replace the model features with a user-selected candidate subset."""
+        if self.refresh_stale_state():
+            raise ValueError(
+                "Training parameters changed; retrain ShapeMatch."
+            )
+        indices = list(dict.fromkeys(int(index) for index in selected))
+        max_features = int(self.params.get("max_features", 800))
+        if not (_MIN_FEATURES <= len(indices) <= max_features):
+            raise ValueError(
+                f"Select between {_MIN_FEATURES} and {max_features} features "
+                f"(got {len(indices)})."
+            )
+        count = len(candidates["mag"])
+        if any(index < 0 or index >= count for index in indices):
+            raise ValueError("Feature selection contains invalid candidates.")
+
+        order = sorted(
+            indices,
+            key=lambda index: float(candidates["mag"][index]),
+            reverse=True,
+        )
+        xs = np.asarray(candidates["x"], dtype=np.float32)[order]
+        ys = np.asarray(candidates["y"], dtype=np.float32)[order]
+        angles = np.asarray(candidates["theta"], dtype=np.float32)[order]
+        values = np.asarray(candidates["mag"], dtype=np.float32)[order]
+        total = float(values.sum())
+        if total <= 0.0:
+            raise ValueError("Selected features have zero gradient magnitude.")
+
+        manual_set = {int(index) for index in (manual or ())}
+        self._model_x = xs - self._template_size[0] / 2.0
+        self._model_y = ys - self._template_size[1] / 2.0
+        self._model_theta = angles
+        self._model_mag = values / total
+        self._model_manual = np.asarray(
+            [1 if index in manual_set else 0 for index in order],
+            dtype=np.uint8,
+        )
+        self._manual_edit = bool(edited)
+        self._rebuild_vote_model()
+        self._model_stale = False
+        self.outputs["trained"] = True
+        self._save_model()
+        self.data_changed.emit()
+
+    def reset_auto_selection(self) -> None:
+        candidates = self.training_candidates()
+        limit = int(self.params.get("max_features", 800))
+        order = np.argsort(candidates["mag"])[::-1][:limit]
+        self.apply_manual_selection(
+            candidates,
+            order,
+            manual=(),
+            edited=False,
+        )
 
     def _store_train_mask_param(self) -> None:
         if self._train_mask is None:
@@ -734,6 +934,8 @@ class ShapeMatch(BaseTool):
         self._render_cache = None
         self._template_size = (0, 0)
         self._model_mask = None
+        self._model_manual = np.zeros(0, dtype=np.uint8)
+        self._manual_edit = False
         self._model_training_signature = None
         self._model_stale = False
         self._model_canny_fallback = False
@@ -777,6 +979,9 @@ class ShapeMatch(BaseTool):
             else np.zeros(0, dtype=np.uint8)
         )
         token = str(self.params.get("train_image_token") or "")
+        manual = np.asarray(self._model_manual, dtype=np.uint8).reshape(-1)
+        if manual.size != self._model_x.size:
+            manual = np.zeros(self._model_x.size, dtype=np.uint8)
         buffer = io.BytesIO()
         np.savez_compressed(
             buffer,
@@ -785,6 +990,8 @@ class ShapeMatch(BaseTool):
             y=self._model_y,
             theta=self._model_theta,
             mag=self._model_mag,
+            manual=manual,
+            manual_edit=np.array([int(self._manual_edit)], dtype=np.int32),
             edges=self._template_edges,
             gray=self._template_gray,
             color=self._template_color,
@@ -873,6 +1080,23 @@ class ShapeMatch(BaseTool):
             self._model_canny_fallback = bool(int(data["canny_fallback"][0]))
             self._model_canny_count = int(data["canny_count"][0])
             self._model_candidate_count = int(data["candidate_count"][0])
+            if "manual" in data.files:
+                manual = np.asarray(data["manual"], dtype=np.uint8).reshape(-1)
+                if manual.size != self._model_x.size:
+                    raise ValueError(
+                        "ShapeMatch model manual flags do not match its "
+                        "features; retrain the tool."
+                    )
+                self._model_manual = manual
+            else:
+                self._model_manual = np.zeros(
+                    self._model_x.size, dtype=np.uint8
+                )
+            self._manual_edit = (
+                bool(int(data["manual_edit"][0]))
+                if "manual_edit" in data.files
+                else False
+            )
             token = str(data["train_image_token"][0])
             mask_digest = (
                 hashlib.sha1(model_mask.tobytes()).hexdigest()

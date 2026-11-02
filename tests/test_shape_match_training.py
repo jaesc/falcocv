@@ -182,6 +182,94 @@ def test_train_roi_float32_rounding_does_not_mark_stale():
     assert tool.refresh_stale_state() is True
 
 
+def _manual_tool():
+    image = np.zeros((400, 600, 3), dtype=np.uint8)
+    for y in range(30, 370, 35):
+        for x in range(30, 570, 35):
+            cv2.rectangle(image, (x, y), (x + 18, y + 18), (255, 255, 255), -1)
+    tool = ShapeMatch()
+    tool._static_train_image = image
+    tool.params["train_roi"] = [0, 0, 600, 400, 0]
+    tool.params["max_features"] = 800
+    tool.train_pattern()
+    return tool
+
+
+def test_manual_feature_selection_roundtrip_and_vote_priority():
+    tool = _manual_tool()
+    candidates = tool.training_candidates()
+    selected = set(tool.selected_candidate_indices(candidates))
+    assert len(selected) == tool._model_x.size == 800
+
+    added = next(
+        index for index in range(len(candidates["mag"]))
+        if index not in selected
+    )
+    removed = next(iter(selected))
+    tool.apply_manual_selection(
+        candidates,
+        (selected - {removed}) | {added},
+        manual={added},
+        edited=True,
+    )
+
+    assert tool._model_x.size == 800
+    assert tool.is_manual_edit is True
+    assert int(tool._model_manual.sum()) == 1
+
+    width, height = tool._template_size
+    expected_x = float(candidates["x"][added]) - width / 2.0
+    expected_y = float(candidates["y"][added]) - height / 2.0
+    in_model = (
+        np.isclose(tool._model_x, expected_x)
+        & np.isclose(tool._model_y, expected_y)
+    )
+    in_vote = (
+        np.isclose(tool._vote_model_x, expected_x)
+        & np.isclose(tool._vote_model_y, expected_y)
+    )
+    assert np.any(in_model)
+    assert np.any(in_vote)
+
+    data = tool.serialize()
+    loaded = ShapeMatch()
+    loaded.deserialize(data)
+    assert loaded.is_manual_edit is True
+    assert int(loaded._model_manual.sum()) == 1
+    assert loaded.is_model_stale is False
+
+    loaded.reset_auto_selection()
+    assert loaded.is_manual_edit is False
+    assert int(loaded._model_manual.sum()) == 0
+    assert loaded._model_x.size == 800
+
+
+def test_manual_selection_enforces_budget_and_minimum():
+    tool = _manual_tool()
+    candidates = tool.training_candidates()
+    selected = list(tool.selected_candidate_indices(candidates))
+    added = next(
+        index for index in range(len(candidates["mag"]))
+        if index not in set(selected)
+    )
+
+    with pytest.raises(ValueError, match="Select between"):
+        tool.apply_manual_selection(
+            candidates,
+            selected + [added],
+            manual={added},
+        )
+    with pytest.raises(ValueError, match="Select between"):
+        tool.apply_manual_selection(candidates, selected[:19])
+
+
+def test_training_candidates_rejects_a_stale_model():
+    tool = _manual_tool()
+    tool.params["edge_low"] = 60
+    with pytest.raises(ValueError, match="retrain"):
+        tool.training_candidates()
+
+
 def test_mask_must_match_the_training_crop():
     tool = ShapeMatch()
     tool._static_train_image = np.zeros((40, 60, 3), dtype=np.uint8)

@@ -105,6 +105,12 @@ cpp/bin/       → local kernel build output (gitignored)
   the training ROI, or the training image marks the model **STALE** and blocks
   matching until retrained. The Canny→top-10 % Sobel fallback is allowed but
   shown in the training status.
+- **ShapeMatch manual feature editing** -> the editor works on the stored
+  Canny/fallback candidates after mask and `min_gradient`. The fixed
+  `max_features` budget is enforced; manual flags are stored in the model and
+  manual features are prioritized in the 500-feature vote subset. Changing any
+  training parameter, ROI, mask or training image invalidates the manual
+  selection. The normal preview only shows the final selection.
 - **ShapeMatch coarse voting** -> the vote factor depends on the template only
   (`min_template // 96`, capped at 4x), never on the ROI area.  Cap scene edges
   with a fixed **48-edge quota per 32 px cell**, independent of the cell count;
