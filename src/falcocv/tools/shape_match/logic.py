@@ -149,6 +149,13 @@ _NCC_SCALE_HALF = 0.05
 _SEARCH_MAX_FACTOR = 8
 _ECC_COARSE_MAX_FACTOR = 2
 
+# Geometry solver: the widest translation search runs a coarse grid first and
+# only refines around its maximum.  The coarse step is an integer multiple of
+# the fine step, so the refined poses stay on the same lattice as a single
+# full grid and cannot introduce a new sub-step parity.
+_TRANSLATION_STAGED_MIN_SPAN = 5.0
+_TRANSLATION_COARSE_STEP = 4.0
+
 
 class ShapeMatchResult(ToolResult):
     def __init__(
@@ -2099,6 +2106,42 @@ class ShapeMatch(BaseTool):
         index = int(np.argmax(scores))
         return float(x + dx[index]), float(y + dy[index]), float(scores[index])
 
+    def _dt_scan_xy_staged(self, gx, gy, dt, x, y, angle, scale, span, step,
+                           model_mask=None):
+        """Coarse translation grid, then a fine grid around its best pose.
+
+        Both grids use the same origin lattice (the coarse step is a multiple
+        of ``step``), so the staged search only samples positions that the
+        single full grid would also sample.  The best score of both passes
+        wins, which keeps the coarse result if the fine window cannot beat it.
+        """
+        if span <= _TRANSLATION_STAGED_MIN_SPAN:
+            return self._dt_scan_xy(
+                gx, gy, dt, x, y, angle, scale, span, step, model_mask
+            )
+        step = float(step)
+        multiple = max(2.0, math.ceil(_TRANSLATION_COARSE_STEP / step))
+        coarse = self._dt_scan_xy(
+            gx, gy, dt, x, y, angle, scale, span, step * multiple, model_mask
+        )
+        if coarse is None:
+            return None
+        fine = self._dt_scan_xy(
+            gx,
+            gy,
+            dt,
+            coarse[0],
+            coarse[1],
+            angle,
+            scale,
+            min(float(span), step * multiple),
+            step,
+            model_mask,
+        )
+        if fine is None or coarse[2] >= fine[2]:
+            return coarse
+        return fine
+
     # ------------------------------------------------------------------
     # Robust ICP for occlusion
     # ------------------------------------------------------------------
@@ -3020,7 +3063,7 @@ class ShapeMatch(BaseTool):
                 )
                 if result:
                     scale = result[0]
-                translated = self._dt_scan_xy(
+                translated = self._dt_scan_xy_staged(
                     local_gx, local_gy, dt, x, y, angle, scale,
                     span=10.0 if iteration == 0 else 2.0,
                     step=2.0 if iteration == 0 else 1.0,

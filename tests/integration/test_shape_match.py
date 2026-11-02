@@ -454,6 +454,62 @@ def test_geometry_only_mode_detects_baseline():
     assert abs(result.scale - 1.05) / 1.05 <= 0.01
 
 
+def _quadratic_scan(self, gx, gy, dt, x, y, angle, scale, span, step,
+                    model_mask=None):
+    offsets = np.arange(-span, span + step * 0.5, step, dtype=np.float64)
+    dx, dy = np.meshgrid(offsets, offsets, indexing="ij")
+    score = np.exp(-(((dx - 2.6) ** 2 + (dy + 1.4) ** 2) / 72.0))
+    index = int(np.argmax(score))
+    return (
+        float(x + dx.ravel()[index]),
+        float(y + dy.ravel()[index]),
+        float(score.ravel()[index]),
+    )
+
+
+def test_staged_translation_grid_matches_a_single_grid(monkeypatch):
+    monkeypatch.setattr(ShapeMatch, "_dt_scan_xy", _quadratic_scan)
+    tool = ShapeMatch()
+    for start in ((0.0, 0.0), (100.0, 200.0), (37.5, 88.25)):
+        single = tool._dt_scan_xy(
+            None, None, None, *start, 0.0, 1.0, 10.0, 2.0
+        )
+        staged = tool._dt_scan_xy_staged(
+            None, None, None, *start, 0.0, 1.0, 10.0, 2.0
+        )
+        assert staged == pytest.approx(single)
+
+
+def test_staged_translation_grid_keeps_small_spans(monkeypatch):
+    calls = []
+
+    def record(self, gx, gy, dt, x, y, angle, scale, span, step,
+               model_mask=None):
+        calls.append((span, step))
+        return (x, y, 1.0)
+
+    monkeypatch.setattr(ShapeMatch, "_dt_scan_xy", record)
+    ShapeMatch()._dt_scan_xy_staged(
+        None, None, None, 5.0, 6.0, 0.0, 1.0, 2.0, 1.0
+    )
+    assert calls == [(2.0, 1.0)]
+
+
+def test_staged_translation_grid_uses_coarse_step_multiples(monkeypatch):
+    calls = []
+
+    def record(self, gx, gy, dt, x, y, angle, scale, span, step,
+               model_mask=None):
+        calls.append((span, step))
+        return (x, y, 1.0)
+
+    monkeypatch.setattr(ShapeMatch, "_dt_scan_xy", record)
+    ShapeMatch()._dt_scan_xy_staged(
+        None, None, None, 0.0, 0.0, 0.0, 1.0, 10.0, 1.5
+    )
+    assert calls == [(10.0, 4.5), (4.5, 1.5)]
+
+
 def test_shape_match_large_scene_downscaled_vote():
     template = make_template()
     tool = _tool(template)

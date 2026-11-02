@@ -552,6 +552,33 @@ The weaker vote does not reduce the rest of the pipeline, so the saved kernel
 work is lost (and the run-to-run noise is larger than the difference).
 **Reverted to 48**: it keeps the stronger vote for the same wall time.
 
+### Staged translation grid and A/B harness (2026-11-02)
+
+`benchmarks/bench_shape_match_ab.py` runs variants in the same process,
+alternating them on every repetition, and reports the per-tool median plus the
+pose delta against the baseline.  It also counts calls, poses and milliseconds
+per solver stage, so a change can be attributed to a stage instead of the whole
+run.  Without `--job` it covers the synthetic suite plus a 2.7 MP scene.
+
+The widest translation search (span 10 px, step 2 px) now runs a coarse grid
+first and refines around its maximum (`_dt_scan_xy_staged`).  The coarse step is
+an integer multiple of the fine step, so every staged pose is also a pose of the
+single full grid and no new sub-step parity is introduced.  The best score of
+both passes wins, which keeps the coarse result when the fine window cannot beat
+it.  Spans below 5 px keep the single grid.
+
+- Poses per solve: 221 -> 161 (-27 %).
+- Synthetic suite (13 scenes + 2.7 MP): pose delta 0.000 px / 0.0000 deg /
+  0.0000 %, all detections kept.
+- Real job, interleaved A/B, 9 reps, single grid -> staged: 60.5 -> 55.4 ms
+  (-8.4 %) and 25.0 -> 21.6 ms (-13.6 %), pose delta 0.
+  Translation stage 22.7 -> 13.8 ms.
+- 2.7 MP synthetic scene: 103.8 vs 106.8 ms, inside the run-to-run noise of
+  that scene; the vote dominates it and translation is only ~3 ms.
+
+Verdict: **kept**.  Exact result, fewer poses, and the gain grows with the
+translation share of the solver.
+
 ## What did not work (do not repeat)
 
 ### Sub-pixel dipoles + uniform probes
@@ -734,7 +761,11 @@ Status:
    (pending commit)**: NCC calls ~75 -> 41/49 and refinements 8 -> 4/5 on the
    synthetic matrix; detections/poses unchanged; 5 MP gain is smaller because
    the solver dominates.
-10. Re-run the 142-image private job as the gate: no detection or pose changes.
+10. Staged translation grid (Block 1.1) — **done and kept**: coarse grid plus a
+    fine pass around its maximum, coarse step an integer multiple of the fine
+    step. 221 -> 161 poses per solve, pose delta 0 on the synthetic suite and
+    on the interleaved job A/B (-8.4 %/-13.6 %).
+11. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.
