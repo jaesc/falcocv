@@ -156,10 +156,23 @@ cpp/bin/       → local kernel build output (gitignored)
   `test1` medians were `Shape Match_1` 50.9 vs 70.7 ms, `Shape Match_0`
   68.9 vs 72.8 ms and `Shape Match_2` 100.7 vs 92.6 ms (timings are noisy).
   Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
-  experimental and must not become the default without a production gate.
+  experimental.  The production gate ran on 1005 real frames: detection parity
+  (0 lost, 0 extra) and -31 % time, but translation is less precise than hybrid
+  (median 1.00 vs 0.65 px against the job's PatternMatcher, one 85 px failure).
+  Geometry stays the fast mode; hybrid is the precision reference.  Re-run
+  `scripts/validate_shape_match_modes.py` before changing that verdict.
   The Python path falls back to the generic score when the loaded kernel
   predates `shape_match_score_translations`/`shape_match_score_axis`, and to
   the old ICP path when it predates `shape_match_icp_from_dt`.
+- **ShapeMatch staged translation grid** -> the widest translation search runs a
+  coarse grid and then refines around its maximum.  The coarse step must be an
+  integer multiple of the fine step; otherwise the refined poses leave the
+  lattice of the single full grid and the result changes.  With the multiple the
+  staged search is bit-identical (pose delta 0 on the synthetic suite and on the
+  job A/B) and drops 221 -> 161 poses per solve.
+- **Kernel A/B measurement** -> rebuilding between measurements moved the
+  baseline by 13 % on this machine.  Compare native changes inside one binary
+  (extra flag or a second exported function), never across builds.
 - **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
   found by a smaller one.  That is why the vote factor, the edge quota, the
   candidate floor and the dedupe distance cannot depend on the ROI extent.
@@ -226,30 +239,32 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 
 ## Current handoff (2026-11-02)
 
-- `dev` contains the ShapeMatch v3 work; `main` is the 1.0.2 release.
-- ShapeMatch Phase 1 (`a97c54c`): model v3, training mask, Canny /
-  `min_gradient` / `max_features` controls, display-resolution preview, stale
-  detection and the retrained demo job.
-- ShapeMatch Phase 2 (`d91ecc7`): separate manual feature editor in
-  `tools/shape_match/feature_editor.py`. Fixed `max_features` budget,
-  add/remove, undo (`Ctrl+Z`), reset to auto, manual flags persisted in the
-  model.
-- ShapeMatch Phase 3 (working tree): brush add/remove with 6 px default,
-  white/black brush cursor, candidate/auto/manual colours and legend; spatial
-  feature coverage for training, reset and vote subset; manual flags are
-  provenance only, not vote priority.
-- ShapeMatch search preprocessing is ROI-bound for axis-aligned `uint8` ROIs:
-  it converts a frame-aligned block around the ROI, not the full input frame.
+- `dev` has the ShapeMatch v3 work and the geometry validation; `main` is the
+  1.0.2 release.  No release planned.
+- ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
+  `fe8a135`): model v3, training mask, Canny / `min_gradient` /
+  `max_features` controls, manual feature editor with brush, spatial feature
+  coverage, ROI-bound search preprocessing and geometry mode.
 - ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
-- Spatial coverage is now the default automatic selection. Automatic
-  orientation coverage was prototyped and rejected because it changed
-  pose/score on a real job; do not reintroduce it without the benchmark gate.
-- The normal preview shows only the selected features. Candidates are shown
-  only in the manual editor; there is no coverage warning.
-- Latest verification: `411 passed, 3 skipped, 3 xfailed`;
-  `falcocv self-test` PASS. Synthetic ShapeMatch matrix: 0.001-0.003 px,
-  <=0.010 deg, <=0.035 % scale error.
-- Next work: validate spatial coverage on a general production job, then
-  manual-editor polish or the M1/I1 roadmap. No release planned. Resume on
-  another machine with `git pull origin dev`, `pip install -e ".[dev]"` and
-  the test command above.
+- Spatial coverage is the default automatic selection.  Automatic orientation
+  coverage was prototyped and rejected because it changed pose/score on a real
+  job; do not reintroduce it without the benchmark gate.
+- Manual flags are provenance only.  The selected set is authoritative and
+  manual features are not prioritised in the vote subset.
+- The normal preview shows only the selected features.  Candidates are shown
+  only in the manual editor.
+- Speed work (2026-11-02): only the staged translation grid survived
+  (`067b8cc`, -8/-14 %, pose delta 0).  Convergence stop, search subset,
+  pose-lane batching, Levenberg-Marquardt and the alignment polish were tried
+  and reverted; each is recorded with numbers in
+  `docs/shape_match_perf_log.md` under "What did not work".
+- Geometry mode passed on detections and speed (1005 real frames, 0 lost,
+  0 extra, -31 %) but failed on precision (median 1.00 vs 0.65 px against the
+  job's PatternMatcher, one 85 px failure).  Geometry stays a fast mode; hybrid
+  is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
+  procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
+- Latest verification: `417 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
+  PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
+- Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
+  machine with `git pull origin dev`, `pip install -e ".[dev]"` and
+  `pytest -q --ignore=tests/test_trainer_equivalence.py`.

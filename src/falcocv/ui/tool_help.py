@@ -1653,6 +1653,15 @@ TOOL_HELP["Shape Match"] = {
          "description": "Canny high hysteresis threshold used when training and matching."},
         {"name": "min_gradient", "default": "0",
          "description": "Minimum Sobel gradient magnitude for a selected feature. 0 keeps every Canny edge."},
+        {"name": "match_mode", "default": "geometry",
+         "description": "Verification path. 'geometry' uses edge distance, "
+                        "gradient alignment and ICP (about 30 % faster); "
+                        "'hybrid' uses grayscale NCC/ECC and is the precision "
+                        "reference."},
+        {"name": "pre_gate_scorer", "default": "ncc",
+         "description": "Candidate ranking before the full scan. 'ncc' uses "
+                        "grayscale correlation; 'alignment' uses gradients only "
+                        "and is a prototype."},
         {"name": "origin_x", "default": "0",
          "description": "Reported origin X relative to the template center. "
                         "0 = template center."},
@@ -1678,8 +1687,10 @@ TOOL_HELP["Shape Match"] = {
         "Capture a train image, draw the Training ROI (rotation supported), and "
         "press Train ShapeMatch. The Shape Preview shows the template edges, "
         "selected feature points and their gradient orientation. Matching "
-        "requires the native <code>_falco_kernel</code> extension. Fully visible "
-        "parts use ECC; occluded parts use the explicit occlusion solver."
+        "requires the native <code>_falco_kernel</code> extension. Hybrid mode "
+        "uses ECC for fully visible parts and the occlusion solver otherwise. "
+        "Geometry mode finds the same parts, is about 30 % faster, but its "
+        "translation is less precise; pick hybrid when pose accuracy matters."
     ),
     "see_also": ["Pattern Matcher", "Measurement"],
 }

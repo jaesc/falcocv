@@ -866,23 +866,28 @@ Status:
 6. Fused bilinear sampling in score/ICP — **done and kept**: score
    0.282 -> 0.162 ms, bit-identical; real job 39.8/39.6/53.0 ms with
    140/140/142 detections and pose deltas 0.
-7. Spatial feature coverage — **done and kept (pending commit)**: 32 px cell
+7. Spatial feature coverage - **done and kept**: 32 px cell
    seeding + capped magnitude fill for training, reset and the vote subset;
    manual flags are provenance only. Synthetic matrix stays within
    0.003 px / 0.010 deg / 0.035 %.
-8. ROI-bound search preprocessing — **done and kept (pending commit)**: the
+8. ROI-bound search preprocessing - **done and kept**: the
    axis-aligned `uint8` path converts a frame-aligned gray block around the
    ROI, not the complete input frame. Rotated/non-`uint8` inputs use the old
    fallback. Pyramid views are pixel-identical in the equivalence tests.
-9. Pre-gate budget 20 + 4 scans + adaptive score margin — **done and kept
-   (pending commit)**: NCC calls ~75 -> 41/49 and refinements 8 -> 4/5 on the
+9. Pre-gate budget 20 + 4 scans + adaptive score margin - **done and kept**:
+   NCC calls ~75 -> 41/49 and refinements 8 -> 4/5 on the
    synthetic matrix; detections/poses unchanged; 5 MP gain is smaller because
    the solver dominates.
-10. Staged translation grid (Block 1.1) — **done and kept**: coarse grid plus a
+10. Staged translation grid (Block 1.1) - **done and kept**: coarse grid plus a
     fine pass around its maximum, coarse step an integer multiple of the fine
     step. 221 -> 161 poses per solve, pose delta 0 on the synthetic suite and
     on the interleaved job A/B (-8.4 %/-13.6 %).
-11. Re-run the 142-image private job as the gate: no detection or pose changes.
+11. Geometry validation gate - **run, failed on precision**: 1005 real frames
+    (`VisA/pcb4` Normal), 0 lost / 0 extra / 31 % faster, but translation is
+    less precise than hybrid (median 1.00 vs 0.65 px against the job's
+    PatternMatcher, max 85 px on one frame).  Details in
+    `docs/SHAPE_MATCH_VALIDATION.md`.  Geometry stays the fast mode; hybrid
+    remains the precision reference.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.
