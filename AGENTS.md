@@ -147,13 +147,16 @@ cpp/bin/       → local kernel build output (gitignored)
   when it is much smaller than the ROI, and the native kernel batches
   fixed-angle/scale translation scoring plus angle/scale axis scans.  Full
   geometry gradients use `cv2.spatialGradient` on `uint8` (exactly equivalent
-  to the two Sobel calls and faster).  With the rebuilt kernel, the latest
-  `test1` medians were `Shape Match_1` 50.6 vs 78.2 ms, `Shape Match_0`
-  71.9 vs 79.7 ms and `Shape Match_2` 95.3 vs 97.9 ms (timings are noisy).
+  to the two Sobel calls and faster).  The native ICP computes its distance-map
+  derivatives internally (`shape_match_icp_from_dt`), avoiding Python Sobel
+  calls while keeping the old entry point.  With the rebuilt kernel, the latest
+  `test1` medians were `Shape Match_1` 50.9 vs 70.7 ms, `Shape Match_0`
+  68.9 vs 72.8 ms and `Shape Match_2` 100.7 vs 92.6 ms (timings are noisy).
   Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
   experimental and must not become the default without a production gate.
   The Python path falls back to the generic score when the loaded kernel
-  predates `shape_match_score_translations` or `shape_match_score_axis`.
+  predates `shape_match_score_translations`/`shape_match_score_axis`, and to
+  the old ICP path when it predates `shape_match_icp_from_dt`.
 - **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
   found by a smaller one.  That is why the vote factor, the edge quota, the
   candidate floor and the dedupe distance cannot depend on the ROI extent.

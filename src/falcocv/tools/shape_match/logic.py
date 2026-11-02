@@ -65,6 +65,16 @@ except ImportError:
     except ImportError:
         _kernel_score_axis = None
 
+try:
+    from _falco_kernel import shape_match_icp_from_dt as _kernel_icp_from_dt
+except ImportError:
+    try:
+        from falcocv._falco_kernel import (
+            shape_match_icp_from_dt as _kernel_icp_from_dt,
+        )
+    except ImportError:
+        _kernel_icp_from_dt = None
+
 MODEL_VERSION = 3
 _MIN_FEATURES = 20
 _MAX_FEATURES_LIMIT = 5000
@@ -2110,6 +2120,27 @@ class ShapeMatch(BaseTool):
 
     def _icp_refine(self, gx, gy, dt, x, y, angle, scale, iterations=2,
                     max_points=400):
+        if _kernel_icp_from_dt is not None:
+            try:
+                result = _kernel_icp_from_dt(
+                    np.ascontiguousarray(gx, dtype=np.float32),
+                    np.ascontiguousarray(gy, dtype=np.float32),
+                    np.ascontiguousarray(dt, dtype=np.float32),
+                    np.ascontiguousarray(self._model_x, dtype=np.float32),
+                    np.ascontiguousarray(self._model_y, dtype=np.float32),
+                    np.ascontiguousarray(self._model_theta, dtype=np.float32),
+                    np.ascontiguousarray(self._model_mag, dtype=np.float32),
+                    float(x),
+                    float(y),
+                    float(angle),
+                    float(scale),
+                    int(iterations),
+                    int(max_points or 0),
+                )
+                return tuple(float(value) for value in result)
+            except Exception:
+                pass
+
         ddx = cv2.Sobel(dt, cv2.CV_32F, 1, 0, ksize=3)
         ddy = cv2.Sobel(dt, cv2.CV_32F, 0, 1, ksize=3)
         if _kernel_icp is not None:

@@ -1768,6 +1768,73 @@ py::tuple shape_match_icp_impl(
     return py::make_tuple(x, y, angle, scale);
 }
 
+static inline int reflect101_index(int value, int size) {
+    if (size <= 1) {
+        return 0;
+    }
+    if (value < 0) {
+        return -value;
+    }
+    if (value >= size) {
+        return 2 * size - 2 - value;
+    }
+    return value;
+}
+
+py::tuple shape_match_icp_from_dt_impl(
+    py::array_t<float, py::array::c_style | py::array::forcecast> gx,
+    py::array_t<float, py::array::c_style | py::array::forcecast> gy,
+    py::array_t<float, py::array::c_style | py::array::forcecast> dt,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
+    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
+    float x,
+    float y,
+    float angle,
+    float scale,
+    int iterations,
+    int max_points)
+{
+    auto dt_buf = dt.request();
+    if (dt_buf.ndim != 2) {
+        throw std::runtime_error("dt must be 2D");
+    }
+    const int height = static_cast<int>(dt_buf.shape[0]);
+    const int width = static_cast<int>(dt_buf.shape[1]);
+    const auto* dt_data = static_cast<const float*>(dt_buf.ptr);
+
+    py::array_t<float> ddx(std::vector<py::ssize_t>{height, width});
+    py::array_t<float> ddy(std::vector<py::ssize_t>{height, width});
+    auto* ddx_data = ddx.mutable_data();
+    auto* ddy_data = ddy.mutable_data();
+    for (int row = 0; row < height; ++row) {
+        const int ym1 = reflect101_index(row - 1, height);
+        const int yp1 = reflect101_index(row + 1, height);
+        for (int col = 0; col < width; ++col) {
+            const int xm1 = reflect101_index(col - 1, width);
+            const int xp1 = reflect101_index(col + 1, width);
+            const float p00 = dt_data[ym1 * width + xm1];
+            const float p01 = dt_data[ym1 * width + col];
+            const float p02 = dt_data[ym1 * width + xp1];
+            const float p10 = dt_data[row * width + xm1];
+            const float p12 = dt_data[row * width + xp1];
+            const float p20 = dt_data[yp1 * width + xm1];
+            const float p21 = dt_data[yp1 * width + col];
+            const float p22 = dt_data[yp1 * width + xp1];
+            ddx_data[row * width + col] = (
+                (p02 + 2.0f * p12 + p22) -
+                (p00 + 2.0f * p10 + p20));
+            ddy_data[row * width + col] = (
+                (p20 + 2.0f * p21 + p22) -
+                (p00 + 2.0f * p01 + p02));
+        }
+    }
+    return shape_match_icp_impl(
+        gx, gy, dt, ddx, ddy, model_x, model_y, model_theta, model_mag,
+        x, y, angle, scale, iterations, max_points);
+}
+
 py::dict safe_plane_fit(py::dict input) {
     try {
         return plane_fit_impl(std::move(input));
@@ -1828,6 +1895,12 @@ PYBIND11_MODULE(_falco_kernel, m) {
     m.def("shape_match_icp", &shape_match_icp_impl,
           py::arg("gx"), py::arg("gy"), py::arg("dt"),
           py::arg("ddx"), py::arg("ddy"),
+          py::arg("model_x"), py::arg("model_y"),
+          py::arg("model_theta"), py::arg("model_mag"),
+          py::arg("x"), py::arg("y"), py::arg("angle"), py::arg("scale"),
+          py::arg("iterations") = 2, py::arg("max_points") = 400);
+    m.def("shape_match_icp_from_dt", &shape_match_icp_from_dt_impl,
+          py::arg("gx"), py::arg("gy"), py::arg("dt"),
           py::arg("model_x"), py::arg("model_y"),
           py::arg("model_theta"), py::arg("model_mag"),
           py::arg("x"), py::arg("y"), py::arg("angle"), py::arg("scale"),

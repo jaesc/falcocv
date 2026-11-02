@@ -503,19 +503,22 @@ An OpenMP parallel loop over translation poses was also tested: it improved
 the isolated batch but regressed the complete `test1` pipeline (~42 ms in the
 translation block versus ~21 ms serial), so it was rejected.
 
-With the rebuilt kernel and the spatial-gradient change active, the latest
-`test1` medians were:
+A fifth pass moved the ICP distance-map derivatives into the native kernel with
+`shape_match_icp_from_dt`; it produced the same pose as the previous kernel on
+a synthetic test (max diff 0.0) and removed the Python `Sobel` calls.  The old
+`shape_match_icp` entry point and Python fallback remain for older kernels.
+
+With the rebuilt kernel active, the latest `test1` medians were:
 
 | Tool | Hybrid median | Geometry median |
 |---|---:|---:|
-| Shape Match_0 | 79.7 ms | 71.9 ms |
-| Shape Match_1 | 78.2 ms | 50.6 ms |
-| Shape Match_2 | 97.9 ms | 95.3 ms |
+| Shape Match_0 | 72.8 ms | 68.9 ms |
+| Shape Match_1 | 70.7 ms | 50.9 ms |
+| Shape Match_2 | 92.6 ms | 100.7 ms |
 
-Timings are noisy on this machine, but geometry is now at or below hybrid
-speed while preserving detections and pose deltas.  The remaining cost is
-mostly ICP and the full-map fallback for large ROIs; the next kernel step would
-be batching those.
+Timings are noisy on this machine; geometry remains at or near hybrid speed
+with unchanged detections and pose deltas.  The remaining cost is mostly ICP
+scheduling and the full-map fallback for large ROIs.
 
 Verdict: prototype kept as experimental; **not production default**.  Keep
 `hybrid` and the existing ncc path until the geometry mode passes the
