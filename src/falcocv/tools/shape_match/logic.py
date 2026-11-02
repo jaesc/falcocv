@@ -2886,10 +2886,17 @@ class ShapeMatch(BaseTool):
     @staticmethod
     def _full_gradients(gray, cache):
         if cache[0] is None:
-            cache[0] = (
-                cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3),
-                cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3),
-            )
+            if gray.dtype == np.uint8:
+                gx, gy = cv2.spatialGradient(gray)
+                cache[0] = (
+                    gx.astype(np.float32),
+                    gy.astype(np.float32),
+                )
+            else:
+                cache[0] = (
+                    cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3),
+                    cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3),
+                )
         return cache[0]
 
     def _refine_candidate(self, gray, gx, gy, edge_cache, dt_cache, gradient_cache,

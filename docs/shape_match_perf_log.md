@@ -496,13 +496,21 @@ generic score are exact (max diff 0.0).  With 800 model features and 21 poses,
 the microbenchmark improved from about 15.4 ms to 8.4 ms for angle scans and
 from 5.9 ms to 4.2 ms for scale scans.
 
-With the rebuilt kernel active, the latest `test1` medians were:
+A fourth pass replaced the two full-frame geometry Sobel calls with
+`cv2.spatialGradient` on `uint8`.  The outputs are numerically identical (max
+diff 0.0) and the OpenCV call is about 1.6x faster in a 5 MP microbenchmark.
+An OpenMP parallel loop over translation poses was also tested: it improved
+the isolated batch but regressed the complete `test1` pipeline (~42 ms in the
+translation block versus ~21 ms serial), so it was rejected.
+
+With the rebuilt kernel and the spatial-gradient change active, the latest
+`test1` medians were:
 
 | Tool | Hybrid median | Geometry median |
 |---|---:|---:|
-| Shape Match_0 | 73.4 ms | 60.9 ms |
-| Shape Match_1 | 64.5 ms | 43.8 ms |
-| Shape Match_2 | 84.8 ms | 85.8 ms |
+| Shape Match_0 | 79.7 ms | 71.9 ms |
+| Shape Match_1 | 78.2 ms | 50.6 ms |
+| Shape Match_2 | 97.9 ms | 95.3 ms |
 
 Timings are noisy on this machine, but geometry is now at or below hybrid
 speed while preserving detections and pose deltas.  The remaining cost is

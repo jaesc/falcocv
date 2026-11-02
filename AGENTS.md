@@ -145,14 +145,15 @@ cpp/bin/       → local kernel build output (gitignored)
   shortlist it matches every hybrid detection on `test1` and adds one Shape
   Match_2 image.  Geometry refinement now uses a local edge/distance window
   when it is much smaller than the ROI, and the native kernel batches
-  fixed-angle/scale translation scoring plus angle/scale axis scans.  With the
-  rebuilt kernel, the latest `test1` medians were `Shape Match_1` 43.8 vs
-  64.5 ms, `Shape Match_0` 60.9 vs 73.4 ms and `Shape Match_2` 85.8 vs
-  84.8 ms (timings are noisy).  Pose deltas are still up to ~7 px / ~2 deg /
-  ~1.5 %, so it remains experimental and must not become the default without a
-  production gate.  The Python path falls back to the generic score when the
-  loaded kernel predates `shape_match_score_translations` or
-  `shape_match_score_axis`.
+  fixed-angle/scale translation scoring plus angle/scale axis scans.  Full
+  geometry gradients use `cv2.spatialGradient` on `uint8` (exactly equivalent
+  to the two Sobel calls and faster).  With the rebuilt kernel, the latest
+  `test1` medians were `Shape Match_1` 50.6 vs 78.2 ms, `Shape Match_0`
+  71.9 vs 79.7 ms and `Shape Match_2` 95.3 vs 97.9 ms (timings are noisy).
+  Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
+  experimental and must not become the default without a production gate.
+  The Python path falls back to the generic score when the loaded kernel
+  predates `shape_match_score_translations` or `shape_match_score_axis`.
 - **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
   found by a smaller one.  That is why the vote factor, the edge quota, the
   candidate floor and the dedupe distance cannot depend on the ROI extent.
