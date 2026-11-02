@@ -97,3 +97,50 @@ To check the script itself without production data, build a small job with a
 trained ShapeMatch and a few rendered frames, then run the same command.  The
 comparison path, the pairing logic and the JSON output are exercised without
 needing the private image set.
+
+## Reference result (2026-11-02)
+
+First full run of the gate: 1005 frames (`VisA/pcb4`, `Normal`), one ShapeMatch,
+`max_features=800`, `min_score=0.3`, angle +-3 deg, scale 0.9-1.1.  The job also
+carries a PatternMatcher trained on the same ROI and the same pose range, which
+gives an independent third opinion.
+
+Geometry against hybrid:
+
+| | value |
+|---|---:|
+| lost / extra | 0 / 0 |
+| median px | 0.90 |
+| p90 / p95 / p99 | 2.80 / 3.74 / 8.06 |
+| max px | 85.53 |
+| max angle | 2.08 deg |
+| max scale | 2.95 % |
+| frames within 1 px | 55.2 % |
+| frames within 2 px | 82.6 % |
+| frames within 5 px | 96.9 % |
+| median time | geometry 57.7 ms / hybrid 83.5 ms |
+
+Distance to the PatternMatcher pose:
+
+| | median | p90 | p95 | max |
+|---|---:|---:|---:|---:|
+| translation, geometry | 0.995 | 2.230 | 2.970 | 84.4 |
+| translation, hybrid | **0.654** | **1.294** | **1.751** | 10.8 |
+| angle, geometry | **0.173** | **0.476** | **0.593** | 2.46 |
+| angle, hybrid | 0.192 | 0.514 | 0.706 | 1.86 |
+| scale, geometry | 0.326 | 0.776 | 1.007 | 2.81 |
+| scale, hybrid | **0.293** | **0.713** | **0.843** | 2.50 |
+
+Closer to the PatternMatcher: translation hybrid 741 / 1005, angle geometry
+555 / 1005, scale hybrid 603 / 1005.
+
+Verdict: **FAIL as a precision gate, PASS on detections**.  Geometry finds the
+same parts as hybrid on every frame and is 31 % faster, but its translation is
+less precise (median 1.0 px vs 0.65 px) and it has gross failures: frame 0855
+lands ~85 px away from both hybrid and the PatternMatcher, which agree within
+2.4 px.  The alignment-polish attempt did not fix it.
+
+Consequence: geometry stays a fast mode, not the precision default.  Either the
+solver's translation precision is improved, or production jobs that need pose
+accuracy keep `match_mode="hybrid"`.
+

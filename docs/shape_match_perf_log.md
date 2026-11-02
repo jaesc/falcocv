@@ -581,6 +581,35 @@ translation share of the solver.
 
 ## What did not work (do not repeat)
 
+### Alignment translation polish (2026-11-02)
+
+The distance transform is almost flat along an edge, so the geometry solve can
+slide along a contour.  Tried a translation-only polish after the solve: two
+full-resolution grids (+-4 px step 2, then +-1 px step 0.5) scored with
+`shape_match_score_translations(use_distance=False)`, i.e. gradient alignment
+instead of distance.  Angle and scale untouched.
+
+Measured on 1005 real frames, with the job's PatternMatcher as an independent
+third opinion:
+
+| | without polish | with polish |
+|---|---:|---:|
+| median px to PatternMatcher | 0.995 | 1.048 |
+| p90 | 2.230 | 2.007 |
+| p95 | 2.970 | 2.398 |
+| max | 84.4 | 87.3 |
+| frames closer than hybrid | 264 / 1005 | 284 / 1005 |
+
+- The tail improves and the median gets slightly worse: the polish moves every
+  frame, not only the ones that slid.
+- On the synthetic ground-truth suite it moved three scenes away from truth by
+  0.5-0.7 px (occlusion20, occlusion30, combo).
+- It cannot fix a wrong basin: the 0855 frame stayed ~87 px off.
+- Cost: ~1.4 ms per solve (~8 %).
+
+Verdict: **reverted**.  Trading median accuracy for tail accuracy is the wrong
+direction, and a local polish cannot repair a gross solver failure.
+
 ### Levenberg-Marquardt pose solve (2026-11-02)
 
 Tried replacing the three geometry-scan passes with a Levenberg-Marquardt
