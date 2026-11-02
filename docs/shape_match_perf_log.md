@@ -581,6 +581,28 @@ translation share of the solver.
 
 ## What did not work (do not repeat)
 
+### Pose-lane batching in the native score (2026-11-02)
+
+Tried evaluating four translation poses at once in
+`shape_match_score_translations`, so the per-feature offsets and trigonometry
+are loaded once and four independent accumulators stay in registers.  The A/B
+ran the scalar and the batched path inside the same binary (a `use_lanes` flag)
+on identical inputs, because rebuilding between measurements moved the baseline
+by 13 % on this machine.
+
+- Bit-identical: max score difference 0.0.
+- 5000 features x 121 poses: 14.81 ms scalar vs 14.62 ms batched (median of 21
+  interleaved runs).  The minimum was better for the scalar path (14.29 vs
+  14.37 ms).
+- Reason: the scalar loop walks one pose at a time, and its samples are
+  spatially coherent, so consecutive features reuse the same scene cache lines.
+  Four lanes keep four separate neighbourhoods hot at once, and the extra
+  locality traffic cancels the saved model loads.
+
+Verdict: **reverted**.  Safe but not measurable, and it duplicated the inner
+loop.  Kernel changes must be A/B'd inside one binary; rebuilding between runs
+moves the baseline more than the change itself.
+
 ### Solver search subset (2026-11-02)
 
 Tried running the coarse geometry passes on a spatially covered subset of the
