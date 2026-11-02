@@ -55,6 +55,16 @@ except ImportError:
     except ImportError:
         _kernel_score_translations = None
 
+try:
+    from _falco_kernel import shape_match_score_axis as _kernel_score_axis
+except ImportError:
+    try:
+        from falcocv._falco_kernel import (
+            shape_match_score_axis as _kernel_score_axis,
+        )
+    except ImportError:
+        _kernel_score_axis = None
+
 MODEL_VERSION = 3
 _MIN_FEATURES = 20
 _MAX_FEATURES_LIMIT = 5000
@@ -1979,16 +1989,45 @@ class ShapeMatch(BaseTool):
         values = np.arange(low, high + step * 0.5, step, dtype=np.float32)
         if values.size == 0:
             return None
-        if axis == "angle":
-            scores = self._dt_score(
-                gx, gy, dt, np.full(values.size, x), np.full(values.size, y),
-                values, np.full(values.size, scale), model_mask=model_mask,
-            )
-        else:
-            scores = self._dt_score(
-                gx, gy, dt, np.full(values.size, x), np.full(values.size, y),
-                np.full(values.size, angle), values, model_mask=model_mask,
-            )
+        scores = None
+        if (
+            _kernel_score_axis is not None
+            and model_mask is None
+            and dt is not None
+        ):
+            try:
+                scores = _kernel_score_axis(
+                    np.ascontiguousarray(gx, dtype=np.float32),
+                    np.ascontiguousarray(gy, dtype=np.float32),
+                    np.ascontiguousarray(dt, dtype=np.float32),
+                    np.ascontiguousarray(self._model_x, dtype=np.float32),
+                    np.ascontiguousarray(self._model_y, dtype=np.float32),
+                    np.ascontiguousarray(self._model_theta, dtype=np.float32),
+                    np.ascontiguousarray(self._model_mag, dtype=np.float32),
+                    float(angle),
+                    float(scale),
+                    np.full(values.size, x, dtype=np.float32),
+                    np.full(values.size, y, dtype=np.float32),
+                    np.ascontiguousarray(values, dtype=np.float32),
+                    axis == "angle",
+                    True,
+                    _DISTANCE_SIGMA,
+                    _ORIENTATION_EXPONENT,
+                    5.0,
+                )
+            except Exception:
+                scores = None
+        if scores is None:
+            if axis == "angle":
+                scores = self._dt_score(
+                    gx, gy, dt, np.full(values.size, x), np.full(values.size, y),
+                    values, np.full(values.size, scale), model_mask=model_mask,
+                )
+            else:
+                scores = self._dt_score(
+                    gx, gy, dt, np.full(values.size, x), np.full(values.size, y),
+                    np.full(values.size, angle), values, model_mask=model_mask,
+                )
         if scores.size == 0:
             return None
         index = int(np.argmax(scores))

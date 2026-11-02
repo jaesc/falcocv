@@ -490,18 +490,24 @@ features and 121 poses measured about 8.4 ms for the generic score and 6.4 ms
 for the translation batch; the Python path automatically falls back to the
 generic score if the loaded kernel predates the new symbol.
 
+A third native pass added `shape_match_score_axis`, which batches the
+angle-variable and scale-variable scans.  Numerical comparisons against the
+generic score are exact (max diff 0.0).  With 800 model features and 21 poses,
+the microbenchmark improved from about 15.4 ms to 8.4 ms for angle scans and
+from 5.9 ms to 4.2 ms for scale scans.
+
 With the rebuilt kernel active, the latest `test1` medians were:
 
 | Tool | Hybrid median | Geometry median |
 |---|---:|---:|
-| Shape Match_0 | 77.6 ms | 72.3 ms |
-| Shape Match_1 | 72.7 ms | 46.8 ms |
-| Shape Match_2 | 98.9 ms | 92.1 ms |
+| Shape Match_0 | 73.4 ms | 60.9 ms |
+| Shape Match_1 | 64.5 ms | 43.8 ms |
+| Shape Match_2 | 84.8 ms | 85.8 ms |
 
 Timings are noisy on this machine, but geometry is now at or below hybrid
 speed while preserving detections and pose deltas.  The remaining cost is
-mostly the native angle/scale scans and ICP, plus the full-map fallback for
-large ROIs.  The next speed step would be batching those in the kernel.
+mostly ICP and the full-map fallback for large ROIs; the next kernel step would
+be batching those.
 
 Verdict: prototype kept as experimental; **not production default**.  Keep
 `hybrid` and the existing ncc path until the geometry mode passes the
