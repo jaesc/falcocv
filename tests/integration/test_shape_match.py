@@ -365,6 +365,87 @@ def test_shape_match_vote_scaling_helpers():
     assert int((capped > 0).sum()) == 10
 
 
+def test_adaptive_pre_gate_keeps_close_candidates():
+    first = object()
+    second = object()
+    far = object()
+    chosen = ShapeMatch._select_pre_gate_candidates(
+        [(0.95, first), (0.94, second), (0.80, far)],
+        [],
+    )
+    assert chosen == [first, second]
+
+
+def test_adaptive_pre_gate_keeps_floor_and_vote_peaks():
+    first = object()
+    second = object()
+    vote_peaks = [object() for _ in range(4)]
+    chosen = ShapeMatch._select_pre_gate_candidates(
+        [(0.95, first), (0.20, second)],
+        vote_peaks,
+    )
+    assert chosen[:2] == [first, second]
+    assert all(candidate in chosen for candidate in vote_peaks)
+
+
+def test_adaptive_pre_gate_caps_close_candidates():
+    candidates = [object() for _ in range(6)]
+    pre_gate = [(0.95 - index * 0.001, candidate)
+                for index, candidate in enumerate(candidates)]
+    vote_peaks = [object() for _ in range(4)]
+    chosen = ShapeMatch._select_pre_gate_candidates(
+        pre_gate,
+        vote_peaks,
+    )
+    assert len(chosen) == 8
+    assert all(candidate in chosen for candidate in candidates[:4])
+    assert all(candidate in chosen for candidate in vote_peaks)
+
+
+def test_geometric_alignment_pre_gate_detects():
+    template = make_template()
+    scene = render_scene(
+        template,
+        cx=240.0,
+        cy=180.0,
+        angle=12.0,
+        scale=1.05,
+        gamma=0.9,
+        noise=3.0,
+        scene_size=(360, 480),
+        seed=7,
+    )
+    tool = _tool(template)
+    tool.params["pre_gate_scorer"] = "alignment"
+    result = _run(tool, scene)
+    assert abs(result.x - 240.0) <= 0.5
+    assert abs(result.y - 180.0) <= 0.5
+    assert abs(result.angle - 12.0) <= 0.1
+
+
+def test_geometry_only_mode_detects_baseline():
+    template = make_template()
+    scene = render_scene(
+        template,
+        cx=240.0,
+        cy=180.0,
+        angle=12.0,
+        scale=1.05,
+        gamma=0.9,
+        noise=3.0,
+        scene_size=(360, 480),
+        seed=7,
+    )
+    tool = _tool(template)
+    tool.params["match_mode"] = "geometry"
+    result = _run(tool, scene)
+    assert result.solver == "geometry"
+    assert abs(result.x - 240.0) <= 0.5
+    assert abs(result.y - 180.0) <= 0.5
+    assert abs(result.angle - 12.0) <= 0.2
+    assert abs(result.scale - 1.05) / 1.05 <= 0.01
+
+
 def test_shape_match_large_scene_downscaled_vote():
     template = make_template()
     tool = _tool(template)
@@ -656,6 +737,86 @@ def test_shape_match_larger_roi_keeps_the_match():
         assert abs(result.y - 190.0) <= 0.5, roi
         assert abs(result.angle - 12.0) <= 0.2, roi
         assert abs(result.scale - 1.05) / 1.05 <= 0.01, roi
+
+def test_pyramid_views_from_roi_block_match_full_frame():
+    tool = ShapeMatch()
+    tool._template_size = (120, 90)
+    rng = np.random.default_rng(11)
+    frame = rng.integers(0, 255, (640, 860, 3), dtype=np.uint8)
+    ax, ay, aw, ah = 203, 151, 307, 241
+
+    for vote_factor, search_factor, ecc_factor in (
+        (1, 1, 1),
+        (2, 4, 2),
+        (3, 7, 2),
+    ):
+        full_gray = tool._gray(frame)
+        old_views = tool._pyramid_views(
+            full_gray,
+            ax,
+            ay,
+            aw,
+            ah,
+            (vote_factor, search_factor),
+        )
+        block, left, top = tool._aligned_roi_gray_block(
+            frame,
+            ax,
+            ay,
+            aw,
+            ah,
+            vote_factor,
+            search_factor,
+            ecc_factor,
+        )
+        new_views = tool._pyramid_views(
+            block,
+            ax - left,
+            ay - top,
+            aw,
+            ah,
+            (vote_factor, search_factor),
+        )
+        for factor in (vote_factor, search_factor):
+            old_gray, old_map = old_views[factor]
+            new_gray, new_map = new_views[factor]
+            assert np.array_equal(old_gray, new_gray), (factor, "pixels")
+            assert np.allclose(old_map, new_map), (factor, "map")
+
+
+def test_explicit_roi_does_not_gray_the_complete_frame(monkeypatch):
+    template = make_template()
+    scene = render_scene(
+        template,
+        cx=1294,
+        cy=970,
+        angle=12.0,
+        scale=1.05,
+        gamma=0.9,
+        noise=3.0,
+        scene_size=(1940, 2588),
+        seed=7,
+    )
+    tool = _tool(template)
+    tool.params["search_roi"] = [1094, 770, 400, 400, 0]
+    seen = []
+    original_gray = tool._gray
+
+    def record_gray(image):
+        seen.append(image.shape[:2])
+        return original_gray(image)
+
+    monkeypatch.setattr(tool, "_gray", record_gray)
+    tool.inputs["input image"] = VisionImage(scene)
+    tool.run()
+
+    assert seen
+    assert max(height * width for height, width in seen) < 1940 * 2588
+    result = tool.outputs["results"][0]
+    assert abs(result.x - 1294.0) <= 0.5
+    assert abs(result.y - 970.0) <= 0.5
+    assert abs(result.angle - 12.0) <= 0.1
+
 
 def test_shape_match_spatial_dedupe_matches_bruteforce():
     rng = np.random.default_rng(5)

@@ -309,6 +309,55 @@ class ShapeMatchConfig(QWidget):
         scale_layout.addWidget(self.spin_scale_end)
         layout.addWidget(scale_group)
 
+        pre_gate_group = QGroupBox("Pre-gate scorer")
+        pre_gate_layout = QVBoxLayout(pre_gate_group)
+        self.combo_pre_gate = QComboBox()
+        self.combo_pre_gate.addItem("Grayscale NCC (stable)", "ncc")
+        self.combo_pre_gate.addItem(
+            "Gradient alignment (prototype)", "alignment"
+        )
+        index = self.combo_pre_gate.findData(
+            str(self.tool.params.get("pre_gate_scorer", "ncc"))
+        )
+        self.combo_pre_gate.setCurrentIndex(index if index >= 0 else 0)
+        self.combo_pre_gate.setToolTip(
+            "Candidate ranking before the full NCC scan. "
+            "Grayscale NCC uses appearance; gradient alignment uses only "
+            "scene/model gradients. Alignment is a prototype pending "
+            "real-job validation."
+        )
+        self.combo_pre_gate.currentIndexChanged.connect(
+            self._on_pre_gate_changed
+        )
+        pre_gate_layout.addWidget(QLabel("Candidate ranking"))
+        pre_gate_layout.addWidget(self.combo_pre_gate)
+        layout.addWidget(pre_gate_group)
+
+        mode_group = QGroupBox("Matching mode")
+        mode_layout = QVBoxLayout(mode_group)
+        self.combo_match_mode = QComboBox()
+        self.combo_match_mode.addItem("Hybrid (NCC/ECC)", "hybrid")
+        self.combo_match_mode.addItem(
+            "Geometry only (prototype)", "geometry"
+        )
+        mode_index = self.combo_match_mode.findData(
+            str(self.tool.params.get("match_mode", "hybrid"))
+        )
+        self.combo_match_mode.setCurrentIndex(
+            mode_index if mode_index >= 0 else 0
+        )
+        self.combo_match_mode.setToolTip(
+            "Hybrid uses grayscale NCC/ECC verification. "
+            "Geometry only uses edge distance + gradient alignment + ICP; "
+            "experimental and under validation."
+        )
+        self.combo_match_mode.currentIndexChanged.connect(
+            self._on_match_mode_changed
+        )
+        mode_layout.addWidget(QLabel("Verification"))
+        mode_layout.addWidget(self.combo_match_mode)
+        layout.addWidget(mode_group)
+
         results_group = QGroupBox("Expected Results")
         results_layout = QVBoxLayout(results_group)
         self.spin_max_matches = QSpinBox()
@@ -365,6 +414,36 @@ class ShapeMatchConfig(QWidget):
     def _set_param(self, key, value):
         self.tool.params[key] = value
         self._exec_timer.start()
+
+    def _on_pre_gate_changed(self, _index=None):
+        value = self.combo_pre_gate.currentData()
+        if value is not None:
+            self._set_param("pre_gate_scorer", str(value))
+
+    def _sync_pre_gate_control(self):
+        value = str(self.tool.params.get("pre_gate_scorer", "ncc"))
+        index = self.combo_pre_gate.findData(value)
+        if index >= 0 and index != self.combo_pre_gate.currentIndex():
+            self.combo_pre_gate.blockSignals(True)
+            self.combo_pre_gate.setCurrentIndex(index)
+            self.combo_pre_gate.blockSignals(False)
+        self.combo_pre_gate.setEnabled(
+            str(self.tool.params.get("match_mode", "hybrid")) != "geometry"
+        )
+
+    def _on_match_mode_changed(self, _index=None):
+        value = self.combo_match_mode.currentData()
+        if value is not None:
+            self._set_param("match_mode", str(value))
+            self._sync_pre_gate_control()
+
+    def _sync_match_mode_control(self):
+        value = str(self.tool.params.get("match_mode", "hybrid"))
+        index = self.combo_match_mode.findData(value)
+        if index >= 0 and index != self.combo_match_mode.currentIndex():
+            self.combo_match_mode.blockSignals(True)
+            self.combo_match_mode.setCurrentIndex(index)
+            self.combo_match_mode.blockSignals(False)
 
     def _on_origin_changed(self):
         self.tool.params["origin_x"] = float(self.spin_ox.value())
@@ -541,6 +620,8 @@ class ShapeMatchConfig(QWidget):
             return
 
         self._sync_training_controls()
+        self._sync_match_mode_control()
+        self._sync_pre_gate_control()
         self.tool.refresh_stale_state()
         self._update_mask_status()
         self.btn_edit_features.setEnabled(

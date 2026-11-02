@@ -43,6 +43,18 @@ except ImportError:
         _kernel_score = None
         _kernel_vote = None
 
+try:
+    from _falco_kernel import (
+        shape_match_score_translations as _kernel_score_translations,
+    )
+except ImportError:
+    try:
+        from falcocv._falco_kernel import (
+            shape_match_score_translations as _kernel_score_translations,
+        )
+    except ImportError:
+        _kernel_score_translations = None
+
 MODEL_VERSION = 3
 _MIN_FEATURES = 20
 _MAX_FEATURES_LIMIT = 5000
@@ -79,8 +91,15 @@ _MIN_NCC = 0.30
 _MAX_MATCHES = 100
 _MAX_REFINE = 16
 _MAX_NCC_CANDIDATES = 10
-_MAX_NCC_SCANS = 6
-_MAX_PRE_GATE = 32
+_MAX_NCC_SCANS = 4
+_MAX_PRE_GATE = 20
+# Pre-gate scores close to the best are worth a full scan.  A small floor
+# prevents a noisy pre-gate from collapsing the shortlist.
+_ADAPTIVE_PRE_GATE_MARGIN = 0.05
+_MIN_PRE_GATE_KEEP = 2
+# Prototype only: ``ncc`` keeps the production path unchanged.  ``alignment``
+# and ``edge`` score the coarse proposals with geometry instead of grayscale.
+_PRE_GATE_SCORER = "ncc"
 _MAX_SOLVE = 12
 _MAX_KERNEL_CANDIDATES = 1024
 _VOTE_PEAKS_PER_HYPOTHESIS = 32
@@ -89,6 +108,11 @@ _VOTE_PEAKS_PER_HYPOTHESIS = 32
 # the downscale is derived from the template and the edge budget is a fixed
 # per-cell quota.  Full-resolution refinement uses the complete model.
 _VOTE_MODEL_FEATURES = 500
+# Auto-selection gives every active cell one seed feature, then fills the
+# remaining budget by magnitude with an adaptive per-cell cap.  This keeps a
+# strong edge from consuming the whole feature budget.
+_FEATURE_COVERAGE_CELL = 32
+_FEATURE_COVERAGE_FACTOR = 2.0
 _VOTE_EDGE_QUOTA = 48
 _VOTE_MIN_TEMPLATE_PX = 40
 _VOTE_TARGET_TEMPLATE_PX = 96
@@ -152,6 +176,8 @@ class ShapeMatch(BaseTool):
             "min_score": 0.45,
             "min_results": 1,
             "max_matches": 1,
+            "match_mode": "hybrid",
+            "pre_gate_scorer": "ncc",
             "max_features": 800,
             "edge_low": 50,
             "edge_high": 150,
@@ -376,6 +402,114 @@ class ShapeMatch(BaseTool):
             )
         return low, high, min_gradient, max_features
 
+    @staticmethod
+    def _select_spatial_features(
+        xs,
+        ys,
+        mag,
+        count,
+        cell=_FEATURE_COVERAGE_CELL,
+        cap_factor=_FEATURE_COVERAGE_FACTOR,
+    ) -> list[int]:
+        """Select features with spatial coverage before magnitude filling.
+
+        Every active cell gets one seed feature when the budget allows it.
+        The rest of the budget is filled by magnitude with an adaptive
+        per-cell cap, so a strong edge can keep more features without
+        consuming the whole template.
+        """
+        xs = np.asarray(xs)
+        ys = np.asarray(ys)
+        mag = np.asarray(mag, dtype=np.float64)
+        total = int(mag.size)
+        count = max(0, min(int(count), total))
+        if count == 0:
+            return []
+        order_all = sorted(
+            range(total), key=lambda index: (-float(mag[index]), index)
+        )
+        if count >= total:
+            return order_all
+
+        cell = max(1, int(cell))
+        cells: dict[tuple[int, int], list[int]] = {}
+        cell_of: list[tuple[int, int] | None] = [None] * total
+        for index, (x, y) in enumerate(zip(xs, ys)):
+            key = (
+                int(math.floor(float(x))) // cell,
+                int(math.floor(float(y))) // cell,
+            )
+            cell_of[index] = key
+            cells.setdefault(key, []).append(index)
+        if not cells:
+            return []
+
+        for indices in cells.values():
+            indices.sort(
+                key=lambda index: (-float(mag[index]), index)
+            )
+        cell_items = sorted(
+            cells.items(),
+            key=lambda item: (-float(mag[item[1][0]]), item[0]),
+        )
+        seed_count = min(count, len(cell_items))
+        selected: list[int] = []
+        selected_set: set[int] = set()
+        cell_counts: dict[tuple[int, int], int] = {}
+        for key, indices in cell_items[:seed_count]:
+            index = indices[0]
+            selected.append(index)
+            selected_set.add(index)
+            cell_counts[key] = 1
+
+        if count <= len(cell_items):
+            selected.sort(
+                key=lambda index: (-float(mag[index]), index)
+            )
+            return selected
+
+        cap = max(
+            1,
+            int(math.ceil(
+                cap_factor * count / float(len(cell_items))
+            )),
+        )
+        remaining = [
+            index
+            for _key, indices in cell_items
+            for index in indices[1:]
+        ]
+        remaining.sort(
+            key=lambda index: (-float(mag[index]), index)
+        )
+        for index in remaining:
+            if len(selected) >= count:
+                break
+            key = cell_of[index]
+            if key is None:
+                continue
+            if cell_counts.get(key, 0) >= cap:
+                continue
+            selected.append(index)
+            selected_set.add(index)
+            cell_counts[key] = cell_counts.get(key, 0) + 1
+
+        # A cell can have fewer candidates than the cap.  If that leaves
+        # budget unused, relax the cap rather than returning a smaller model.
+        if len(selected) < count:
+            for index in remaining:
+                if len(selected) >= count:
+                    break
+                if index in selected_set:
+                    continue
+                selected.append(index)
+                selected_set.add(index)
+
+        selected.sort(
+            key=lambda index: (-float(mag[index]), index)
+        )
+        return selected
+
     def _build_model(
         self, image: np.ndarray, mask: np.ndarray | None = None
     ) -> None:
@@ -431,7 +565,9 @@ class ShapeMatch(BaseTool):
             )
 
         angles = theta[ys.astype(int), xs.astype(int)].astype(np.float32)
-        order = np.argsort(values)[::-1][:max_features]
+        order = self._select_spatial_features(
+            xs, ys, values, max_features
+        )
         xs = xs[order].astype(np.float32)
         ys = ys[order].astype(np.float32)
         values = values[order].astype(np.float32)
@@ -526,34 +662,16 @@ class ShapeMatch(BaseTool):
             self._vote_model_mag = np.empty(0, dtype=np.float32)
             return
         count = min(_VOTE_MODEL_FEATURES, self._model_x.size)
-        manual = np.asarray(self._model_manual, dtype=np.uint8).reshape(-1)
-        if manual.size != self._model_x.size:
-            manual = np.zeros(self._model_x.size, dtype=np.uint8)
-        manual_index = np.flatnonzero(manual)
-        if manual_index.size:
-            manual_index = manual_index[
-                np.argsort(self._model_mag[manual_index])[::-1]
-            ]
-            if manual_index.size >= count:
-                order = manual_index[:count]
-            else:
-                chosen = {int(index) for index in manual_index}
-                remainder = [
-                    int(index)
-                    for index in np.argsort(self._model_mag)[::-1]
-                    if int(index) not in chosen
-                ]
-                order = np.concatenate(
-                    [
-                        manual_index,
-                        np.asarray(
-                            remainder[: count - manual_index.size],
-                            dtype=np.int64,
-                        ),
-                    ]
-                )
+        width, height = self._template_size
+        if width > 0 and height > 0:
+            model_x = self._model_x + width / 2.0
+            model_y = self._model_y + height / 2.0
         else:
-            order = np.argsort(self._model_mag)[::-1][:count]
+            model_x = self._model_x
+            model_y = self._model_y
+        order = self._select_spatial_features(
+            model_x, model_y, self._model_mag, count
+        )
         self._vote_model_x = self._model_x[order].astype(np.float32)
         self._vote_model_y = self._model_y[order].astype(np.float32)
         self._vote_model_theta = self._model_theta[order].astype(np.float32)
@@ -855,7 +973,12 @@ class ShapeMatch(BaseTool):
     def reset_auto_selection(self) -> None:
         candidates = self.training_candidates()
         limit = int(self.params.get("max_features", 800))
-        order = np.argsort(candidates["mag"])[::-1][:limit]
+        order = self._select_spatial_features(
+            candidates["x"],
+            candidates["y"],
+            candidates["mag"],
+            limit,
+        )
         self.apply_manual_selection(
             candidates,
             order,
@@ -1886,10 +2009,38 @@ class ShapeMatch(BaseTool):
         dx, dy = np.meshgrid(offsets, offsets, indexing="ij")
         dx = dx.ravel()
         dy = dy.ravel()
-        scores = self._dt_score(
-            gx, gy, dt, x + dx, y + dy,
-            np.full(dx.size, angle), np.full(dx.size, scale), model_mask=model_mask,
-        )
+        scores = None
+        if (
+            _kernel_score_translations is not None
+            and model_mask is None
+            and dt is not None
+        ):
+            try:
+                scores = _kernel_score_translations(
+                    np.ascontiguousarray(gx, dtype=np.float32),
+                    np.ascontiguousarray(gy, dtype=np.float32),
+                    np.ascontiguousarray(dt, dtype=np.float32),
+                    np.ascontiguousarray(self._model_x, dtype=np.float32),
+                    np.ascontiguousarray(self._model_y, dtype=np.float32),
+                    np.ascontiguousarray(self._model_theta, dtype=np.float32),
+                    np.ascontiguousarray(self._model_mag, dtype=np.float32),
+                    float(angle),
+                    float(scale),
+                    np.ascontiguousarray(x + dx, dtype=np.float32),
+                    np.ascontiguousarray(y + dy, dtype=np.float32),
+                    use_distance=True,
+                    distance_sigma=_DISTANCE_SIGMA,
+                    orientation_exponent=_ORIENTATION_EXPONENT,
+                    min_magnitude=5.0,
+                )
+            except Exception:
+                scores = None
+        if scores is None:
+            scores = self._dt_score(
+                gx, gy, dt, x + dx, y + dy,
+                np.full(dx.size, angle), np.full(dx.size, scale),
+                model_mask=model_mask,
+            )
         if scores.size == 0:
             return None
         index = int(np.argmax(scores))
@@ -2101,6 +2252,83 @@ class ShapeMatch(BaseTool):
             scale,
         )
 
+    @staticmethod
+    def _diverse_scale_candidates(candidates, limit):
+        """Round-robin candidates across scale bins for geometry pre-gate."""
+        if limit <= 0 or not candidates:
+            return []
+        groups = {}
+        for candidate in candidates:
+            bucket = int(round(float(candidate["scale"]) / 0.05))
+            groups.setdefault(bucket, []).append(candidate)
+        for group in groups.values():
+            group.sort(key=lambda item: item["peak"], reverse=True)
+        chosen = []
+        rank = 0
+        ordered = sorted(
+            groups.values(),
+            key=lambda group: group[0]["peak"],
+            reverse=True,
+        )
+        while len(chosen) < limit:
+            added = False
+            for group in ordered:
+                if rank < len(group):
+                    chosen.append(group[rank])
+                    added = True
+                    if len(chosen) >= limit:
+                        break
+            if not added:
+                break
+            rank += 1
+        return chosen
+
+    @staticmethod
+    def _select_pre_gate_candidates(
+        pre_gate,
+        vote_candidates,
+        margin=_ADAPTIVE_PRE_GATE_MARGIN,
+        min_keep=_MIN_PRE_GATE_KEEP,
+        max_scans=_MAX_NCC_SCANS,
+        max_candidates=_MAX_NCC_CANDIDATES,
+        vote_keep=4,
+    ):
+        """Shortlist pre-gate proposals with a score-margin cutoff.
+
+        The best pre-gate score is always kept.  Close competitors are kept
+        up to ``max_scans``; the strongest vote peaks are appended unchanged
+        as a safety net.  The result is capped by ``max_candidates``.
+        """
+        ranked = sorted(
+            pre_gate,
+            key=lambda item: float(item[0]),
+            reverse=True,
+        )
+        if not ranked:
+            return list(vote_candidates[:max_scans])[:max_candidates]
+        best = float(ranked[0][0])
+        threshold = best - max(0.02, float(margin) * max(best, 0.0))
+        kept = [
+            candidate
+            for score, candidate in ranked
+            if float(score) >= threshold
+        ]
+        if len(kept) < max(1, int(min_keep)):
+            kept = [
+                candidate for _score, candidate in ranked[:max(1, int(min_keep))]
+            ]
+        kept = kept[:max(1, int(max_scans))]
+
+        chosen = []
+        seen = set()
+        for candidate in kept + list(vote_candidates[:max(1, int(vote_keep))]):
+            marker = id(candidate)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            chosen.append(candidate)
+        return chosen[:max(1, int(max_candidates))]
+
     def _candidate_ncc(self, candidate, search_gray, search_map,
                        theta_start, theta_end, scale_start, scale_end):
         """Single-pose NCC for a vote proposal (cheap pre-gate)."""
@@ -2121,6 +2349,43 @@ class ShapeMatch(BaseTool):
         if match is None:
             return None
         return float(match[2])
+
+    def _candidate_geometry(self, candidate, gx, gy, dt, search_map,
+                            theta_start, theta_end, scale_start, scale_end,
+                            mode):
+        """Score a coarse proposal with gradients or edge distance."""
+        if gx is None or gy is None or search_map is None:
+            return None
+        scale_x, scale_y, origin_x, origin_y = search_map
+        sx = float(candidate["x"]) * scale_x + origin_x
+        sy = float(candidate["y"]) * scale_y + origin_y
+        angle = float(np.clip(candidate["angle"], theta_start, theta_end))
+        scale = float(np.clip(candidate["scale"], scale_start, scale_end))
+        model_scale = 1.0 / max(float(scale_x), float(scale_y))
+        if mode == "edge":
+            if dt is None:
+                return None
+            scores = self._dt_score(
+                gx,
+                gy,
+                dt,
+                np.array([sx], dtype=np.float32),
+                np.array([sy], dtype=np.float32),
+                np.array([angle], dtype=np.float32),
+                np.array([scale], dtype=np.float32),
+                use_distance=True,
+                model_scale=model_scale,
+            )
+            return float(scores[0]) if scores.size else None
+        return self._alignment_score(
+            gx,
+            gy,
+            sx,
+            sy,
+            angle,
+            scale,
+            coordinate_scale=model_scale,
+        )
 
     def _coarse_pose(self, gray, gx, gy, x, y, angle, scale,
                      angle_min, angle_max, scale_min, scale_max,
@@ -2181,6 +2446,57 @@ class ShapeMatch(BaseTool):
         width = max(8, int(round(gray.shape[1] / factor)))
         height = max(8, int(round(gray.shape[0] / factor)))
         return cv2.resize(gray, (width, height), interpolation=cv2.INTER_AREA)
+
+    def _aligned_roi_gray_block(
+        self,
+        frame,
+        ax,
+        ay,
+        aw,
+        ah,
+        vote_factor,
+        search_factor,
+        ecc_factor,
+    ):
+        """Return a frame-aligned gray block covering the ROI plus ECC halo.
+
+        The block origin is a multiple of every pyramid factor used by the
+        search, so cropping it to the ROI produces exactly the same pixels as
+        the old full-frame pyramid.  The halo is only needed by the local ECC
+        view around candidates near the ROI border.
+        """
+        factors = [
+            max(1, int(vote_factor)),
+            max(1, int(search_factor)),
+            max(1, int(ecc_factor)),
+        ]
+        block_factor = math.lcm(*factors)
+        template_w, template_h = self._template_size
+        local_margin = int(
+            math.ceil(0.5 * math.hypot(template_w, template_h))
+        ) + 32
+        halo = local_margin + block_factor
+
+        left = ax - halo
+        top = ay - halo
+        right = ax + aw + halo
+        bottom = ay + ah + halo
+        left = (left // block_factor) * block_factor
+        top = (top // block_factor) * block_factor
+        right = (
+            (right + block_factor - 1) // block_factor
+        ) * block_factor
+        bottom = (
+            (bottom + block_factor - 1) // block_factor
+        ) * block_factor
+
+        frame_h, frame_w = frame.shape[:2]
+        left = max(0, min(left, frame_w - 1))
+        top = max(0, min(top, frame_h - 1))
+        right = max(left + 1, min(right, frame_w))
+        bottom = max(top + 1, min(bottom, frame_h))
+        crop = frame[top:bottom, left:right]
+        return self._gray(crop), left, top
 
     @staticmethod
     def _pyramid_views(frame_gray, ax, ay, aw, ah, factors):
@@ -2396,15 +2712,79 @@ class ShapeMatch(BaseTool):
             cache[0] = cv2.distanceTransform(255 - scene_edges, cv2.DIST_L2, 3)
         return cache[0]
 
+    def _geometry_visible_fraction(self, dt, x, y, angle, scale):
+        if dt is None or self._model_x.size == 0:
+            return None
+        radians = math.radians(angle)
+        cos_a = math.cos(radians)
+        sin_a = math.sin(radians)
+        px = x + scale * (
+            cos_a * self._model_x + sin_a * self._model_y
+        )
+        py = y + scale * (
+            -sin_a * self._model_x + cos_a * self._model_y
+        )
+        distances, valid = self._bilinear(dt, px, py)
+        if not np.any(valid):
+            return 0.0
+        return float(np.mean(distances[valid] < 2.5))
+
+    def _geometry_local_maps(self, gray, gx, gy, x, y, scale,
+                             edge_cache, dt_cache):
+        """Use a local edge/distance map when it is much cheaper than the ROI."""
+        height, width = gray.shape[:2]
+        model_radius = 0.0
+        if self._model_x.size:
+            model_radius = float(
+                np.hypot(self._model_x, self._model_y).max()
+            )
+        half = int(math.ceil(model_radius * scale + 24.0))
+        left = max(0, int(math.floor(x)) - half)
+        top = max(0, int(math.floor(y)) - half)
+        right = min(width, int(math.ceil(x)) + half + 1)
+        bottom = min(height, int(math.ceil(y)) + half + 1)
+        if right <= left or bottom <= top:
+            return gx, gy, None, 0, 0
+        local_area = (right - left) * (bottom - top)
+        if local_area > 0.65 * width * height:
+            dt = self._distance_map(
+                dt_cache, self._scene_edges(gray, edge_cache)
+            )
+            return gx, gy, dt, 0, 0
+        local_gray = gray[top:bottom, left:right]
+        edges = cv2.Canny(
+            local_gray,
+            int(self._model_edge_low),
+            int(self._model_edge_high),
+        )
+        dt = cv2.distanceTransform(255 - edges, cv2.DIST_L2, 3)
+        return (
+            np.ascontiguousarray(gx[top:bottom, left:right]),
+            np.ascontiguousarray(gy[top:bottom, left:right]),
+            dt,
+            left,
+            top,
+        )
+
     def _occlusion_refine(self, gx, gy, dt, gray, x, y, angle, scale,
-                          angle_min, angle_max, scale_min, scale_max):
+                          angle_min, angle_max, scale_min, scale_max,
+                          use_gray=True):
+        def translate(cx, cy, theta, s):
+            if use_gray:
+                return self._ncc_translate(gray, cx, cy, theta, s)
+            span = 2.0 if not use_gray else 4.0
+            result = self._dt_scan_xy(
+                gx, gy, dt, cx, cy, theta, s, span=span, step=1.0
+            )
+            return (result[0], result[1]) if result is not None else (cx, cy)
+
         result = self._dt_scan_axis(
             gx, gy, dt, x, y, angle, scale, "angle",
             max(angle_min, angle - 1.5), min(angle_max, angle + 1.5), 0.75,
         )
         if result:
             angle = result[0]
-        x, y = self._ncc_translate(gray, x, y, angle, scale)
+        x, y = translate(x, y, angle, scale)
 
         result = self._dt_scan_axis(
             gx, gy, dt, x, y, angle, scale, "scale",
@@ -2419,10 +2799,20 @@ class ShapeMatch(BaseTool):
         # occluded parts; running ICP first only duplicates that work.  Keep
         # ICP for the milder cases where the masked scan is not triggered.
         if alignment > 0.70:
-            _, _, icp_angle, _ = self._icp_refine(gx, gy, dt, x, y, angle, scale)
-            if abs(icp_angle - angle) <= 0.2:
-                angle = icp_angle
-        if alignment <= 0.70:
+            icp = self._icp_refine(gx, gy, dt, x, y, angle, scale)
+            if use_gray:
+                _, _, icp_angle, _ = icp
+                if abs(icp_angle - angle) <= 0.2:
+                    angle = icp_angle
+            else:
+                icp_x, icp_y, icp_angle, icp_scale = icp
+                icp_alignment = self._alignment_score(
+                    gx, gy, icp_x, icp_y, icp_angle, icp_scale
+                )
+                if icp_alignment >= alignment:
+                    x, y, angle, scale = icp_x, icp_y, icp_angle, icp_scale
+                    alignment = icp_alignment
+        if use_gray and alignment <= 0.70:
             mask = self._visible_mask(gray, x, y, angle, scale)
             if mask is None:
                 return None
@@ -2441,12 +2831,17 @@ class ShapeMatch(BaseTool):
         if result:
             scale = result[0]
 
-        x, y = self._ncc_translate(gray, x, y, angle, scale)
+        x, y = translate(x, y, angle, scale)
         if alignment <= 0.70:
-            final_mask = self._visible_mask(gray, x, y, angle, scale)
-            if final_mask is None:
-                return None
-            visible_fraction = float(final_mask.mean())
+            if use_gray:
+                final_mask = self._visible_mask(gray, x, y, angle, scale)
+                if final_mask is None:
+                    return None
+                visible_fraction = float(final_mask.mean())
+            else:
+                visible_fraction = self._geometry_visible_fraction(
+                    dt, x, y, angle, scale
+                )
         return x, y, angle, scale, visible_fraction
 
     @staticmethod
@@ -2470,6 +2865,12 @@ class ShapeMatch(BaseTool):
         y = float(candidate["y"])
         angle = float(np.clip(candidate["angle"], theta_start, theta_end))
         scale = float(np.clip(candidate["scale"], scale_start, scale_end))
+
+        if str(self.params.get("match_mode", "hybrid")) == "geometry":
+            if gx is None:
+                gx, gy = self._full_gradients(gray, gradient_cache)
+            score = self._alignment_score(gx, gy, x, y, angle, scale)
+            return (x, y, angle, scale, score, score), None
 
         coarse = self._coarse_pose(
             gray, gx, gy, x, y, angle, scale,
@@ -2507,6 +2908,71 @@ class ShapeMatch(BaseTool):
                     theta_start, theta_end, scale_start, scale_end,
                     ecc_gray=None, ecc_map=None,
                     ecc_frame=None, ecc_origin=(0, 0)):
+        if str(self.params.get("match_mode", "hybrid")) == "geometry":
+            if gx is None:
+                gx, gy = self._full_gradients(gray, gradient_cache)
+            local_gx, local_gy, dt, offset_x, offset_y = (
+                self._geometry_local_maps(
+                    gray, gx, gy, x, y, scale, edge_cache, dt_cache
+                )
+            )
+            if dt is None:
+                return None, {"warning": "geometry_maps_failed"}
+            x -= offset_x
+            y -= offset_y
+            for iteration in range(3):
+                angle_half = 5.0 if iteration == 0 else 2.0
+                scale_half = 0.05 if iteration == 0 else 0.02
+                result = self._dt_scan_axis(
+                    local_gx, local_gy, dt, x, y, angle, scale, "angle",
+                    max(theta_start, angle - angle_half),
+                    min(theta_end, angle + angle_half),
+                    1.0 if iteration == 0 else 0.5,
+                )
+                if result:
+                    angle = result[0]
+                result = self._dt_scan_axis(
+                    local_gx, local_gy, dt, x, y, angle, scale, "scale",
+                    max(scale_start, scale - scale_half),
+                    min(scale_end, scale + scale_half),
+                    0.01 if iteration == 0 else 0.005,
+                )
+                if result:
+                    scale = result[0]
+                translated = self._dt_scan_xy(
+                    local_gx, local_gy, dt, x, y, angle, scale,
+                    span=10.0 if iteration == 0 else 2.0,
+                    step=2.0 if iteration == 0 else 1.0,
+                )
+                if translated is None:
+                    break
+                x, y = translated[0], translated[1]
+            refined = self._occlusion_refine(
+                local_gx, local_gy, dt, gray, x, y, angle, scale,
+                theta_start, theta_end, scale_start, scale_end,
+                use_gray=False,
+            )
+            if refined is None:
+                return None, {"warning": "geometry_solver_failed"}
+            x, y, angle, scale, visible_fraction = refined
+            score = self._alignment_score(
+                local_gx, local_gy, x, y, angle, scale
+            )
+            x += offset_x
+            y += offset_y
+            return (
+                x,
+                y,
+                angle,
+                scale,
+                score,
+                "geometry",
+                None,
+                visible_fraction,
+                None,
+                [],
+            ), None
+
         solver = None
         ecc_cc = None
         visible_fraction = None
@@ -2666,48 +3132,92 @@ class ShapeMatch(BaseTool):
             self.set_error("Input ROI is empty")
             self.data_changed.emit()
             return
-        gray = self._gray(raw)
-        if gray.dtype == np.uint8:
-            gray_for_match = gray
-        else:
-            gray_for_match = cv2.normalize(
-                gray, None, 0, 255, cv2.NORM_MINMAX
-            ).astype(np.uint8)
-
         vote_factor = self._vote_factor()
         search_factor = int(self._search_factor)
         ecc_factor = int(self._ecc_factor)
         vote_map = search_map = ecc_map = None
         if roi_m_inv is None:
-            # Every coarse view is a crop of one fixed-phase pyramid built from
-            # the whole frame.  A larger search ROI can then only add scene
-            # pixels: the part is voted and scanned on exactly the same pixels
-            # regardless of where the ROI starts.
+            # An axis-aligned ROI is processed on a frame-aligned block around
+            # the ROI instead of converting the complete frame to gray.  The
+            # block origin is a common multiple of all pyramid factors, so the
+            # views keep exactly the same global sampling phase.
             frame = v_img.data
-            frame_gray = self._gray(frame)
-            if frame_gray.dtype != np.uint8:
-                frame_gray = cv2.normalize(
-                    frame_gray, None, 0, 255, cv2.NORM_MINMAX
-                ).astype(np.uint8)
-            gray_for_match = frame_gray[
-                ay:ay + roi["ah"], ax:ax + roi["aw"]
-            ]
-            views = self._pyramid_views(
-                frame_gray, ax, ay, roi["aw"], roi["ah"],
-                (vote_factor, search_factor),
-            )
-            vote_gray, vote_map = views[vote_factor]
-            search_gray, search_map = views[search_factor]
-            ecc_gray, ecc_map = None, None
-            ecc_frame, ecc_origin = frame_gray, (ax, ay)
+            if frame.dtype == np.uint8:
+                frame_gray, block_left, block_top = (
+                    self._aligned_roi_gray_block(
+                        frame,
+                        ax,
+                        ay,
+                        roi["aw"],
+                        roi["ah"],
+                        vote_factor,
+                        search_factor,
+                        ecc_factor,
+                    )
+                )
+                local_ax = ax - block_left
+                local_ay = ay - block_top
+                gray_for_match = frame_gray[
+                    local_ay:local_ay + roi["ah"],
+                    local_ax:local_ax + roi["aw"],
+                ]
+                views = self._pyramid_views(
+                    frame_gray,
+                    local_ax,
+                    local_ay,
+                    roi["aw"],
+                    roi["ah"],
+                    (vote_factor, search_factor),
+                )
+                vote_gray, vote_map = views[vote_factor]
+                search_gray, search_map = views[search_factor]
+                ecc_gray, ecc_map = None, None
+                ecc_frame = frame_gray
+                ecc_origin = (local_ax, local_ay)
+            else:
+                gray = self._gray(raw)
+                if gray.dtype == np.uint8:
+                    gray_for_match = gray
+                else:
+                    gray_for_match = cv2.normalize(
+                        gray, None, 0, 255, cv2.NORM_MINMAX
+                    ).astype(np.uint8)
+                frame_gray = self._gray(frame)
+                if frame_gray.dtype != np.uint8:
+                    frame_gray = cv2.normalize(
+                        frame_gray, None, 0, 255, cv2.NORM_MINMAX
+                    ).astype(np.uint8)
+                gray_for_match = frame_gray[
+                    ay:ay + roi["ah"], ax:ax + roi["aw"]
+                ]
+                views = self._pyramid_views(
+                    frame_gray, ax, ay, roi["aw"], roi["ah"],
+                    (vote_factor, search_factor),
+                )
+                vote_gray, vote_map = views[vote_factor]
+                search_gray, search_map = views[search_factor]
+                ecc_gray, ecc_map = None, None
+                ecc_frame = frame_gray
+                ecc_origin = (ax, ay)
         else:
             # Rotated ROIs are already resampled by ``extract_roi``; keep the
             # previous crop-resize path for them.
-            vote_gray, vote_map = self._resized_view(gray_for_match, vote_factor)
+            gray = self._gray(raw)
+            if gray.dtype == np.uint8:
+                gray_for_match = gray
+            else:
+                gray_for_match = cv2.normalize(
+                    gray, None, 0, 255, cv2.NORM_MINMAX
+                ).astype(np.uint8)
+            vote_gray, vote_map = self._resized_view(
+                gray_for_match, vote_factor
+            )
             search_gray, search_map = self._resized_view(
                 gray_for_match, search_factor
             )
-            ecc_gray, ecc_map = self._resized_view(gray_for_match, ecc_factor)
+            ecc_gray, ecc_map = self._resized_view(
+                gray_for_match, ecc_factor
+            )
             ecc_frame, ecc_origin = None, (0, 0)
         # ``spatialGradient`` is the same 3x3 Sobel kernel as two separate
         # ``Sobel`` calls but computes both axes in one pass.  Magnitude and
@@ -2800,29 +3310,74 @@ class ShapeMatch(BaseTool):
         # angle/scale scan runs only on the promising ones plus the strongest
         # vote peaks, so a proposal whose kernel angle/scale is still far off
         # is not dropped before it has been measured.
+        geometry_mode = str(
+            self.params.get("match_mode", "hybrid")
+        ) == "geometry"
+        pre_gate_scorer = str(
+            self.params.get("pre_gate_scorer", _PRE_GATE_SCORER)
+        )
+        if geometry_mode:
+            pre_gate_scorer = "alignment"
+        if pre_gate_scorer not in ("ncc", "alignment", "edge"):
+            pre_gate_scorer = "ncc"
+        pre_gate_gx = pre_gate_gy = pre_gate_dt = None
+        if (
+            pre_gate_scorer != "ncc"
+            and search_gray is not None
+            and search_map is not None
+        ):
+            pre_gate_gx, pre_gate_gy = cv2.spatialGradient(search_gray)
+            pre_gate_gx = pre_gate_gx.astype(np.float32)
+            pre_gate_gy = pre_gate_gy.astype(np.float32)
+            if pre_gate_scorer == "edge":
+                pre_gate_edges = cv2.Canny(
+                    search_gray,
+                    int(self._model_edge_low),
+                    int(self._model_edge_high),
+                )
+                pre_gate_dt = cv2.distanceTransform(
+                    255 - pre_gate_edges,
+                    cv2.DIST_L2,
+                    3,
+                )
+
         if search_gray is not None and search_map is not None and len(coarse) > 4:
             pre_gate = []
-            for candidate in coarse[:_MAX_PRE_GATE]:
-                score = self._candidate_ncc(
-                    candidate,
-                    search_gray,
-                    search_map,
-                    theta_start,
-                    theta_end,
-                    scale_start,
-                    scale_end,
+            pre_gate_source = coarse
+            if geometry_mode and len(coarse) > _MAX_PRE_GATE:
+                pre_gate_source = self._diverse_scale_candidates(
+                    coarse, _MAX_PRE_GATE
                 )
+            for candidate in pre_gate_source[:_MAX_PRE_GATE]:
+                if pre_gate_scorer == "ncc":
+                    score = self._candidate_ncc(
+                        candidate,
+                        search_gray,
+                        search_map,
+                        theta_start,
+                        theta_end,
+                        scale_start,
+                        scale_end,
+                    )
+                else:
+                    score = self._candidate_geometry(
+                        candidate,
+                        pre_gate_gx,
+                        pre_gate_gy,
+                        pre_gate_dt,
+                        search_map,
+                        theta_start,
+                        theta_end,
+                        scale_start,
+                        scale_end,
+                        pre_gate_scorer,
+                    )
                 pre_gate.append((score if score is not None else -1.0, candidate))
             pre_gate.sort(key=lambda item: item[0], reverse=True)
-            ranked = [candidate for _, candidate in pre_gate]
-            chosen = []
-            seen = set()
-            for candidate in ranked[:_MAX_NCC_SCANS] + coarse[:4]:
-                if id(candidate) in seen:
-                    continue
-                seen.add(id(candidate))
-                chosen.append(candidate)
-            coarse = chosen[:_MAX_NCC_CANDIDATES]
+            coarse = self._select_pre_gate_candidates(
+                pre_gate,
+                coarse,
+            )
         else:
             coarse = coarse[:_MAX_NCC_CANDIDATES]
 
@@ -2880,15 +3435,20 @@ class ShapeMatch(BaseTool):
         prepared.sort(key=lambda item: (item[0], item[1]), reverse=True)
         shortlist = []
         for item in prepared:
-            if item[0] < 0.5:
+            if not geometry_mode and item[0] < 0.5:
                 continue
-            if any(
+            if not geometry_mode and any(
                 math.hypot(item[2] - other[2], item[3] - other[3]) < short_distance
                 for other in shortlist
             ):
                 continue
             shortlist.append(item)
-            if len(shortlist) >= min(_MAX_SOLVE, limit + 2):
+            max_solve = limit + 2
+            if geometry_mode:
+                max_solve = limit
+                if len(prepared) > 1 and prepared[0][0] < 0.85:
+                    max_solve = limit + 1
+            if len(shortlist) >= min(_MAX_SOLVE, max_solve):
                 break
         if not shortlist and prepared:
             shortlist = prepared[:1]
@@ -2964,6 +3524,8 @@ class ShapeMatch(BaseTool):
                     "warnings": list(refine_warnings),
                 }
             )
+            if geometry_mode and limit == 1 and score >= 0.90:
+                break
 
         candidates.sort(key=lambda item: item["score"], reverse=True)
         kept = []

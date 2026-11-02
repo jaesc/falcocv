@@ -216,6 +216,10 @@ class ImageViewer(QGraphicsView):
     roi_drawing_finished = pyqtSignal()
     mouse_moved = pyqtSignal(int, int, object) # x, y, value (int or tuple)
     mouse_clicked = pyqtSignal(int, int)       # x, y in scene coordinates
+    mouse_left = pyqtSignal()
+    stroke_started = pyqtSignal(int, int)      # x, y in original image pixels
+    stroke_moved = pyqtSignal(int, int)
+    stroke_finished = pyqtSignal(int, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -256,6 +260,8 @@ class ImageViewer(QGraphicsView):
         self._show_overlays = False
         self._overlay_primitives = []
         self._pixmap_ready = False
+        self._stroke_active = False
+        self._brush_cursor = None
         # Scale between original image pixels and on-screen (downsampled) pixels.
         self._display_scale_x = 1.0
         self._display_scale_y = 1.0
@@ -265,17 +271,72 @@ class ImageViewer(QGraphicsView):
         if source is self.viewport():
             if event.type() == QEvent.Type.MouseMove:
                 self._handle_mouse_move(event.pos())
+                if (self._stroke_active
+                        and event.buttons() & Qt.MouseButton.LeftButton):
+                    orig_pos = self._display_to_original_point(
+                        self.mapToScene(event.pos())
+                    )
+                    self.stroke_moved.emit(
+                        int(orig_pos.x()), int(orig_pos.y())
+                    )
             elif event.type() == QEvent.Type.MouseButtonPress:
                 if event.button() == Qt.MouseButton.LeftButton:
-                    orig_pos = self._display_to_original_point(self.mapToScene(event.pos()))
-                    self.mouse_clicked.emit(int(orig_pos.x()), int(orig_pos.y()))
-        return super().eventFilter(source, event)
-                    
+                    orig_pos = self._display_to_original_point(
+                        self.mapToScene(event.pos())
+                    )
+                    self.mouse_clicked.emit(
+                        int(orig_pos.x()), int(orig_pos.y())
+                    )
+                    if (not self._is_editing_roi
+                            and not self._is_drawing_new_roi):
+                        self._stroke_active = True
+                        self.stroke_started.emit(
+                            int(orig_pos.x()), int(orig_pos.y())
+                        )
+            elif event.type() == QEvent.Type.MouseButtonRelease:
+                if (event.button() == Qt.MouseButton.LeftButton
+                        and self._stroke_active):
+                    orig_pos = self._display_to_original_point(
+                        self.mapToScene(event.pos())
+                    )
+                    self._stroke_active = False
+                    self.stroke_finished.emit(
+                        int(orig_pos.x()), int(orig_pos.y())
+                    )
         return super().eventFilter(source, event)
 
     def _display_to_original_point(self, point_f):
         return QPointF(point_f.x() * self._display_scale_x,
                        point_f.y() * self._display_scale_y)
+
+    @property
+    def display_scale(self):
+        """Return the downsampling factors from original to display pixels."""
+        return self._display_scale_x, self._display_scale_y
+
+    def original_to_display_point(self, x, y):
+        """Convert original image pixels to on-screen display/scene pixels."""
+        return QPointF(
+            float(x) / self._display_scale_x,
+            float(y) / self._display_scale_y,
+        )
+
+    def set_brush_cursor(self, center=None, radius=0.0, fill=None):
+        """Show a screen-space brush ring in scene coordinates.
+
+        The ring is painted in ``drawForeground`` so it stays above image
+        overlays. Pass ``center=None`` to hide it.
+        """
+        if center is None:
+            self._brush_cursor = None
+        else:
+            fill_color = QColor(fill) if fill is not None else None
+            self._brush_cursor = (
+                QPointF(center),
+                max(0.0, float(radius)),
+                fill_color,
+            )
+        self.viewport().update()
 
     def _handle_mouse_move(self, pos):
         scene_pos = self.mapToScene(pos)
@@ -469,8 +530,10 @@ class ImageViewer(QGraphicsView):
 
     def drawForeground(self, painter, rect):
         if not self._show_overlays:
+            self._draw_brush_cursor(painter)
             return
         if not self._overlay_primitives:
+            self._draw_brush_cursor(painter)
             return
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         for prim in self._overlay_primitives:
@@ -530,6 +593,27 @@ class ImageViewer(QGraphicsView):
                 painter.setFont(f)
                 painter.drawText(pos, text)
             painter.setBrush(QBrush())
+        self._draw_brush_cursor(painter)
+
+    def _draw_brush_cursor(self, painter):
+        if self._brush_cursor is None:
+            return
+        center, radius, fill = self._brush_cursor
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if fill is not None:
+            painter.setPen(QPen(Qt.PenStyle.NoPen))
+            painter.setBrush(QBrush(fill))
+            painter.drawEllipse(center, radius, radius)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        halo = QPen(QColor(16, 16, 16), 4)
+        halo.setCosmetic(True)
+        painter.setPen(halo)
+        painter.drawEllipse(center, radius, radius)
+        ring = QPen(QColor(255, 255, 255), 2)
+        ring.setCosmetic(True)
+        painter.setPen(ring)
+        painter.drawEllipse(center, radius, radius)
+        painter.setBrush(QBrush())
 
     def _build_overlay_cache(self):
         primitives = []
@@ -734,6 +818,13 @@ class ImageViewer(QGraphicsView):
             self.scale(zoom_in_factor, zoom_in_factor)
         else:
             self.scale(zoom_out_factor, zoom_out_factor)
+
+    def leaveEvent(self, event):
+        if self._stroke_active:
+            self._stroke_active = False
+            self.stroke_finished.emit(-1, -1)
+        self.mouse_left.emit()
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if self._is_drawing_new_roi and event.button() == Qt.MouseButton.LeftButton:

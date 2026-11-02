@@ -317,6 +317,197 @@ Validation:
 
 Verdict: kept.
 
+### Spatial feature coverage (2026-11-02)
+
+Symptom: top-N selection by gradient magnitude can spend the whole
+`max_features` budget on the strongest edges and leave other shape axes
+unrepresented. On a synthetic 300x300 rectangle with strong horizontal edges
+and weak vertical edges, top-N selected **no vertical features** at 80 or 200
+features; at 800 it selected 380 horizontal and 64 vertical features.
+
+Fix:
+
+- Split the template into 32 px cells.
+- Seed the strongest feature from every active cell (or the strongest cells
+  when the budget is smaller than the number of cells).
+- Fill the remaining budget by magnitude with an adaptive cap
+  `ceil(2 * budget / active_cells)`.
+- Relax the cap only when cells cannot fill the requested budget, so
+  `max_features` is not silently reduced.
+- Use the same selection for automatic training, `reset_auto_selection` and
+  the 500-feature vote subset.
+- Manual flags are provenance only. They no longer bypass the vote selection:
+  the final selected set is authoritative. A manual feature in an uncovered
+  cell enters through the coverage seed; in a covered cell it competes by the
+  same coverage/magnitude rule as an automatic feature.
+
+Synthetic distribution after the change (same rectangle; left/right/top/bottom
+feature counts):
+
+| `max_features` | left | right | top | bottom |
+|---:|---:|---:|---:|---:|
+| 80 | 29 | 13 | 47 | 27 |
+| 200 | 49 | 39 | 107 | 87 |
+| 800 | 199 | 197 | 430 | 364 |
+
+Validation:
+
+- Interleaved synthetic matrix: 0.001-0.003 px / <=0.010 deg / <=0.035 %
+  scale error.
+- Full suite: 402 passed, 3 skipped, 3 xfailed; `falcocv self-test` PASS.
+- Automatic orientation coverage remains rejected; this change only balances
+  spatial coverage.
+
+Verdict: kept (pending commit).
+
+### ROI-bound search preprocessing (2026-11-02)
+
+Symptom: an explicit search ROI still paid a full-frame grayscale pass. In
+`run()`, the axis-aligned path rebuilt the coarse pyramid from
+`gray(complete frame)`, even when the search ROI was small.
+
+Fix:
+
+- For an axis-aligned `uint8` ROI, crop a frame-aligned gray block around the
+  ROI plus an ECC halo.
+- Align the block origin to `lcm(vote_factor, search_factor, ecc_factor)` so the
+  pyramid views keep exactly the same sampling phase.
+- Use the block for the ROI crop, vote/search pyramid and local ECC view.
+- Rotated ROIs and non-`uint8` inputs keep the previous fallback.
+
+Validation:
+
+- Pyramid views from the block are pixel-identical to the old full-frame views
+  for factors including 1/1, 2/4 and 3/7.
+- Same ROI on 400x400, 5 MP and 36 MP gives the same pose (small floating-point
+  differences only).
+- Synthetic 400x400 ROI: 400x400 ~144 ms, 5 MP ~135 ms, 36 MP ~130 ms in one
+  5-run sample; the Huge-image term is no longer present.
+- Full suite: 404 passed, 3 skipped, 3 xfailed; self-test PASS.
+
+Verdict: kept (pending commit).
+
+### Pre-gate budget and adaptive margin (2026-11-02)
+
+The NCC refine stage evaluated up to 32 pre-gate proposals and four full
+angle/scale scans per candidate.  The pre-gate cap was reduced to 20 and the
+full scan cap to 4, with a score-margin cutoff:
+
+- best pre-gate score is always kept;
+- candidates within `max(0.02, 0.05 * best)` are kept, up to 4;
+- at least two candidates are kept;
+- the strongest four vote peaks are appended unchanged as a safety net.
+
+Results on the synthetic matrix (same session, 5 runs):
+
+| Case | Before | After |
+|---|---:|---:|
+| 480x360 | 134.5 ms | 87.2 ms |
+| 1 MP | 216.2 ms | 149.1 ms |
+| 5 MP | 158.7 ms | 131.2 ms |
+
+NCC calls dropped from ~75 to 41/49 and refinements from 8 to 4/5. All
+detections and poses stayed within the existing synthetic tolerances; the full
+suite passes. The 5 MP gain is smaller and noisier, as expected because the
+solver dominates there.
+
+Verdict: kept (pending commit).
+
+### Geometric pre-gate prototype (2026-11-02)
+
+The production pre-gate still uses grayscale NCC. Two geometry-only prototypes
+were added behind the per-tool `pre_gate_scorer` parameter (default `"ncc"`),
+exposed in the Search tab:
+
+- `alignment`: native gradient-alignment score on the search view;
+- `edge`: gradient + distance-to-edge score on the search view; not exposed in
+  the UI because it failed multi-instance tests.
+
+The synthetic illumination benchmark (`benchmarks/bench_shape_match_illumination.py`)
+tests 17 transforms: identity, brightness, contrast, gamma, low light, local
+shadow, blur and combinations, at 480x360 and 5 MP.
+
+Results:
+
+- all three variants kept the same detections and poses on the illumination
+  suite;
+- `alignment` was typically faster than the grayscale NCC pre-gate;
+- `edge` failed the two multi-instance integration tests (found 1 of 2), so it
+  is rejected;
+- `alignment` passed the complete suite with the prototype enabled.
+
+The default remains `ncc` until a general production job is validated.  The
+full angle/scale scan and ECC still use grayscale, so this prototype improves
+the selection stage but does not make the complete matcher illumination
+invariant.
+
+Verdict: prototype kept, `alignment` candidate for promotion, `edge` rejected.
+
+### Geometry-only matching prototype (2026-11-02)
+
+A per-tool `match_mode="geometry"` prototype was added:
+
+- no grayscale `matchTemplate`;
+- no grayscale ECC;
+- pre-gate uses gradient alignment;
+- full refinement uses edge distance + gradient alignment + native ICP;
+- the default remains `"hybrid"`.
+
+On the synthetic baseline and 5 MP scene it recovers the object without gray
+verification.  The first real-job attempt lost detections because the geometry
+shortlist was ordered by pre-gate position and the correct candidate could be
+discarded before the solver.  After sorting the geometry shortlist by geometry
+score, keeping the top one/two candidates and allowing an early exit on a
+strong score, one-pass detection on `test1` became:
+
+| Tool | Hybrid detections | Geometry detections |
+|---|---:|---:|
+| Shape Match_0 | 23/23 | 23/23 |
+| Shape Match_1 | 22/23 | 22/23 |
+| Shape Match_2 | 19/23 | 20/23 |
+
+The extra Shape Match_2 detection still needs visual validation against the
+job; it has a geometry score of ~0.67.  Pose deltas against the hybrid reference
+were up to about 2.2/1.4/4.7 px, 3.4/7.4/7.1 px, 2.0/1.9/1.1 deg and
+1.5/0.01/0.6 % scale depending on the tool.  That is better than the discarded
+prototype but still outside a production precision gate.
+
+The first speed pass removed the unused full-ROI distance transform from the
+geometry candidate preparation and made the solver build local gradient, edge
+and distance maps around the candidate when the local window is at most 65 % of
+the ROI area.  On the same `test1` pass this put geometry close to hybrid:
+
+| Tool | Hybrid median | Geometry median |
+|---|---:|---:|
+| Shape Match_0 | 59.4 ms | 68.5 ms |
+| Shape Match_1 | 52.6 ms | 52.3 ms |
+| Shape Match_2 | 68.1 ms | 81.4 ms |
+
+Detections and pose deltas were unchanged by the local-map pass.  The second
+speed pass added `shape_match_score_translations`, a native batch for the
+common fixed-angle/scale translation grid.  A microbenchmark with 800 model
+features and 121 poses measured about 8.4 ms for the generic score and 6.4 ms
+for the translation batch; the Python path automatically falls back to the
+generic score if the loaded kernel predates the new symbol.
+
+With the rebuilt kernel active, the latest `test1` medians were:
+
+| Tool | Hybrid median | Geometry median |
+|---|---:|---:|
+| Shape Match_0 | 77.6 ms | 72.3 ms |
+| Shape Match_1 | 72.7 ms | 46.8 ms |
+| Shape Match_2 | 98.9 ms | 92.1 ms |
+
+Timings are noisy on this machine, but geometry is now at or below hybrid
+speed while preserving detections and pose deltas.  The remaining cost is
+mostly the native angle/scale scans and ICP, plus the full-map fallback for
+large ROIs.  The next speed step would be batching those in the kernel.
+
+Verdict: prototype kept as experimental; **not production default**.  Keep
+`hybrid` and the existing ncc path until the geometry mode passes the
+precision and visual-validation gates; speed is now close enough to continue
+with native batching rather than algorithm changes.
+
 ### Vote-feature budget 400/300 (2026-10-31)
 
 Tested lowering `_VOTE_MODEL_FEATURES` from 500 to 400 and 300:
@@ -511,10 +702,22 @@ Status:
 6. Fused bilinear sampling in score/ICP — **done and kept**: score
    0.282 -> 0.162 ms, bit-identical; real job 39.8/39.6/53.0 ms with
    140/140/142 detections and pose deltas 0.
-7. Re-run the 142-image private job as the gate: no detection or pose changes.
+7. Spatial feature coverage — **done and kept (pending commit)**: 32 px cell
+   seeding + capped magnitude fill for training, reset and the vote subset;
+   manual flags are provenance only. Synthetic matrix stays within
+   0.003 px / 0.010 deg / 0.035 %.
+8. ROI-bound search preprocessing — **done and kept (pending commit)**: the
+   axis-aligned `uint8` path converts a frame-aligned gray block around the
+   ROI, not the complete input frame. Rotated/non-`uint8` inputs use the old
+   fallback. Pyramid views are pixel-identical in the equivalence tests.
+9. Pre-gate budget 20 + 4 scans + adaptive score margin — **done and kept
+   (pending commit)**: NCC calls ~75 -> 41/49 and refinements 8 -> 4/5 on the
+   synthetic matrix; detections/poses unchanged; 5 MP gain is smaller because
+   the solver dominates.
+10. Re-run the 142-image private job as the gate: no detection or pose changes.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
-changing core count heuristics, or changing feature/edge/factor constants.
+changing core count heuristics, or changing runtime edge/factor hypotheses.
 
 ## Privacy
 

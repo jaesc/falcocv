@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import QRect, Qt
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen
+from PyQt6.QtCore import QRect, QRectF, Qt
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -27,6 +27,7 @@ class _MaskCanvas(QWidget):
         self.paint_value = 0
         self._drawing = False
         self._last = None
+        self._hover_pos = None
         self.setMinimumSize(480, 360)
         self.setMouseTracking(True)
 
@@ -116,22 +117,50 @@ class _MaskCanvas(QWidget):
         painter.setPen(QPen(QColor(180, 180, 180), 1))
         painter.drawRect(QRect(x, y, draw_w, draw_h))
 
+        if self._hover_pos is not None:
+            radius = max(1.0, float(self.brush_radius))
+            center_x = float(self._hover_pos.x())
+            center_y = float(self._hover_pos.y())
+            cursor_rect = QRectF(
+                center_x - radius,
+                center_y - radius,
+                radius * 2.0,
+                radius * 2.0,
+            )
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setBrush(QBrush())
+            painter.setPen(QPen(QColor(16, 16, 16), 4))
+            painter.drawEllipse(cursor_rect)
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            painter.drawEllipse(cursor_rect)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drawing = True
             self._last = None
+            point = self._to_image(event.pos())
+            self._hover_pos = event.pos() if point is not None else None
             if self._paint_at(event.pos()):
                 self.update()
 
     def mouseMoveEvent(self, event):
+        point = self._to_image(event.pos())
+        self._hover_pos = event.pos() if point is not None else None
         if self._drawing and event.buttons() & Qt.MouseButton.LeftButton:
             if self._paint_at(event.pos()):
                 self.update()
+        else:
+            self.update()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self._drawing = False
             self._last = None
+
+    def leaveEvent(self, event):
+        self._hover_pos = None
+        self.update()
+        super().leaveEvent(event)
 
 
 class ShapeMatchMaskDialog(QDialog):
@@ -156,6 +185,15 @@ class ShapeMatchMaskDialog(QDialog):
         )
         info.setWordWrap(True)
         layout.addWidget(info)
+        legend = QLabel(
+            '<span style="color:#FF3D00; font-weight:bold;">Red</span>'
+            " = excluded &nbsp;·&nbsp; "
+            "no red = included &nbsp;·&nbsp; "
+            "white ring = brush"
+        )
+        legend.setWordWrap(True)
+        legend.setStyleSheet("font-size: 11px;")
+        layout.addWidget(legend)
         if mismatch:
             warning = QLabel(
                 "The previous mask did not match the current training ROI, "
@@ -172,16 +210,29 @@ class ShapeMatchMaskDialog(QDialog):
         self.spin_brush = QSpinBox()
         self.spin_brush.setRange(1, 100)
         self.spin_brush.setValue(self.canvas.brush_radius)
-        self.spin_brush.valueChanged.connect(
-            lambda value: setattr(self.canvas, "brush_radius", int(value))
+        self.spin_brush.setToolTip(
+            "Brush radius in screen pixels; the white ring shows it."
         )
+        self.spin_brush.valueChanged.connect(self._on_brush_changed)
         controls.addWidget(self.spin_brush)
 
         self.btn_mask = QPushButton("Mask")
         self.btn_mask.setCheckable(True)
         self.btn_mask.setChecked(True)
+        self.btn_mask.setStyleSheet(
+            "QPushButton:checked {"
+            " background-color: #5C1A12; color: white;"
+            " border: 1px solid #FF3D00;"
+            "}"
+        )
         self.btn_erase = QPushButton("Erase")
         self.btn_erase.setCheckable(True)
+        self.btn_erase.setStyleSheet(
+            "QPushButton:checked {"
+            " background-color: #1B5E20; color: white;"
+            " border: 1px solid #00E676;"
+            "}"
+        )
         self.btn_mask.clicked.connect(lambda: self._set_mode(0))
         self.btn_erase.clicked.connect(lambda: self._set_mode(255))
         controls.addWidget(self.btn_mask)
@@ -200,6 +251,10 @@ class ShapeMatchMaskDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _on_brush_changed(self, value):
+        self.canvas.brush_radius = int(value)
+        self.canvas.update()
 
     def _set_mode(self, value: int):
         self.canvas.paint_value = int(value)

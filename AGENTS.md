@@ -105,24 +105,53 @@ cpp/bin/       → local kernel build output (gitignored)
   the training ROI, or the training image marks the model **STALE** and blocks
   matching until retrained. The Canny→top-10 % Sobel fallback is allowed but
   shown in the training status.
+- **ShapeMatch feature coverage** -> automatic training seeds one feature per
+  active 32 px cell, then fills the remaining `max_features` budget by gradient
+  magnitude with an adaptive per-cell cap (`ceil(2 * budget / active_cells)`).
+  The same selection is used for the 500-feature vote subset and for
+  `reset_auto_selection`. It must not silently reduce the feature budget.
 - **ShapeMatch manual feature editing** -> the editor works on the stored
   Canny/fallback candidates after mask and `min_gradient`. The fixed
-  `max_features` budget is enforced; manual flags are stored in the model and
-  manual features are prioritized in the 500-feature vote subset. Changing any
-  training parameter, ROI, mask or training image invalidates the manual
-  selection. The normal preview only shows the final selection.
+  `max_features` budget is enforced; manual flags are stored in the model as
+  provenance only. The final selected set is authoritative: manual features do
+  not get global priority in the vote subset, and a manual feature in a covered
+  cell competes by the same coverage/magnitude rule as an automatic one.
+  Changing any training parameter, ROI, mask or training image invalidates the
+  manual selection. The normal preview only shows the final selection.
 - **ShapeMatch coarse voting** -> the vote factor depends on the template only
   (`min_template // 96`, capped at 4x), never on the ROI area.  Cap scene edges
   with a fixed **48-edge quota per 32 px cell**, independent of the cell count;
   a global target divided by cells starves the part as the ROI grows.  Keep 32
-  peaks per hypothesis (up to 1024 candidates) and use the top 500 model
-  features.  Full gradients, Canny and the distance map stay lazy.
+  peaks per hypothesis (up to 1024 candidates) and use up to 500 model
+  features selected by the same spatial coverage + magnitude rule.  Full
+  gradients, Canny and the distance map stay lazy.
 - **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
   >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
   full angle/scale scan runs on the best ones plus the strongest vote peaks.
-  Candidates whose NCC is below `_MIN_NCC` are rejected before alignment/solver.
-  The alignment score uses one cached full-ROI gradient pair, not a Sobel patch
-  per proposal.
+  The pre-gate is capped at 20 proposals and the full scan at 4 angle/scale
+  proposals; a score-margin cutoff keeps close competitors and at least two
+  candidates. Candidates whose NCC is below `_MIN_NCC` are rejected before
+  alignment/solver. The alignment score uses one cached full-ROI gradient pair,
+  not a Sobel patch per proposal.
+- **ShapeMatch geometric pre-gate prototype** -> the per-tool
+  `pre_gate_scorer` parameter defaults to `"ncc"` and is exposed in the Search
+  tab.  `"alignment"` uses the native gradient-alignment score and passed the
+  full suite; `"edge"` failed multi-instance tests and is not exposed.  The
+  full scan and ECC still use grayscale, so this is not yet full illumination
+  invariance.
+- **ShapeMatch geometry-only mode** -> the per-tool `match_mode` parameter
+  defaults to `"hybrid"`.  `"geometry"` skips `matchTemplate` and ECC, using
+  edge distance, gradient alignment and ICP.  After score-sorting the geometry
+  shortlist it matches every hybrid detection on `test1` and adds one Shape
+  Match_2 image.  Geometry refinement now uses a local edge/distance window
+  when it is much smaller than the ROI, and the native kernel batches
+  fixed-angle/scale translation scoring.  With the rebuilt kernel, the latest
+  `test1` medians were `Shape Match_1` 46.8 vs 72.7 ms, `Shape Match_0`
+  72.3 vs 77.6 ms and `Shape Match_2` 92.1 vs 98.9 ms (timings are noisy).
+  Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
+  experimental and must not become the default without a production gate.
+  The Python path falls back to the generic score when the loaded kernel
+  predates `shape_match_score_translations`.
 - **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
   found by a smaller one.  That is why the vote factor, the edge quota, the
   candidate floor and the dedupe distance cannot depend on the ROI extent.
@@ -131,6 +160,11 @@ cpp/bin/       → local kernel build output (gitignored)
   pose-aware (position + angle + scale); merging by position alone can discard
   the correct scale before the NCC scan sees it.  Never stop refining early on
   `max_matches`; rank the measured candidates by final score.
+- **ShapeMatch ROI-bound preprocessing** -> for an axis-aligned `uint8` ROI,
+  the search converts only a frame-aligned gray block covering the ROI plus an
+  ECC halo.  The block origin must be a common multiple of the vote, search and
+  ECC pyramid factors.  Rotated ROIs and non-`uint8` inputs keep the older
+  full-frame fallback.
 - **ShapeMatch ECC** -> two levels: affine ECC on a reduced view (factor <=2)
   then a rendered NCC translation at full resolution.  The reduced pass must
   undo its resampling with `template_scale`/`scene_scale`/`scene_offset`;
@@ -191,15 +225,23 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - ShapeMatch Phase 2 (`d91ecc7`): separate manual feature editor in
   `tools/shape_match/feature_editor.py`. Fixed `max_features` budget,
   add/remove, undo (`Ctrl+Z`), reset to auto, manual flags persisted in the
-  model, and manual features prioritized in the 500-feature vote subset.
+  model.
+- ShapeMatch Phase 3 (working tree): brush add/remove with 6 px default,
+  white/black brush cursor, candidate/auto/manual colours and legend; spatial
+  feature coverage for training, reset and vote subset; manual flags are
+  provenance only, not vote priority.
+- ShapeMatch search preprocessing is ROI-bound for axis-aligned `uint8` ROIs:
+  it converts a frame-aligned block around the ROI, not the full input frame.
 - ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
-- Top-N by magnitude remains the default. Automatic orientation coverage was
-  prototyped and rejected because it changed pose/score on a real job; do not
-  reintroduce it without the benchmark gate.
+- Spatial coverage is now the default automatic selection. Automatic
+  orientation coverage was prototyped and rejected because it changed
+  pose/score on a real job; do not reintroduce it without the benchmark gate.
 - The normal preview shows only the selected features. Candidates are shown
   only in the manual editor; there is no coverage warning.
-- Latest verification: `393 passed, 3 skipped, 3 xfailed`;
-  `falcocv self-test` PASS.
-- Next work: manual-editor polish or the M1/I1 roadmap. No release planned.
-  Resume on another machine with `git pull origin dev`,
-  `pip install -e ".[dev]"` and the test command above.
+- Latest verification: `410 passed, 3 skipped, 3 xfailed`;
+  `falcocv self-test` PASS. Synthetic ShapeMatch matrix: 0.001-0.003 px,
+  <=0.010 deg, <=0.035 % scale error.
+- Next work: validate spatial coverage on a general production job, then
+  manual-editor polish or the M1/I1 roadmap. No release planned. Resume on
+  another machine with `git pull origin dev`, `pip install -e ".[dev]"` and
+  the test command above.

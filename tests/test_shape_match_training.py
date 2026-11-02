@@ -195,7 +195,7 @@ def _manual_tool():
     return tool
 
 
-def test_manual_feature_selection_roundtrip_and_vote_priority():
+def test_manual_feature_selection_roundtrip_and_model_presence():
     tool = _manual_tool()
     candidates = tool.training_candidates()
     selected = set(tool.selected_candidate_indices(candidates))
@@ -224,12 +224,8 @@ def test_manual_feature_selection_roundtrip_and_vote_priority():
         np.isclose(tool._model_x, expected_x)
         & np.isclose(tool._model_y, expected_y)
     )
-    in_vote = (
-        np.isclose(tool._vote_model_x, expected_x)
-        & np.isclose(tool._vote_model_y, expected_y)
-    )
     assert np.any(in_model)
-    assert np.any(in_vote)
+    assert 0 < tool._vote_model_x.size <= 500
 
     data = tool.serialize()
     loaded = ShapeMatch()
@@ -242,6 +238,85 @@ def test_manual_feature_selection_roundtrip_and_vote_priority():
     assert loaded.is_manual_edit is False
     assert int(loaded._model_manual.sum()) == 0
     assert loaded._model_x.size == 800
+
+
+def test_manual_flags_do_not_change_the_vote_subset():
+    tool = _manual_tool()
+    candidates = tool.training_candidates()
+    selected = list(tool.selected_candidate_indices(candidates))
+
+    tool.apply_manual_selection(
+        candidates, selected, manual=(), edited=False
+    )
+    automatic_vote = (
+        tool._vote_model_x.copy(),
+        tool._vote_model_y.copy(),
+        tool._vote_model_theta.copy(),
+        tool._vote_model_mag.copy(),
+    )
+
+    tool.apply_manual_selection(
+        candidates, selected, manual={selected[0]}, edited=True
+    )
+    manual_vote = (
+        tool._vote_model_x,
+        tool._vote_model_y,
+        tool._vote_model_theta,
+        tool._vote_model_mag,
+    )
+
+    for automatic, manual in zip(automatic_vote, manual_vote):
+        assert np.array_equal(automatic, manual)
+
+
+def test_spatial_feature_selection_covers_weak_region():
+    strong_x, strong_y = np.meshgrid(
+        np.arange(0, 48), np.arange(0, 100, 10)
+    )
+    weak_x, weak_y = np.meshgrid(
+        np.arange(152, 200), np.arange(0, 100, 10)
+    )
+    xs = np.concatenate([strong_x.ravel(), weak_x.ravel()])
+    ys = np.concatenate([strong_y.ravel(), weak_y.ravel()])
+    mag = np.concatenate([
+        np.full(strong_x.size, 10.0),
+        np.full(weak_x.size, 1.0),
+    ])
+
+    selected = ShapeMatch._select_spatial_features(
+        xs, ys, mag, count=80
+    )
+
+    assert len(selected) == 80
+    assert np.any(xs[selected] < 100)
+    assert np.any(xs[selected] >= 100)
+    assert selected == ShapeMatch._select_spatial_features(
+        xs, ys, mag, count=80
+    )
+
+
+def test_spatial_feature_selection_keeps_both_rectangle_axes():
+    image = np.zeros((300, 300, 3), dtype=np.uint8)
+    cv2.line(image, (60, 60), (240, 60), (255, 255, 255), 3)
+    cv2.line(image, (60, 240), (240, 240), (255, 255, 255), 3)
+    cv2.line(image, (60, 60), (60, 240), (60, 60, 60), 3)
+    cv2.line(image, (240, 60), (240, 240), (60, 60, 60), 3)
+
+    tool = ShapeMatch()
+    tool._static_train_image = image
+    tool.params["train_roi"] = [0, 0, 300, 300, 0]
+    tool.params["max_features"] = 80
+    tool.params["edge_low"] = 10
+    tool.params["edge_high"] = 30
+    tool.train_pattern()
+
+    px = np.rint(tool._model_x + 150.0).astype(int)
+    py = np.rint(tool._model_y + 150.0).astype(int)
+    assert tool._model_x.size == 80
+    assert np.any(px < 100)
+    assert np.any(px > 200)
+    assert np.any(py < 100)
+    assert np.any(py > 200)
 
 
 def test_manual_selection_enforces_budget_and_minimum():
