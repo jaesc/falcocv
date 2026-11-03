@@ -10,6 +10,7 @@ import cv2
 
 
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi
@@ -21,6 +22,8 @@ from falcocv.core.ocr.industrial_ocr_engine import (
 
 @register_tool(prefix="[IOCR]", default_name="OCR", group="Vision Tools")
 class OCR(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE}
     def __init__(self, name="OCR"):
         super().__init__(name)
         self.params = {

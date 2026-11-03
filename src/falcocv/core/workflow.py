@@ -59,6 +59,36 @@ class Workflow:
     def remove_connection(self, dst_tool, in_name):
         self.connections = [c for c in self.connections if not (c[2] == dst_tool and c[3] == in_name)]
 
+    def rename_port(self, tool, direction, old, new):
+        """Follow a port rename in the connection list.
+
+        ``direction`` is ``"inputs"`` or ``"outputs"``.  Renaming a port keeps
+        the wiring instead of silently breaking it.
+        """
+        if old == new:
+            return
+        updated = []
+        for src, out_name, dst, in_name in self.connections:
+            if direction == "outputs" and src is tool and out_name == old:
+                out_name = new
+            elif direction == "inputs" and dst is tool and in_name == old:
+                in_name = new
+            updated.append((src, out_name, dst, in_name))
+        self.connections = updated
+
+    def remove_port_connections(self, tool, direction, name):
+        """Drop every connection that uses a port about to be removed."""
+        if direction == "outputs":
+            self.connections = [
+                connection for connection in self.connections
+                if not (connection[0] is tool and connection[1] == name)
+            ]
+        else:
+            self.connections = [
+                connection for connection in self.connections
+                if not (connection[2] is tool and connection[3] == name)
+            ]
+
     def reset_execution_status(self):
         """Clear the previous run's timing and error state for every tool."""
         self.last_error = None

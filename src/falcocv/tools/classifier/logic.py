@@ -17,6 +17,7 @@ import cv2
 
 
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output
@@ -41,6 +42,8 @@ _DEFAULT_THRESHOLD = 0.65
 
 @register_tool(prefix="[CLAS]", default_name="Classifier", group="Machine Learning")
 class Classifier(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE}
     def __init__(self, name="Classifier"):
         super().__init__(name)
         self.params = {

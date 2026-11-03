@@ -3,6 +3,7 @@
 import cv2
 import numpy as np
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.config import ConfigManager
@@ -221,6 +222,8 @@ def _apply_op(img_a, img_b, op_type, params):
 
 @register_tool(prefix="[CALC]", default_name="Image Calculator", group="Preprocess")
 class ImageCalculatorTool(BaseTool):
+    input_port_types = {"image_A": IMAGE, "image_B": IMAGE}
+    output_port_types = {"output image": IMAGE}
     def __init__(self, name="ImageCalc"):
         super().__init__(name)
         self.inputs = {"image_A": None, "image_B": None}

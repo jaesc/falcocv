@@ -1,5 +1,6 @@
 # Logic module for Block.
 
+from falcocv.core.port_types import normalize_kind
 from falcocv.core.tool_base import BaseTool
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.workflow import Workflow
@@ -12,6 +13,12 @@ class Block(BaseTool):
         self.inputs = {}
         self.outputs = {}
         self.port_metadata = {"inputs": {}, "outputs": {}}
+
+    def get_input_port_type(self, name: str) -> str:
+        return normalize_kind(self.port_metadata.get("inputs", {}).get(name))
+
+    def get_output_port_type(self, name: str) -> str:
+        return normalize_kind(self.port_metadata.get("outputs", {}).get(name))
 
     def run(self, advance=False):
         self.workflow.run(advance=advance)

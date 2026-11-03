@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import math
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_base import ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
@@ -232,6 +233,8 @@ class MeasurementResult(ToolResult):
 
 @register_tool(prefix="[MEAS]", default_name="Measurement", group="Vision Tools")
 class MeasurementTool(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE}
     def __init__(self, name="Measurement"):
         super().__init__(name)
         self.params = {

@@ -2,6 +2,14 @@ import os
 import sys
 import importlib.util
 from falcocv.core.tool_base import BaseTool, CallbackList
+from falcocv.core.port_types import (
+    ANY,
+    IMAGE,
+    add_port,
+    normalize_kind,
+    remove_port,
+    unique_port_name,
+)
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.script_debugger import TraceDebugger
 
@@ -16,7 +24,11 @@ class PythonScriptTool(BaseTool):
 
     def __init__(self, name="Python Script"):
         super().__init__(name)
-        self.params = {"script_path": "", "script_code": "", "input_ports": ["image_in"], "output_ports": ["image_out"]}
+        self.params = {"script_path": "", "script_code": ""}
+        self.port_metadata = {
+            "inputs": {"input image": IMAGE},
+            "outputs": {"output image": IMAGE},
+        }
         self._instance = None
         self._script_modified_time = 0
         self._script_code_hash = 0
@@ -36,46 +48,65 @@ class PythonScriptTool(BaseTool):
         return self._debugger.active
 
     def _sync_ports(self):
-        self.inputs = {p: self.inputs.get(p, None) for p in self.params.get("input_ports", [])}
-        self.outputs = {p: self.outputs.get(p, None) for p in self.params.get("output_ports", [])}
+        for direction, target in (
+            ("inputs", self.inputs),
+            ("outputs", self.outputs),
+        ):
+            names = list(self.port_metadata.get(direction, {}))
+            current = dict(target)
+            target.clear()
+            target.update({name: current.get(name) for name in names})
 
-    def add_input_port(self, name: str | None = None) -> str:
-        ports = list(self.params.get("input_ports", []))
-        new_name = name or f"in_{len(ports)}"
-        ports.append(new_name)
-        self.params["input_ports"] = ports
+    def get_input_port_type(self, name: str) -> str:
+        return normalize_kind(self.port_metadata.get("inputs", {}).get(name))
+
+    def get_output_port_type(self, name: str) -> str:
+        return normalize_kind(self.port_metadata.get("outputs", {}).get(name))
+
+    def _remove_port_at(self, direction: str, index: int):
+        names = list(self.port_metadata.get(direction, {}))
+        if 0 <= index < len(names):
+            remove_port(self, direction, names[index])
+            self._sync_ports()
+
+    def _set_ports(self, direction: str, names: list[str]):
+        cleaned = [n.strip() for n in names if n.strip()]
+        metadata = self.port_metadata.setdefault(direction, {})
+        previous = dict(metadata)
+        metadata.clear()
+        for name in cleaned:
+            metadata[name] = previous.get(name, ANY)
+        self._sync_ports()
+
+    def add_input_port(self, name: str | None = None, kind: str = ANY) -> str:
+        new_name = add_port(
+            self, "inputs",
+            name or unique_port_name(self, "inputs"),
+            kind,
+        )
         self._sync_ports()
         return new_name
 
-    def add_output_port(self, name: str | None = None) -> str:
-        ports = list(self.params.get("output_ports", []))
-        new_name = name or f"out_{len(ports)}"
-        ports.append(new_name)
-        self.params["output_ports"] = ports
+    def add_output_port(self, name: str | None = None, kind: str = ANY) -> str:
+        new_name = add_port(
+            self, "outputs",
+            name or unique_port_name(self, "outputs"),
+            kind,
+        )
         self._sync_ports()
         return new_name
 
     def remove_input_port(self, index: int):
-        ports = list(self.params.get("input_ports", []))
-        if 0 <= index < len(ports):
-            ports.pop(index)
-            self.params["input_ports"] = ports
-            self._sync_ports()
+        self._remove_port_at("inputs", index)
 
     def remove_output_port(self, index: int):
-        ports = list(self.params.get("output_ports", []))
-        if 0 <= index < len(ports):
-            ports.pop(index)
-            self.params["output_ports"] = ports
-            self._sync_ports()
+        self._remove_port_at("outputs", index)
 
     def set_input_ports(self, names: list[str]):
-        self.params["input_ports"] = [n.strip() for n in names if n.strip()]
-        self._sync_ports()
+        self._set_ports("inputs", names)
 
     def set_output_ports(self, names: list[str]):
-        self.params["output_ports"] = [n.strip() for n in names if n.strip()]
-        self._sync_ports()
+        self._set_ports("outputs", names)
 
     def _load_module(self):
         sp = self.params.get("script_path", "")
@@ -170,9 +201,30 @@ class PythonScriptTool(BaseTool):
                     self.params["script_code"] = f.read()
             except:
                 pass
-        return super().serialize(job_manager)
+        data = super().serialize(job_manager)
+        data["port_metadata"] = self.port_metadata
+        return data
 
     def deserialize(self, data: dict, job_manager=None):
         super().deserialize(data, job_manager)
+        metadata = data.get("port_metadata")
+        if not metadata:
+            # Jobs saved before ports had kinds: seed them as untyped.
+            metadata = {
+                "inputs": {
+                    name: ANY
+                    for name in self.params.get("input_ports", [])
+                },
+                "outputs": {
+                    name: ANY
+                    for name in self.params.get("output_ports", [])
+                },
+            }
+        self.port_metadata = {
+            "inputs": dict(metadata.get("inputs", {})),
+            "outputs": dict(metadata.get("outputs", {})),
+        }
+        for legacy in ("input_ports", "output_ports"):
+            self.params.pop(legacy, None)
         self._sync_ports()
         self._instance = None

@@ -1,10 +1,15 @@
 import numpy as np
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
+from falcocv.core.port_types import IMAGE, PLANE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_3d import calib_from_vimg, get_3d_data
 from falcocv.core.pointcloud_utils import _is_depth_like, propagate_3d
-from falcocv.core.plane_fit import plane_fit as _plane_fit
+from falcocv.core.plane_fit import (
+    PlaneModel,
+    normalize_plane,
+    plane_fit as _plane_fit,
+)
 
 
 class PlaneFitResult(ToolResult):
@@ -24,6 +29,8 @@ class PlaneFitResult(ToolResult):
 
 @register_tool(prefix="[PLAN]", default_name="Plane Fitter", group="3D")
 class PlaneFitter(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE, "plane": PLANE}
     def __init__(self, name="Plane Fitter"):
         super().__init__(name)
         self.params = {
@@ -40,6 +47,7 @@ class PlaneFitter(BaseTool):
         self.outputs = {
             "output image": None,
             "results": ToolResults(),
+            "plane": None,
         }
 
     def run(self, advance=False):
@@ -131,6 +139,11 @@ class PlaneFitter(BaseTool):
             self.set_error("Plane fit failed: invalid plane parameters")
             self._clear_outputs()
             return
+
+        # Fix the normal sense once, here: every consumer receives the same
+        # orientation and heights are positive on the camera side.
+        normal, distance, edge_on = normalize_plane(normal, distance)
+        normal = np.asarray(normal, dtype=np.float32)
 
         selected_indices = np.asarray(output["selected_indices"], dtype=np.int64)
         inlier_mask_sel = np.asarray(output["inlier_mask"], dtype=bool)
@@ -239,6 +252,16 @@ class PlaneFitter(BaseTool):
                     )
 
         self.outputs["output image"] = out
+        self.outputs["plane"] = PlaneModel(
+            normal=tuple(float(value) for value in normal),
+            distance=float(distance),
+            center=tuple(float(value) for value in center),
+            rms_error=float(rms_error),
+            inlier_ratio=float(inlier_ratio),
+            point_count=int(total),
+            calib=tuple(float(value) for value in calib),
+            edge_on=bool(edge_on),
+        )
         self.outputs["results"] = ToolResults([PlaneFitResult(
             normal, center, distance, inlier_count, inlier_ratio, rms_error, total, polygon_2d
         )])
@@ -248,6 +271,7 @@ class PlaneFitter(BaseTool):
     def _clear_outputs(self):
         self.outputs["output image"] = None
         self.outputs["results"] = ToolResults()
+        self.outputs["plane"] = None
 
     def serialize(self, job_manager=None):
         data = super().serialize(job_manager)

@@ -2,8 +2,7 @@ import os
 import sys
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog,
-                             QTableWidget, QTableWidgetItem, QHeaderView, QTabWidget,
-                             QSplitter)
+                             QTabWidget, QSplitter)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.Qsci import QsciScintilla
@@ -11,6 +10,7 @@ from falcocv.ui.style import INFO, SUCCESS, WARNING, ALT_BG, BORDER, TEXT, TEXT_
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.widgets.script_editor import ScriptEditor, FindReplaceBar
 from falcocv.ui.widgets.debug_panels import DebugToolbar, VariableInspector, WatchPanel
+from falcocv.ui.widgets.port_table import PortTable
 from falcocv.core.tool_base import BaseTool
 
 _PY_VER = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -42,9 +42,9 @@ class CustomTool:
     #     dict {port_name: value} mapping to the tool output ports.
     def process(self, inputs):
         # Get input image (always VisionImage)
-        v_img: VisionImage = inputs.get("image_in")
+        v_img: VisionImage = inputs.get("input image")
         if v_img is None:
-            return {"image_out": None}
+            return {"output image": None}
 
         # Fixture offset of the image in job coordinates
         fx, fy, fangle = v_img.x, v_img.y, v_img.angle
@@ -97,7 +97,7 @@ class CustomTool:
 
         # Return results mapped to output ports
         return {
-            "image_out": out,
+            "output image": out,
         }
 '''.replace("{}", _PY_VER)
 
@@ -371,58 +371,10 @@ class PythonScriptConfig(QWidget):
         panel = QWidget()
         layout = QHBoxLayout(panel)
         layout.setContentsMargins(5, 5, 5, 5)
-
-        from falcocv.core.config import ConfigManager
-        config = ConfigManager()
-        c_in = config.get_color("tool_input")
-        c_out = config.get_color("tool_output")
-
-        # Inputs
-        input_container = QWidget()
-        input_vbox = QVBoxLayout(input_container)
-        input_vbox.addWidget(QLabel(f"<b style='color: {c_in};'>INPUTS</b>"))
-        self.tbl_inputs = QTableWidget(0, 1)
-        self.tbl_inputs.horizontalHeader().setStretchLastSection(True)
-        self.tbl_inputs.horizontalHeader().hide()
-        input_vbox.addWidget(self.tbl_inputs)
-
-        btn_in_row = QHBoxLayout()
-        btn_add_in = QPushButton("+ Add Input")
-        btn_add_in.setAutoDefault(False)
-        btn_add_in.clicked.connect(self._on_add_input)
-        btn_del_in = QPushButton("- Delete Input")
-        btn_del_in.setAutoDefault(False)
-        btn_del_in.clicked.connect(self._on_del_input)
-        btn_in_row.addWidget(btn_add_in)
-        btn_in_row.addWidget(btn_del_in)
-        input_vbox.addLayout(btn_in_row)
-        layout.addWidget(input_container)
-
-        # Outputs
-        output_container = QWidget()
-        output_vbox = QVBoxLayout(output_container)
-        output_vbox.addWidget(QLabel(f"<b style='color: {c_out};'>OUTPUTS</b>"))
-        self.tbl_outputs = QTableWidget(0, 1)
-        self.tbl_outputs.horizontalHeader().setStretchLastSection(True)
-        self.tbl_outputs.horizontalHeader().hide()
-        output_vbox.addWidget(self.tbl_outputs)
-
-        btn_out_row = QHBoxLayout()
-        btn_add_out = QPushButton("+ Add Output")
-        btn_add_out.setAutoDefault(False)
-        btn_add_out.clicked.connect(self._on_add_output)
-        btn_del_out = QPushButton("- Delete Output")
-        btn_del_out.setAutoDefault(False)
-        btn_del_out.clicked.connect(self._on_del_output)
-        btn_out_row.addWidget(btn_add_out)
-        btn_out_row.addWidget(btn_del_out)
-        output_vbox.addLayout(btn_out_row)
-        layout.addWidget(output_container)
-
-        self._refresh_tables()
-        self.tbl_inputs.cellChanged.connect(self._on_table_changed)
-        self.tbl_outputs.cellChanged.connect(self._on_table_changed)
-
+        self.input_table = PortTable(self.tool, "inputs")
+        self.output_table = PortTable(self.tool, "outputs")
+        layout.addWidget(self.input_table)
+        layout.addWidget(self.output_table)
         return panel
 
     # --- Help tab ---
@@ -629,68 +581,3 @@ class PythonScriptConfig(QWidget):
         self.tool.params["script_code"] = self.editor.text()
 
     # --- Terminals tab handlers ---
-
-    def _refresh_tables(self):
-        self.tbl_inputs.blockSignals(True)
-        self.tbl_inputs.setRowCount(0)
-        for p in self.tool.params.get("input_ports", []):
-            self._add_row(self.tbl_inputs, p)
-        self.tbl_inputs.blockSignals(False)
-
-        self.tbl_outputs.blockSignals(True)
-        self.tbl_outputs.setRowCount(0)
-        for p in self.tool.params.get("output_ports", []):
-            self._add_row(self.tbl_outputs, p)
-        self.tbl_outputs.blockSignals(False)
-
-    def _add_row(self, table, text):
-        r = table.rowCount()
-        table.insertRow(r)
-        table.setItem(r, 0, QTableWidgetItem(text))
-
-    def _on_add_input(self):
-        self.tool.add_input_port()
-        self._refresh_tables()
-        self.tool.structure_changed.emit()
-        self.tool.data_changed.emit()
-
-    def _on_add_output(self):
-        self.tool.add_output_port()
-        self._refresh_tables()
-        self.tool.structure_changed.emit()
-        self.tool.data_changed.emit()
-
-    def _on_del_input(self):
-        row = self.tbl_inputs.currentRow()
-        if row >= 0:
-            self.tool.remove_input_port(row)
-            self._refresh_tables()
-            self.tool.structure_changed.emit()
-            self.tool.data_changed.emit()
-
-    def _on_del_output(self):
-        row = self.tbl_outputs.currentRow()
-        if row >= 0:
-            self.tool.remove_output_port(row)
-            self._refresh_tables()
-            self.tool.structure_changed.emit()
-            self.tool.data_changed.emit()
-
-    def _on_table_changed(self):
-        in_ports = []
-        for r in range(self.tbl_inputs.rowCount()):
-            item = self.tbl_inputs.item(r, 0)
-            if item and item.text().strip():
-                in_ports.append(item.text().strip())
-
-        out_ports = []
-        for r in range(self.tbl_outputs.rowCount()):
-            item = self.tbl_outputs.item(r, 0)
-            if item and item.text().strip():
-                out_ports.append(item.text().strip())
-
-        self.tool.set_input_ports(in_ports)
-        self.tool.set_output_ports(out_ports)
-        self._refresh_tables()
-        self.tool.structure_changed.emit()
-        self.tool.data_changed.emit()

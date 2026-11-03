@@ -916,15 +916,15 @@ TOOL_HELP["Python Script"] = {
          "description": "Embedded Python code. The template shows the expected CustomTool class structure."},
         {"name": "script_path", "default": '""',
          "description": "Path to an external Python file (alternative to embedded code)."},
-        {"name": "input_ports", "default": "[]",
-         "description": "List of input port names. Each port becomes an input in the script."},
-        {"name": "output_ports", "default": "[]",
-         "description": "List of output port names. The script sets these via self.set_output()."},
+        {"name": "port_metadata", "default": "{}",
+         "description": "Input and output ports with their kind (Image, Plane or Any). Ports are created and typed in the Terminals tab."},
     ],
     "notes": (
         "The script must define a CustomTool subclass with __init__() and process(inputs) methods. "
         "Access inputs by name via the inputs dict. Set outputs with self.set_output(name, value). "
         "Draw overlays with self.draw_*() methods. "
+        "Port kinds filter the connection menu, exactly like a Block: an Image input only accepts "
+        "Image outputs from earlier tools. "
         "The integrated debugger supports breakpoints (click line numbers), watch expressions, "
         "step-over (skip into function calls), step-into, and step-out. "
         "Breakpoints persist while the config window is open and are auto-cleaned when it closes."
@@ -944,12 +944,13 @@ TOOL_HELP["Block"] = {
     "outputs": [],
     "params": [
         {"name": "port_metadata", "default": "{}",
-         "description": "Dict with 'inputs' and 'outputs' lists defining the block's external interface."},
+         "description": "Dict with 'inputs' and 'outputs' entries defining the block's external interface and the kind of each port: Image, Plane or Any."},
     ],
     "notes": (
         "Double-click a Block to edit its internal workflow. The block's inputs and outputs "
         "map to the external ports shown in the workflow tree. Blocks can be nested (a block "
-        "inside another block) for hierarchical pipeline organization."
+        "inside another block) for hierarchical pipeline organization. Port kinds filter the "
+        "connection menu: an Image input only accepts Image outputs from earlier tools."
     ),
     "see_also": ["Python Script"],
 }

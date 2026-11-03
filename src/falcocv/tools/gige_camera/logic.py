@@ -5,6 +5,7 @@ import numpy as np
 import threading
 import os
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.config import ConfigManager
 from falcocv.core.vision_image import VisionImage
@@ -27,6 +28,7 @@ _POOL_LOCK = threading.Lock()
 
 @register_tool(prefix="[GIGE]", default_name="GigE Camera", group="Acquisition")
 class GigeCameraLoader(BaseTool):
+    output_port_types = {"output image": IMAGE}
     """
     Acquires frames from a GigE Vision or USB3 Vision camera using Harvesters + GenTL.
     Supports persistent Custom GenICam features and Serial Number binding.

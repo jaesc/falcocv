@@ -5,7 +5,11 @@ import pytest
 
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import ensure_pointcloud_data
+from falcocv.core.plane_fit import PlaneModel, normalize_plane, plane_height
 from falcocv.core.roi_3d import auto_fit_z, add_roi, update_roi_2d_in_params
+from falcocv.core.tool_base import BaseTool
+from falcocv.core.workflow import Workflow
+from falcocv.core.workflow_controller import WorkflowController
 from falcocv.tools.plane_fitter.logic import PlaneFitter
 
 
@@ -375,6 +379,105 @@ def test_roi_2d_to_3d_sync_keeps_the_rotation():
 
     assert "rotation" in captured
     assert captured["rotation"] == pytest.approx(-20.0)
+
+
+def test_plane_model_is_published_and_points_to_the_camera():
+    depth = _make_depth_plane(200, 200)
+    vimg = VisionImage(depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0)
+    ensure_pointcloud_data(vimg, target_points=100_000)
+
+    tool = PlaneFitter()
+    tool.set_input("input image", vimg)
+    tool.run()
+
+    assert tool.last_error is None
+    plane = tool.outputs.get("plane")
+    assert isinstance(plane, PlaneModel)
+    normal = np.asarray(plane.normal)
+    assert abs(float(np.linalg.norm(normal)) - 1.0) < 1e-6
+    assert normal[2] <= 0.0
+    assert plane.edge_on is False
+    assert plane.calib == (1.0, 1.0, 1.0, 0.0)
+
+    result = (tool.outputs.get("results") or [])[0]
+    assert np.allclose(np.asarray(result.get("normal")), normal)
+
+
+def test_plane_height_is_positive_on_the_camera_side():
+    plane = PlaneModel(
+        normal=(0.0, 0.0, -1.0),
+        distance=-20.0,
+        center=(0.0, 0.0, 20.0),
+    )
+    points = np.array(
+        [[0.0, 0.0, 18.0], [0.0, 0.0, 22.0]], dtype=np.float64
+    )
+    heights = plane_height(plane, points)
+    assert heights[0] == pytest.approx(2.0)
+    assert heights[1] == pytest.approx(-2.0)
+
+
+def test_normalize_plane_fixes_the_sense_both_ways():
+    first = normalize_plane((0.0, 0.0, 1.0), 20.0)
+    second = normalize_plane((0.0, 0.0, -1.0), -20.0)
+    assert first[0] == second[0]
+    assert first[1] == second[1]
+    assert first[2] is False
+
+
+def test_normalize_plane_flags_edge_on_planes():
+    normal, distance, edge_on = normalize_plane((1.0, 0.0, 1e-6), 5.0)
+    assert edge_on is True
+    assert normal[0] < 0.0
+    assert distance == pytest.approx(-5.0)
+
+
+class _ImageSource(BaseTool):
+    def __init__(self, image):
+        super().__init__("Image Source")
+        self.inputs = {}
+        self.outputs = {"output image": None}
+        self._image = image
+
+    def run(self, advance=False):
+        self.outputs["output image"] = self._image
+
+
+class _PlaneConsumer(BaseTool):
+    def __init__(self):
+        super().__init__("Plane Consumer")
+        self.inputs = {"reference plane": None}
+        self.outputs = {"seen": None}
+
+    def run(self, advance=False):
+        self.outputs["seen"] = self.inputs.get("reference plane")
+
+
+def test_plane_output_flows_through_a_connection():
+    depth = _make_depth_plane(120, 120)
+    vimg = VisionImage(depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0)
+    ensure_pointcloud_data(vimg, target_points=50_000)
+
+    source = _ImageSource(vimg)
+    producer = PlaneFitter("Plane Fitter_0")
+    consumer = _PlaneConsumer()
+
+    workflow = Workflow()
+    workflow.add_tool(source)
+    workflow.add_tool(producer)
+    workflow.add_tool(consumer)
+    workflow.connect(source, "output image", producer, "input image")
+    workflow.connect(producer, "plane", consumer, "reference plane")
+
+    controller = WorkflowController(workflow)
+    controller.set_scheduler(lambda callback: callback())
+    controller.run(advance=False)
+
+    assert producer.last_error is None
+    assert consumer.last_error is None
+    seen = consumer.outputs.get("seen")
+    assert isinstance(seen, PlaneModel)
+    assert seen is producer.outputs.get("plane")
 
 
 def test_3d_draw_backprojects_to_image_roi():

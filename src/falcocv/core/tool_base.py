@@ -2,6 +2,8 @@ import abc
 import uuid
 import time
 
+from falcocv.core.port_types import normalize_kind
+
 
 class ToolResult:
     def __init__(self, **kwargs):
@@ -64,6 +66,11 @@ class ToolResults(list):
 
 
 class BaseTool(abc.ABC):
+    #: Declared port kinds, e.g. ``{"input image": IMAGE}``.  Ports that are
+    #: not listed are untyped (``ANY``); never inferred from the port name.
+    input_port_types: dict[str, str] = {}
+    output_port_types: dict[str, str] = {}
+
     def __init__(self, name):
         self.name = name
         self.prefix = ""
@@ -71,6 +78,7 @@ class BaseTool(abc.ABC):
         self.inputs = {}
         self.outputs = {}
         self.params = {}
+        self.port_metadata = {"inputs": {}, "outputs": {}}
         self.roi = None
         self.enabled = True
         self.last_execution_time_ms = 0.0
@@ -139,6 +147,18 @@ class BaseTool(abc.ABC):
 
     def set_input(self, name, value):
         self.inputs[name] = value
+
+    def get_input_port_type(self, name: str) -> str:
+        declared = self.input_port_types.get(name)
+        if declared is None:
+            declared = self.port_metadata.get("inputs", {}).get(name)
+        return normalize_kind(declared)
+
+    def get_output_port_type(self, name: str) -> str:
+        declared = self.output_port_types.get(name)
+        if declared is None:
+            declared = self.port_metadata.get("outputs", {}).get(name)
+        return normalize_kind(declared)
 
     def get_output(self, name):
         return self.outputs.get(name)

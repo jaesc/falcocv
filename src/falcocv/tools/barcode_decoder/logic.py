@@ -3,6 +3,7 @@ import math
 import cv2
 import numpy as np
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_base import ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
@@ -19,6 +20,8 @@ class CodeResult(ToolResult):
 
 @register_tool(prefix="[BDEC]", default_name="Barcode Decoder", group="Vision Tools")
 class BarcodeDecoder(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE}
     """Detect and decode QR codes, 1D barcodes, DataMatrix, and ArUco markers.
 
     Backends:

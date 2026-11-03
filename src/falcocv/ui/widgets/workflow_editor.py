@@ -374,16 +374,16 @@ class WorkflowEditor(QWidget):
             return
 
         from falcocv.tools.block import Block
+        from falcocv.core.port_types import ANY, IMAGE, normalize_kind
         from falcocv.core.vision_image import VisionImage
 
-        def is_image(val, name=None):
-            if val is None:
-                if not name:
-                    return False
-                lower = name.lower()
-                return any(keyword in lower for keyword in ["image", "mask", "frame", "img", "rgb", "bgr", "gray", "grey", "depth", "range"])
-
-            # Extract raw array for checks if it's a VisionImage
+        def is_viewable(kind, val):
+            """Show declared image ports, plus untyped ports holding a frame."""
+            kind = normalize_kind(kind)
+            if kind == IMAGE:
+                return True
+            if kind != ANY:
+                return False
             raw = val.data if isinstance(val, VisionImage) else val
             if not isinstance(raw, np.ndarray):
                 return False
@@ -393,26 +393,26 @@ class WorkflowEditor(QWidget):
                 return raw.dtype.kind in "uif"
             return False
 
-        # Build the new record list.
+        # Build the new record list from the declared port kinds; the port
+        # name is never inspected.
         records = []
 
         # 1. Inputs of the current level (if we are inside a block)
         if self.workflow.parent_tool:
-            for in_name, val in sorted(self.workflow.parent_tool.inputs.items()):
-                if is_image(val, in_name):
+            parent = self.workflow.parent_tool
+            for in_name, val in sorted(parent.inputs.items()):
+                if is_viewable(parent.get_input_port_type(in_name), val):
                     records.append(f"Inputs.{in_name}")
 
         # 2. Tools at this level
         for tool in self.workflow.tools:
             if isinstance(tool, Block):
-                # For blocks, check outputs
                 for out_name, val in sorted(tool.outputs.items()):
-                    if is_image(val, out_name):
+                    if is_viewable(tool.get_output_port_type(out_name), val):
                         records.append(f"{tool.name}.Outputs.{out_name}")
             else:
-                # Normal tools
                 for out_name, val in sorted(tool.outputs.items()):
-                    if is_image(val, out_name):
+                    if is_viewable(tool.get_output_port_type(out_name), val):
                         records.append(f"{tool.name}.{out_name}")
 
         # Rebuild the combo only when the record list actually changes.

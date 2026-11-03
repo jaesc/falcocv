@@ -207,6 +207,27 @@ cpp/bin/       → local kernel build output (gitignored)
   The output keeps the original range data, calibration and `_3d_data` by
   reference, and sets the 2D fixture when `act_as_fixture` is enabled. No
   reference plane is required for this matching.
+- **Workflow port types** -> every tool declares its image and plane ports as
+  class attributes (`input_port_types` / `output_port_types` with `IMAGE` /
+  `PLANE`); unlisted ports are `ANY`.  Never infer a kind from the port name.
+  The connection menu only offers earlier tools (workflow order, which also
+  makes cycles impossible) and compatible kinds: an `ANY` output only feeds
+  `ANY` inputs, so a typed input cannot be wired to `results`.  Blocks type
+  their dynamic ports through `port_metadata` (`Image` / `Plane` / `Any`) and
+  answer `get_input_port_type` / `get_output_port_type` from it.  A new image
+  port must be declared: `tests/test_port_types.py` fails otherwise.  Both use
+  the shared `ui/widgets/port_table.py`, which edits the name and the kind;
+  renaming follows `Workflow.rename_port` and removing drops
+  `Workflow.remove_port_connections`, so the wiring is never left dangling.
+  The viewer's record selector also uses the port kinds (plus a value check for
+  untyped ports); it never inspects port names.
+- **PlaneModel** -> `PlaneFitter` publishes `outputs["plane"]` as a
+  `core.plane_fit.PlaneModel`.  The normal is unit length and its sense is
+  fixed at creation (points towards the camera, `normal[2] <= 0`), so
+  `plane.height(point) > 0` means the point is above the plane.  Consumers
+  connect it to a `reference plane` input and must not flip the sign again.
+  `calib` is a guard: warn when it differs from the consumer image.  `edge_on`
+  marks a plane seen edge-on, where heights are not meaningful.
 - **3D ROI model** -> a 3D ROI is a rotated 2D rectangle plus a Z band, not a
   6-DoF box.  `roi_2d_to_3d` returns `(center, size, z_min, z_max, angle)` with
   the angle flipped to world degrees (`-image angle`), the same convention as

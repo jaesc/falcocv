@@ -370,6 +370,8 @@ class WorkflowTree(QTreeWidget):
             elif isinstance(val, ToolResults):
                 out_item.setText(1, f"({val.Count} results)")
                 out_item.setChildIndicatorPolicy(QTreeWidgetItem.ChildIndicatorPolicy.ShowIndicator)
+            elif val is not None:
+                out_item.setText(1, type(val).__name__)
 
             out_item.setFlags(Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled)
 
@@ -755,37 +757,57 @@ class WorkflowTree(QTreeWidget):
             self.tool_selected.emit(tool)
 
     def show_connection_menu(self, item):
+        from falcocv.core.port_types import (
+            connection_candidates,
+            parent_input_candidates,
+        )
+
         dst_tool = item.data(0, Qt.ItemDataRole.UserRole + 1)
         if not dst_tool:
             dst_tool = self.get_tool_from_item(item.parent())
-            
+
         in_name = item.data(1, Qt.ItemDataRole.UserRole)
-        
+
         menu = QMenu(self)
         menu.setStyleSheet(f"background-color: {MENU_BG}; color: {WHITE};")
-        
+
         none_action = menu.addAction("Disconnect")
         none_action.triggered.connect(lambda: self.apply_connection(None, None, dst_tool, in_name))
         menu.addSeparator()
-        
+
         is_block_output = (dst_tool == self._workflow.parent_tool)
-        
-        if not is_block_output and self._workflow.parent_tool:
-            for b_in_name in self._workflow.parent_tool.inputs:
-                action = menu.addAction(f"Inputs.{b_in_name}")
-                action.triggered.connect(lambda checked, s=self._workflow.parent_tool, o=b_in_name: 
-                                         self.apply_connection(s, o, dst_tool, in_name))
+
+        parent_sources = [] if is_block_output else parent_input_candidates(
+            self._workflow, dst_tool, in_name
+        )
+        for _parent, source_name in parent_sources:
+            action = menu.addAction(f"Inputs.{source_name}")
+            action.triggered.connect(
+                lambda checked, s=self._workflow.parent_tool, o=source_name:
+                self.apply_connection(s, o, dst_tool, in_name)
+            )
+        if parent_sources:
             menu.addSeparator()
 
-        for tool in self._workflow.tools:
-            if tool == dst_tool: continue
-            
+        candidates = connection_candidates(self._workflow, dst_tool, in_name)
+        if not candidates and not parent_sources:
+            empty = menu.addAction("(no compatible outputs)")
+            empty.setEnabled(False)
+            menu.exec(QCursor.pos())
+            return
+
+        grouped = {}
+        for tool, out_name in candidates:
+            grouped.setdefault(tool, []).append(out_name)
+        for tool, out_names in grouped.items():
             tool_menu = menu.addMenu(tool.name)
             tool_menu.setStyleSheet(f"background-color: {MENU_BG}; color: {WHITE};")
-            for out_name in tool.outputs:
+            for out_name in out_names:
                 action = tool_menu.addAction(out_name)
-                action.triggered.connect(lambda checked, s=tool, o=out_name: 
-                                         self.apply_connection(s, o, dst_tool, in_name))
+                action.triggered.connect(
+                    lambda checked, s=tool, o=out_name:
+                    self.apply_connection(s, o, dst_tool, in_name)
+                )
 
         menu.exec(QCursor.pos())
 

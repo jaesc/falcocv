@@ -3,6 +3,7 @@
 import cv2
 import numpy as np
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_utils import extract_roi, create_roi_only_output, composite_roi_to_full
@@ -407,6 +408,8 @@ def apply_filter(img, ftype, params):
 
 @register_tool(prefix="[FILT]", default_name="Filters", group="Preprocess")
 class FiltersTool(BaseTool):
+    input_port_types = {"input image": IMAGE}
+    output_port_types = {"output image": IMAGE}
     def __init__(self, name="Filters"):
         super().__init__(name)
         self.inputs = {"input image": None}

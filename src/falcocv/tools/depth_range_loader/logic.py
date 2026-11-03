@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from falcocv.core.tool_base import BaseTool
+from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import generate_pointcloud
@@ -130,6 +131,7 @@ def _convert_depth(raw, scale):
 
 @register_tool(prefix="[DPTH]", default_name="Depth Range Loader", group="Acquisition")
 class DepthRangeLoader(BaseTool):
+    output_port_types = {"output image": IMAGE}
     """Loads single-channel range / depth images (FCD, TIFF, PNG, etc.) as float32.
     Supports single-file and folder-stack modes.
     3D point cloud is generated eagerly in C++ when generate_3d is enabled."""

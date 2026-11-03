@@ -216,4 +216,4 @@ def test_python_script_without_script_is_an_error():
     tool = PythonScriptTool()
     tool.run()
     assert tool.last_error == "No script configured"
-    assert tool.outputs["image_out"] is None
+    assert tool.outputs["output image"] is None

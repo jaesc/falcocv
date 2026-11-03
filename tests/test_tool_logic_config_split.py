@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 import unittest
 
+from falcocv.core.port_types import ANY
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.overlay_layer import OverlayType
 
@@ -77,8 +78,9 @@ class TestPythonScriptPortCRUD(unittest.TestCase):
 
     def test_add_input_port(self):
         name = self.tool.add_input_port()
-        self.assertEqual(name, "in_1")
+        self.assertEqual(name, "Port_1")
         self.assertIn(name, self.tool.inputs)
+        self.assertEqual(self.tool.get_input_port_type(name), ANY)
 
     def test_add_output_port_with_name(self):
         name = self.tool.add_output_port("custom_out")
@@ -88,12 +90,19 @@ class TestPythonScriptPortCRUD(unittest.TestCase):
     def test_remove_input_port(self):
         self.tool.add_input_port()
         self.tool.remove_input_port(0)
-        self.assertEqual(len(self.tool.params["input_ports"]), 1)
-        self.assertEqual(list(self.tool.inputs.keys()), ["in_1"])
+        self.assertEqual(
+            list(self.tool.inputs.keys()), ["Port_1"]
+        )
+        self.assertEqual(
+            list(self.tool.port_metadata["inputs"].keys()), ["Port_1"]
+        )
 
     def test_set_ports_filters_empty_names(self):
         self.tool.set_input_ports(["a", "", "b", "   "])
-        self.assertEqual(self.tool.params["input_ports"], ["a", "b"])
+        self.assertEqual(
+            list(self.tool.port_metadata["inputs"].keys()), ["a", "b"]
+        )
+        self.assertEqual(list(self.tool.inputs.keys()), ["a", "b"])
 
 
 class TestGigeCameraLogic(unittest.TestCase):

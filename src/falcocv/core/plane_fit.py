@@ -7,6 +7,7 @@ Z ranges, LSQ/RANSAC fitting and the plane/image-box intersection polygon.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -14,6 +15,71 @@ try:
     from _falco_kernel import plane_fit as _kernel_plane_fit
 except ImportError:
     _kernel_plane_fit = None
+
+
+@dataclass(frozen=True)
+class PlaneModel:
+    """A plane in world coordinates with a deterministic normal sense.
+
+    ``normal`` is unit length and points towards the camera
+    (``normal[2] <= 0``), so ``height(point) > 0`` means the point is above the
+    plane, closer to the camera.  A plane has two equivalent normals; fixing
+    the sense here keeps every consumer from having to guess.
+
+    ``calib`` is the ``(scale_x, scale_y, scale_z, offset_z)`` used to build
+    the world coordinates.  It is a guard, not geometry: a consumer with a
+    different calibration would get wrong heights without any other symptom.
+    """
+
+    normal: tuple[float, float, float]
+    distance: float
+    center: tuple[float, float, float]
+    rms_error: float = 0.0
+    inlier_ratio: float = 0.0
+    point_count: int = 0
+    calib: tuple[float, float, float, float] | None = None
+    edge_on: bool = False
+
+    def height(self, points) -> np.ndarray:
+        """Signed height of ``points`` above the plane (positive = camera side)."""
+        points = np.asarray(points, dtype=np.float64)
+        normal = np.asarray(self.normal, dtype=np.float64)
+        center = np.asarray(self.center, dtype=np.float64)
+        return (points - center) @ normal
+
+
+def plane_height(plane: PlaneModel, points) -> np.ndarray:
+    """Signed height of ``points`` above ``plane`` (positive = camera side)."""
+    return plane.height(points)
+
+
+def normalize_plane(normal, distance, z_epsilon=1e-3):
+    """Normalise a plane and fix the normal sense.
+
+    Returns ``(unit_normal, distance, edge_on)``.  ``edge_on`` is True when the
+    plane is almost parallel to the optical axis, where a height map is not
+    meaningful.
+    """
+    values = np.asarray(normal, dtype=np.float64).reshape(3)
+    length = float(np.linalg.norm(values))
+    if length < 1e-12:
+        return (0.0, 0.0, -1.0), -float(distance), True
+    values = values / length
+    plane_distance = float(distance) / length
+    if values[2] > 0.0:
+        values = -values
+        plane_distance = -plane_distance
+    elif abs(values[2]) < z_epsilon:
+        # Edge-on: the Z sense carries no information, so pick a deterministic
+        # one from the first non-zero component.
+        for value in values:
+            if abs(value) > 1e-9:
+                if value < 0.0:
+                    values = -values
+                    plane_distance = -plane_distance
+                break
+    edge_on = abs(float(values[2])) < z_epsilon
+    return tuple(float(value) for value in values), plane_distance, edge_on
 
 
 def _svd_fit_plane(points):
