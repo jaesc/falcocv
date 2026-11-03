@@ -129,17 +129,17 @@ def _transform(template, angle, scale):
 # -------------------------------------------------------------------------
 
 
-class PatternMatchResult(ToolResult):
+class TemplateMatchResult(ToolResult):
     def __init__(self, id, x, y, angle, scale, score):
         super().__init__(id=id, x=x, y=y, angle=angle, scale=scale, score=score)
 
 
-@register_tool(prefix="[PATT]", default_name="Pattern Matcher", group="Vision Tools")
-class PatternMatcher(BaseTool):
+@register_tool(prefix="[TMPL]", default_name="Template Match", group="Vision Tools")
+class TemplateMatch(BaseTool):
     """
-    Industrial Multi-Scale Pattern Matcher with User-Defined Origin.
+    Industrial Multi-Scale Template Match with User-Defined Origin.
     """
-    def __init__(self, name="Pattern Matcher"):
+    def __init__(self, name="Template Match"):
         super().__init__(name)
         self.params = {
             "train_roi": [0, 0, 0, 0, 0],
@@ -281,8 +281,8 @@ class PatternMatcher(BaseTool):
         self.outputs["trained"] = False
 
     def get_config_widget(self):
-        from .config import PatternMatcherConfig
-        return PatternMatcherConfig(self)
+        from .config import TemplateMatchConfig
+        return TemplateMatchConfig(self)
 
     def train_from_roi(self, x, y, w, h, a=0):
         """Train from a ROI in fixture coordinates (current config API)."""
@@ -466,7 +466,7 @@ class PatternMatcher(BaseTool):
 
         if not self.is_trained:
             self.outputs["output image"] = vision_img
-            self.set_error("PatternMatcher is not trained")
+            self.set_error("TemplateMatch is not trained")
             self.data_changed.emit()
             return
 
@@ -692,7 +692,7 @@ class PatternMatcher(BaseTool):
 
             # Final result is the transformed defined origin
             cx, cy = transform_pt(tw / 2.0 + ox, th / 2.0 + oy)
-            final_results.append(PatternMatchResult(
+            final_results.append(TemplateMatchResult(
                 id=idx, x=cx, y=cy, angle=angle, scale=r["scale"], score=r["score"]
             ))
 

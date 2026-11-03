@@ -9,7 +9,7 @@ from falcocv.tools.barcode_decoder.logic import BarcodeDecoder
 from falcocv.tools.blob_detector.logic import BlobDetector
 from falcocv.tools.edge_detection.logic import EdgeDetection
 from falcocv.tools.ocr.logic import OCR
-from falcocv.tools.pattern_matcher.logic import PatternMatcher
+from falcocv.tools.template_match.logic import TemplateMatch
 from falcocv.tools.shape_match.logic import ShapeMatch
 
 
@@ -69,7 +69,7 @@ def _trained_pattern():
     template = np.zeros((80, 60, 3), np.uint8)
     cv2.rectangle(template, (15, 10), (25, 65), (255, 255, 255), -1)
     cv2.rectangle(template, (15, 55), (55, 65), (255, 255, 255), -1)
-    tool = PatternMatcher("Pattern Matcher")
+    tool = TemplateMatch("Template Match")
     tool._static_train_image = template.copy()
     tool.params.update(
         {
@@ -97,7 +97,7 @@ def _trained_pattern():
 
 def test_supported_tools_default_to_one_required_result():
     assert ShapeMatch().params["min_results"] == 1
-    assert PatternMatcher().params["min_results"] == 1
+    assert TemplateMatch().params["min_results"] == 1
     assert BlobDetector().params["min_results"] == 1
     assert EdgeDetection().params["min_results"] == 1
     assert BarcodeDecoder().params["min_results"] == 1
@@ -117,7 +117,7 @@ def test_shape_match_errors_below_min_results():
     assert tool.last_error is None
 
 
-def test_pattern_matcher_errors_below_min_results():
+def test_template_match_errors_below_min_results():
     tool = _trained_pattern()
     tool.inputs["input image"] = VisionImage(_blank_image())
     tool.params["min_results"] = 1

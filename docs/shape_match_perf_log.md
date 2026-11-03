@@ -589,12 +589,12 @@ full-resolution grids (+-4 px step 2, then +-1 px step 0.5) scored with
 `shape_match_score_translations(use_distance=False)`, i.e. gradient alignment
 instead of distance.  Angle and scale untouched.
 
-Measured on 1005 real frames, with the job's PatternMatcher as an independent
+Measured on 1005 real frames, with the job's TemplateMatch as an independent
 third opinion:
 
 | | without polish | with polish |
 |---|---:|---:|
-| median px to PatternMatcher | 0.995 | 1.048 |
+| median px to TemplateMatch | 0.995 | 1.048 |
 | p90 | 2.230 | 2.007 |
 | p95 | 2.970 | 2.398 |
 | max | 84.4 | 87.3 |
@@ -885,7 +885,7 @@ Status:
 11. Geometry validation gate - **run, failed on precision**: 1005 real frames
     (`VisA/pcb4` Normal), 0 lost / 0 extra / 31 % faster, but translation is
     less precise than hybrid (median 1.00 vs 0.65 px against the job's
-    PatternMatcher, max 85 px on one frame).  Details in
+    TemplateMatch, max 85 px on one frame).  Details in
     `docs/SHAPE_MATCH_VALIDATION.md`.  Geometry stays the fast mode; hybrid
     remains the precision reference.
 

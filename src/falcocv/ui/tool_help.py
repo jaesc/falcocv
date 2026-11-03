@@ -21,7 +21,7 @@ TYPE_TO_HELP_KEY = {
     "HistogramTool": "Histogram",
     "Histogram": "Histogram",
     "ImageCalculatorTool": "Image Calculator",
-    "PatternMatcher": "Pattern Matcher",
+    "TemplateMatch": "Template Match",
     "ShapeMatch": "Shape Match",
     "BarcodeDecoder": "Barcode Decoder",
     "MeasurementTool": "Measurement",
@@ -229,7 +229,7 @@ TOOL_HELP["Blob Detector"] = {
         "The binary mask output is a full-size image with the ROI area filled and the rest black — "
         "useful for feeding into downstream tools. Coordinates are in image-pixel space, not fixture-relative."
     ),
-    "see_also": ["Filters", "Pattern Matcher"],
+    "see_also": ["Filters", "Template Match"],
 }
 
 TOOL_HELP["Filters"] = {
@@ -466,8 +466,8 @@ TOOL_HELP["Histogram"] = {
     "see_also": ["Filters", "Blob Detector"],
 }
 
-TOOL_HELP["Pattern Matcher"] = {
-    "name": "Pattern Matcher",
+TOOL_HELP["Template Match"] = {
+    "name": "Template Match",
     "category": "Vision Tools",
     "purpose": (
         "Industrial multi-scale template matching with rotation and scale invariance. "
@@ -486,7 +486,7 @@ TOOL_HELP["Pattern Matcher"] = {
          "description": "Number of matches found."},
         {"name": "trained", "type": "bool",
          "description": "True if a template has been trained."},
-        {"name": "results", "type": "ToolResults[PatternMatchResult]",
+        {"name": "results", "type": "ToolResults[TemplateMatchResult]",
          "description": "Collection of match results."},
     ],
     "params": [
@@ -524,7 +524,7 @@ TOOL_HELP["Pattern Matcher"] = {
          "description": "If True, the match position/angle is applied as a fixture transform on the output image."},
     ],
     "result": {
-        "class": "PatternMatchResult",
+        "class": "TemplateMatchResult",
         "fields": [
             {"name": "id", "type": "int", "description": "Match index."},
             {"name": "x", "type": "float", "description": "Match center X (image pixels)."},
@@ -613,7 +613,7 @@ TOOL_HELP["Barcode Decoder"] = {
         "Use the shrink parameter to speed up full-image scans. "
         "ArUco markers support 20 dictionary types plus AprilTag variants."
     ),
-    "see_also": ["Pattern Matcher"],
+    "see_also": ["Template Match"],
     "barcode_types": {
         "auto": {
             "name": "Auto",
@@ -721,7 +721,7 @@ TOOL_HELP["Measurement"] = {
         "modes (area, perimeter, radius, diameter, width, height) operate on one primitive. "
         "Set pixels_per_mm for real-world units; leave at 1.0 for pixel measurements."
     ),
-    "see_also": ["Blob Detector", "Pattern Matcher", "Filters"],
+    "see_also": ["Blob Detector", "Template Match", "Filters"],
     "measurement_modes": {
         "distance": {
             "name": "Distance",
@@ -893,7 +893,7 @@ TOOL_HELP["Edge Detection"] = {
         "The scan direction is always along the ROI's long axis. Arrow points from start to end. "
         "Sub-pixel interpolation uses parabolic fitting around the peak gradient sample."
     ),
-    "see_also": ["Blob Detector", "Measurement", "Pattern Matcher"],
+    "see_also": ["Blob Detector", "Measurement", "Template Match"],
 }
 
 # ── Logic / Custom ─────────────────────────────────────────────────────────
@@ -1692,5 +1692,5 @@ TOOL_HELP["Shape Match"] = {
         "Geometry mode finds the same parts, is about 30 % faster, but its "
         "translation is less precise; pick hybrid when pose accuracy matters."
     ),
-    "see_also": ["Pattern Matcher", "Measurement"],
+    "see_also": ["Template Match", "Measurement"],
 }

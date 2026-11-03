@@ -33,7 +33,7 @@ LEGACY_SPECS = {
     "imgcalc_pure.py": ("eded9ca^", "tools/image_calculator/logic.py"),
     "filters_py.py": ("a386d5e^", "tools/filters/logic.py"),
     "edge_py.py": ("a386d5e^", "tools/edge_detection/logic.py"),
-    "pattern_py.py": ("d421b8a^", "tools/pattern_matcher/logic.py"),
+    "pattern_py.py": ("d421b8a^", "tools/template_match/logic.py"),
     "pointcloud_py.py": ("bb155aa^", "core/pointcloud_utils.py"),
 }
 
@@ -86,14 +86,14 @@ def main() -> None:
     from falcocv.tools.image_calculator.logic import ImageCalculatorTool
     from falcocv.tools.filters.logic import FiltersTool
     from falcocv.tools.edge_detection.logic import EdgeDetection
-    from falcocv.tools.pattern_matcher.logic import PatternMatcher
+    from falcocv.tools.template_match.logic import TemplateMatch
 
     hist_py = importlib.import_module("hist_pure").HistogramTool
     blob_py = importlib.import_module("blob_py").BlobDetector
     imgcalc_py = importlib.import_module("imgcalc_pure").ImageCalculatorTool
     filters_py = importlib.import_module("filters_py").FiltersTool
     edge_py = importlib.import_module("edge_py").EdgeDetection
-    pattern_py = importlib.import_module("pattern_py").PatternMatcher
+    pattern_py = importlib.import_module("pattern_py").TemplateMatch
 
     images = {
         "5MP": load_image("test_pictures/barcode_1D/1.jpg"),
@@ -168,7 +168,7 @@ def main() -> None:
 
         # Pattern matching: train on a 128x128 patch, single angle/scale.
         cx, cy = w // 2, h // 2
-        p_cpp = PatternMatcher()
+        p_cpp = TemplateMatch()
         p_cpp.inputs["input image"] = v
         p_cpp.save_train_image()
         p_cpp.train_from_roi(cx, cy, 128, 128)

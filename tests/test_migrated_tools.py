@@ -1,4 +1,4 @@
-"""Regression tests for migrated C++ tools (Histogram, ImageCalculator, PatternMatcher)."""
+"""Regression tests for migrated C++ tools (Histogram, ImageCalculator, TemplateMatch)."""
 
 import numpy as np
 import cv2
@@ -42,11 +42,11 @@ class TestImageCalculatorTool(unittest.TestCase):
         self.assertEqual(out.data.shape, (50, 50, 3))
 
 
-class TestPatternMatcherTool(unittest.TestCase):
+class TestTemplateMatchTool(unittest.TestCase):
 
     def test_pattern_match_finds_self(self):
-        from falcocv.tools.pattern_matcher.logic import PatternMatcher
-        tool = PatternMatcher()
+        from falcocv.tools.template_match.logic import TemplateMatch
+        tool = TemplateMatch()
         # Small template in the center of a larger image
         img = np.zeros((80, 80, 3), dtype=np.uint8)
         img[30:50, 30:50] = 255

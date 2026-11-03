@@ -98,7 +98,7 @@ cpp/bin/       → local kernel build output (gitignored)
   `ncc_score`, `visible_fraction`, `ecc_cc` and `warnings`.
 - **ShapeMatch model** -> `model_b64` stores features, edges, gray and color
   templates. Training ROI is fixture-relative and supports rotation. Do not add
-  PatternMatcher-only parameters (`angle_step`, `scale_step`, `use_pyramid`, ...).
+  TemplateMatch-only parameters (`angle_step`, `scale_step`, `use_pyramid`, ...).
 - **ShapeMatch training model v3** -> `model_b64` is v3 only; v2 models are
   rejected and must be retrained. The model stores the training mask and
   `edge_low`/`edge_high`/`min_gradient`/`max_features`. Changing any of those,
@@ -158,7 +158,7 @@ cpp/bin/       → local kernel build output (gitignored)
   Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
   experimental.  The production gate ran on 1005 real frames: detection parity
   (0 lost, 0 extra) and -31 % time, but translation is less precise than hybrid
-  (median 1.00 vs 0.65 px against the job's PatternMatcher, one 85 px failure).
+  (median 1.00 vs 0.65 px against the job's TemplateMatch, one 85 px failure).
   Geometry stays the fast mode; hybrid is the precision reference.  Re-run
   `scripts/validate_shape_match_modes.py` before changing that verdict.
   The Python path falls back to the generic score when the loaded kernel
@@ -260,10 +260,10 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   `docs/shape_match_perf_log.md` under "What did not work".
 - Geometry mode passed on detections and speed (1005 real frames, 0 lost,
   0 extra, -31 %) but failed on precision (median 1.00 vs 0.65 px against the
-  job's PatternMatcher, one 85 px failure).  Geometry stays a fast mode; hybrid
+  job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `417 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `419 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and

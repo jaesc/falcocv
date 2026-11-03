@@ -625,7 +625,7 @@ def test_shape_match_overlays_reach_input_after_upstream_tool():
 
 
 def test_shape_match_untrained_draws_search_roi():
-    """Parity with PatternMatcher: the search ROI shows before training."""
+    """Parity with TemplateMatch: the search ROI shows before training."""
     rng = np.random.default_rng(3)
     image = rng.integers(0, 80, (160, 160, 3), dtype=np.uint8)
     tool = ShapeMatch()

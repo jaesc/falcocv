@@ -33,7 +33,7 @@ from falcocv.ui.widgets.viewer import ImageViewer
 
 
 # --- Background cache builder -------------------------------------------
-from .logic import _CacheWorker, _transform, PatternMatchResult, PatternMatcher
+from .logic import _CacheWorker, _transform, TemplateMatchResult, TemplateMatch
 class _CacheWorker(QThread):
     """Builds the template cache in a background thread."""
     finished = Signal(dict, dict)  # (cache, cache_params)
@@ -133,12 +133,12 @@ def _transform(template, angle, scale):
 # -------------------------------------------------------------------------
 
 
-class PatternMatchResult(ToolResult):
+class TemplateMatchResult(ToolResult):
     def __init__(self, id, x, y, angle, scale, score):
         super().__init__(id=id, x=x, y=y, angle=angle, scale=scale, score=score)
 
 
-class PatternMatcherConfig(QWidget):
+class TemplateMatchConfig(QWidget):
     def __init__(self, tool):
         super().__init__()
         self.tool = tool
@@ -172,7 +172,7 @@ class PatternMatcherConfig(QWidget):
         self.content_layout.addWidget(self.right_panel)
 
         configure_params_splitter(
-            self.content_layout, self.left_scroll, self.right_panel, "PatternMatcher"
+            self.content_layout, self.left_scroll, self.right_panel, "TemplateMatch"
         )
         self.main_layout.addWidget(self.content_layout, 1)
 
@@ -445,5 +445,5 @@ class PatternMatcherConfig(QWidget):
                 self.template_viewer.set_image(None); self.label_state.setText("Not trained"); self.label_state.setStyleSheet("")
 
     def on_config_closed(self):
-        save_params_splitter(self.content_layout, "PatternMatcher")
+        save_params_splitter(self.content_layout, "TemplateMatch")
 

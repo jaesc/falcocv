@@ -3213,7 +3213,7 @@ class ShapeMatch(BaseTool):
         # get_overlay_layer() returns it unchanged and add_roi()/add_contour()
         # would tag the new elements with the upstream tool's name, so
         # _copy_overlays_to_input() would drop them. Stamp our own name here,
-        # exactly like PatternMatcher does.
+        # exactly like TemplateMatch does.
         layer.source_tool = self.name
         layer.elements = [e for e in layer.elements if e.source_tool != self.name]
         self.outputs["output image"] = vision_img
@@ -3223,7 +3223,7 @@ class ShapeMatch(BaseTool):
         roi_angle = float(roi["abs_angle"])
         roi_m_inv = roi["M_inv"]
 
-        # Draw the search ROI even when untrained (same as PatternMatcher) so
+        # Draw the search ROI even when untrained (same as TemplateMatch) so
         # the ROI editor always has visual feedback.  Use the unclamped
         # absolute rect so a rotated ROI is shown with its real angle.
         if self.params["show_search_roi"]:

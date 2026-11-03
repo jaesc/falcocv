@@ -1,4 +1,4 @@
-"""F1 bake-off: current PatternMatcher vs generalized Hough vs SIFT+RANSAC.
+"""F1 bake-off: current TemplateMatch vs generalized Hough vs SIFT+RANSAC.
 
 Run:
     python benchmarks/bench_matcher.py
@@ -29,12 +29,12 @@ from falcocv.accuracy.synthetic import (  # noqa: E402
     scene_suite,
 )
 from falcocv.core.vision_image import VisionImage  # noqa: E402
-from falcocv.tools.pattern_matcher.logic import PatternMatcher  # noqa: E402
+from falcocv.tools.template_match.logic import TemplateMatch  # noqa: E402
 from falcocv.tools.shape_match.logic import ShapeMatch  # noqa: E402
 
 
-def _pattern_tool(template: np.ndarray) -> PatternMatcher:
-    tool = PatternMatcher()
+def _pattern_tool(template: np.ndarray) -> TemplateMatch:
+    tool = TemplateMatch()
     tool.params.update(
         {
             "angle_start": -35,
@@ -60,7 +60,7 @@ def _pattern_tool(template: np.ndarray) -> PatternMatcher:
     return tool
 
 
-def run_pattern(tool: PatternMatcher, scene: SyntheticScene) -> dict:
+def run_pattern(tool: TemplateMatch, scene: SyntheticScene) -> dict:
     started = time.perf_counter()
     tool.inputs["input image"] = VisionImage(scene.image)
     tool.run()
@@ -268,7 +268,7 @@ def main(argv=None) -> int:
     shape_tool = _shape_tool(template)
 
     methods = {
-        "pattern_matcher": lambda scene: run_pattern(pattern_tool, scene),
+        "template_match": lambda scene: run_pattern(pattern_tool, scene),
         "shape_match": lambda scene: run_shape(shape_tool, scene),
         "hough_guil": lambda scene: run_hough(template, scene),
         "sift_ransac": lambda scene: run_sift(template, scene),

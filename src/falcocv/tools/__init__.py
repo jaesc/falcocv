@@ -4,7 +4,7 @@ import falcocv.tools.edge_detection
 import falcocv.tools.measurement
 import falcocv.tools.barcode_decoder
 import falcocv.tools.blob_detector
-import falcocv.tools.pattern_matcher
+import falcocv.tools.template_match
 import falcocv.tools.shape_match
 import falcocv.tools.histogram
 import falcocv.tools.image_calculator

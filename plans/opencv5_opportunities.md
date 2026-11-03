@@ -13,7 +13,7 @@ OpenCV 5 (released June 4, 2026, pip June 8, 2026) is the most important OpenCV 
 | OpenCV 5 new feature | Impact on FalcoCV |
 |------------------|--------------------|
 | **New DNN engine** (graph, 80%+ ONNX coverage, FlashAttention fusions) | Remove ONNX Runtime (~40 MB). Faster on YOLO, DINOv2, OWLv2. |
-| **LightGlue + ALIKED/DISK** (attention-based matching with confidence) | Much more robust Pattern Matcher (rotation, scale, deformation). New confidence scores. |
+| **LightGlue + ALIKED/DISK** (attention-based matching with confidence) | Much more robust Template Match (rotation, scale, deformation). New confidence scores. |
 | **Native LLM/VLM** (Qwen 2.5, Gemma 3, PaliGemma, GPT-2/4) | OCR post-processing with contextual autocorrection. Vision-language queries. |
 | **LaMa inpainting** via native DNN | Remove fixtures/artifacts before inspecting. Defect filling. |
 | **Native FP16/BF16** in cv::Mat | Classifier/Anomaly memory banks at half size. |
@@ -118,7 +118,7 @@ class ObjectDetector(BaseTool):
 
 ---
 
-### 3.3 LightGlue in Pattern Matcher
+### 3.3 LightGlue in Template Match
 
 **What**: Add an attention-based matching phase using `cv::LightGlueMatcher` + `cv::ALIKED` or `cv::DISK` as a step before the current NCC. The matcher returns matches with confidence scores → automatic PASS/FAIL before the pyramid search.
 
@@ -305,7 +305,7 @@ Phase B (2 weeks):     Object Detector tool
   └─ NMS, overlays, count_by_class, PASS/FAIL
   └─ Equivalence test vs ORT baseline
 
-Phase C (2 weeks):     LightGlue in Pattern Matcher
+Phase C (2 weeks):     LightGlue in Template Match
   └─ Phase 1-4 pipeline (ALIKED → LightGlue → RANSAC → NCC refine)
   └─ Confidence score → PASS/FAIL
   └─ Tests with rotation+scale dataset
@@ -369,9 +369,9 @@ Phase G (future):      Depth from Stereo, OWLv2, non-CPU HAL
 ### Phase C — LightGlue
 | File | Change |
 |---------|--------|
-| `tools/pattern_matcher/logic.py` | Add Phase 1-3 pipeline. Phase 4 (NCC refine) is kept. |
-| `tools/pattern_matcher/config.py` | Add "Use LightGlue" checkbox, confidence threshold. |
-| `core/pattern_matcher/` | Possible refactor into a separate module. |
+| `tools/template_match/logic.py` | Add Phase 1-3 pipeline. Phase 4 (NCC refine) is kept. |
+| `tools/template_match/config.py` | Add "Use LightGlue" checkbox, confidence threshold. |
+| `core/template_match/` | Possible refactor into a separate module. |
 
 ### Phase D — OCR + LLM
 | File | Change |

@@ -63,7 +63,7 @@ TOOL_PREFIXES: dict[str, str] = {
     "PythonScriptTool":    "[PYTH]",
     "BlobDetector":        "[BLOB]",
     "HistogramTool":       "[HIST]",
-    "PatternMatcher":      "[PATT]",
+    "TemplateMatch":      "[TMPL]",
     "ShapeMatch":          "[SHAP]",
     "DepthRangeLoader":    "[DPTH]",
     "BarcodeDecoder":      "[BDEC]",

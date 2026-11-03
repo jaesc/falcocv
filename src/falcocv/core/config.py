@@ -52,7 +52,7 @@ class ConfigManager:
         }
         self._tool_splitter_defaults = {
             "EdgeDetection":    [25, 75],
-            "PatternMatcher":   [25, 75],
+            "TemplateMatch":   [25, 75],
             "BarcodeDecoder":   [25, 75],
             "ImageLoader":      [20, 80],
             "HistogramTool":    [25, 75],

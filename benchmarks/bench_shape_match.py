@@ -28,7 +28,7 @@ from falcocv.accuracy.synthetic import (  # noqa: E402
     scene_suite,
 )
 from falcocv.core.vision_image import VisionImage  # noqa: E402
-from falcocv.tools.pattern_matcher.logic import PatternMatcher  # noqa: E402
+from falcocv.tools.template_match.logic import TemplateMatch  # noqa: E402
 from falcocv.tools.shape_match.logic import ShapeMatch  # noqa: E402
 
 
@@ -63,8 +63,8 @@ def _shape_tool(
     return tool
 
 
-def _pattern_tool(template: np.ndarray) -> PatternMatcher:
-    tool = PatternMatcher()
+def _pattern_tool(template: np.ndarray) -> TemplateMatch:
+    tool = TemplateMatch()
     tool.params.update(
         {
             "angle_start": -30,
@@ -202,7 +202,7 @@ def _run_case(name, tool, image, report, include_pattern=False, template=None):
     if not _run_case.quiet:
         print(f"== {name} ==")
         if pat_median is not None:
-            print(f"  PatternMatcher median: {pat_median:.1f} ms (min {pat_min:.1f})")
+            print(f"  TemplateMatch median: {pat_median:.1f} ms (min {pat_min:.1f})")
         print(f"  ShapeMatch median:     {shape_median:.1f} ms (min {shape_min:.1f})")
         print(f"  ShapeMatch found:      {tool.outputs.get('count', 0)}")
         print(f"  phases: {profile['phases']}")

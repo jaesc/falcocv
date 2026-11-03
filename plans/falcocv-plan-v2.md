@@ -59,7 +59,7 @@ Regla: `core/` no importa PyQt6 ni UI a nivel de módulo. El kernel expone funci
 
 ### 1.4 Huecos reales
 
-1. **Localización robusta**: `PatternMatcher` es correlación (`matchTemplate`) con barrido de ángulo/escala; no es shape matching por gradiente.
+1. **Localización robusta**: `TemplateMatch` es correlación (`matchTemplate`) con barrido de ángulo/escala; no es shape matching por gradiente.
 2. **Metrología**: `EdgeDetection` ya es un caliper 1D afín con subpíxel, pero faltan `LineFit`/`CircleFit`, cadena de fixture completa, calibración y incertidumbre.
 3. **Calibración**: solo homografía 2D; faltan intrínsecos, distorsión y hand-eye.
 4. **Inspección**: presencia/ausencia y multi-instancia dependen de un matcher robusto; clasificador/anomalías/OCR necesitan flujo de validación y umbrales.
@@ -267,7 +267,7 @@ Escenas con verdad conocida:
 
 ### Comparativa
 
-1. `PatternMatcher` actual.
+1. `TemplateMatch` actual.
 2. `cv2.GeneralizedHoughGuil`.
 3. ORB/SIFT + RANSAC.
 4. NCC con máscara.
@@ -309,7 +309,7 @@ No se invierten 6 semanas en ShapeMatch sin este informe.
 - Refinamiento: NCC local + ECC afín; fallback de gradiente con distancia + ICP robusto para oclusión.
 - Subpíxel: ECC afín + parábola sobre el score de alineación; repetibilidad ≤0,02 px.
 - Serialización: arrays comprimidos dentro del `.cvj`, con versión.
-- UI: nueva tool `[SHAP]`; `[PATT]` se mantiene.
+- UI: nueva tool `[SHAP]`; `[TMPL]` se mantiene.
 - Kernel: `shape_match_vote` obligatorio para ShapeMatch; sin fallback Python. Dos solvers explicitos: ECC y oclusion (seleccion por alignment).
 
 ### Criterios
@@ -321,7 +321,7 @@ No se invierten 6 semanas en ShapeMatch sin este informe.
 | Escala | ≤0,1 % |
 | Repetibilidad | σ ≤0,02 px |
 | Oclusión | score ≥0,7 con 30 % |
-| Tiempo | ≤20 ms en 480×360 (comparable a PatternMatcher); ≤50 ms en ROI 1 MP |
+| Tiempo | ≤20 ms en 480×360 (comparable a TemplateMatch); ≤50 ms en ROI 1 MP |
 
 ---
 
@@ -441,7 +441,7 @@ Toda tool nueva debe traer:
 1. **F0.5 completado**: `falcocv run` + contrato de resultados + tests.
 2. **F1 completado**: verdad sintética + bake-off; decisión registrada en el informe de la fase.
 3. **F2 v1/v2 completado**: rotación/escala/traslación, oclusión y multi-instancia; precisión y tiempo medidos en los informes de ShapeMatch v2 y v3.
-4. **F2 v3 completado**: 0,067 px / 0,035 grados / 0,073 %; 15,6 ms en 480x360 y 19,6 ms en 1 MP. Job real 5 MP (template 226x272, ROI 623x671): 90/90, 33,8 ms con +-30/0.9-1.1/All y 18,8 ms con el mismo espacio que PatternMatcher (12,5 ms). El template IC (169x155) queda en 158,4 ms frente a 523 ms de PatternMatcher.
+4. **F2 v3 completado**: 0,067 px / 0,035 grados / 0,073 %; 15,6 ms en 480x360 y 19,6 ms en 1 MP. Job real 5 MP (template 226x272, ROI 623x671): 90/90, 33,8 ms con +-30/0.9-1.1/All y 18,8 ms con el mismo espacio que TemplateMatch (12,5 ms). El template IC (169x155) queda en 158,4 ms frente a 523 ms de TemplateMatch.
 5. Alternar **M1** (caliper/geometría) e **I1** (presencia/ausencia) mientras se decide el kernel.
 
 ---
@@ -452,7 +452,7 @@ Toda tool nueva debe traer:
 |---|---|---|---|
 | F0.5 Headless + resultados | [x] | 2026-10-27 | `falcocv run` + JSON + tests |
 | F1 Verdad sintética + bake-off | [x] | 2026-10-27 | Informe de decisión de la fase |
-| F2 ShapeMatch | [x] | 2026-10-27 | v3 con kernel obligatorio, solvers ECC/oclusion explicitos y UI de entrenamiento tipo PatternMatcher |
+| F2 ShapeMatch | [x] | 2026-10-27 | v3 con kernel obligatorio, solvers ECC/oclusion explicitos y UI de entrenamiento tipo TemplateMatch |
 | M1 Caliper/geometría | [ ] | | |
 | I1 Presencia/ausencia | [ ] | | |
 | M2 Calibración | [ ] | | |

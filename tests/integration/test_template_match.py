@@ -1,4 +1,7 @@
-"""PatternMatcher angle-convention regression tests."""
+"""TemplateMatch angle-convention regression tests."""
+
+from falcocv.core.tool_registry import get_registration
+from falcocv.ui.tool_help import get_doc_for_tool
 
 import math
 
@@ -8,7 +11,7 @@ import pytest
 
 from falcocv.core.overlay_layer import OverlayType
 from falcocv.core.vision_image import VisionImage
-from falcocv.tools.pattern_matcher.logic import PatternMatcher
+from falcocv.tools.template_match.logic import TemplateMatch
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +46,7 @@ def _scene(template, angle=30.0, cx=200.0, cy=150.0):
 
 
 def _tool(template):
-    tool = PatternMatcher()
+    tool = TemplateMatch()
     tool._static_train_image = template.copy()
     tool.params.update(
         {
@@ -69,7 +72,7 @@ def _tool(template):
     return tool
 
 
-def test_pattern_matcher_reports_clockwise_angle():
+def test_template_match_reports_clockwise_angle():
     template = _template()
     tool = _tool(template)
     tool.inputs["input image"] = VisionImage(_scene(template, angle=30.0))
@@ -81,7 +84,7 @@ def test_pattern_matcher_reports_clockwise_angle():
     assert result.score >= 0.8
 
 
-def test_pattern_matcher_angle_range_is_clockwise():
+def test_template_match_angle_range_is_clockwise():
     template = _template()
     tool = _tool(template)
     tool.params.update({"angle_start": 20.0, "angle_end": 40.0})
@@ -99,7 +102,7 @@ def test_pattern_matcher_angle_range_is_clockwise():
     assert tool.outputs["count"] == 0
 
 
-def test_pattern_matcher_axes_follow_found_region():
+def test_template_match_axes_follow_found_region():
     template = _template()
     tool = _tool(template)
     tool.inputs["input image"] = VisionImage(_scene(template, angle=30.0))
@@ -127,7 +130,7 @@ def test_pattern_matcher_axes_follow_found_region():
     assert abs(float(edge[0] * axis[1] - edge[1] * axis[0])) < 1e-3
 
 
-def test_pattern_matcher_rotated_search_roi_pose():
+def test_template_match_rotated_search_roi_pose():
     template = _template()
     tool = _tool(template)
 
@@ -153,7 +156,7 @@ def test_pattern_matcher_rotated_search_roi_pose():
         assert abs(result.angle - angle) <= 1.5
 
 
-def test_pattern_matcher_rotation_keeps_center():
+def test_template_match_rotation_keeps_center():
     template = _template()
     tool = _tool(template)
     for angle in (0.0, 30.0, 90.0):
@@ -170,7 +173,7 @@ def test_pattern_matcher_rotation_keeps_center():
         assert abs(result.y - 150.0) <= 1.0
 
 
-def test_pattern_matcher_act_as_fixture_uses_absolute_angle():
+def test_template_match_act_as_fixture_uses_absolute_angle():
     template = _template()
     tool = _tool(template)
     scene = _scene(template, angle=30.0, cx=200.0, cy=150.0)
@@ -193,3 +196,13 @@ def test_pattern_matcher_act_as_fixture_uses_absolute_angle():
     output = tool.outputs["output image"]
     assert abs(result.angle - 30.0) <= 1.5
     assert abs(output.angle - result.angle) <= 1e-6
+
+def test_template_match_registration_and_default_name():
+    tool = TemplateMatch()
+    assert tool.name == "Template Match"
+    assert TemplateMatch.prefix == "[TMPL]"
+    registration = get_registration("TemplateMatch")
+    assert registration is not None
+    assert registration.default_name == "Template Match"
+    assert get_doc_for_tool(tool)["name"] == "Template Match"
+    assert get_registration("PatternMatcher") is None

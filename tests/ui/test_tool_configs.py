@@ -141,10 +141,10 @@ def test_shape_match_preview_has_fixed_square_size(qtbot):
     dialog.close()
 
 
-def test_pattern_matcher_preview_has_fixed_square_size(qtbot):
-    from falcocv.tools.pattern_matcher.logic import PatternMatcher
+def test_template_match_preview_has_fixed_square_size(qtbot):
+    from falcocv.tools.template_match.logic import TemplateMatch
 
-    tool = PatternMatcher()
+    tool = TemplateMatch()
     dialog = ToolConfigDialog(tool)
     qtbot.addWidget(dialog)
     dialog.resize(1200, 800)

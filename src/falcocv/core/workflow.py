@@ -9,7 +9,7 @@ _TOOL_MODULE_MAP: dict[str, str] = {
     "PythonScriptTool": "falcocv.tools.python_script",
     "BlobDetector": "falcocv.tools.blob_detector",
     "HistogramTool": "falcocv.tools.histogram",
-    "PatternMatcher": "falcocv.tools.pattern_matcher",
+    "TemplateMatch": "falcocv.tools.template_match",
     "ShapeMatch": "falcocv.tools.shape_match",
     "DepthRangeLoader": "falcocv.tools.depth_range_loader",
     "BarcodeDecoder": "falcocv.tools.barcode_decoder",

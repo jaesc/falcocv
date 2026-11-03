@@ -102,7 +102,7 @@ needing the private image set.
 
 First full run of the gate: 1005 frames (`VisA/pcb4`, `Normal`), one ShapeMatch,
 `max_features=800`, `min_score=0.3`, angle +-3 deg, scale 0.9-1.1.  The job also
-carries a PatternMatcher trained on the same ROI and the same pose range, which
+carries a TemplateMatch trained on the same ROI and the same pose range, which
 gives an independent third opinion.
 
 Geometry against hybrid:
@@ -120,7 +120,7 @@ Geometry against hybrid:
 | frames within 5 px | 96.9 % |
 | median time | geometry 57.7 ms / hybrid 83.5 ms |
 
-Distance to the PatternMatcher pose:
+Distance to the TemplateMatch pose:
 
 | | median | p90 | p95 | max |
 |---|---:|---:|---:|---:|
@@ -131,13 +131,13 @@ Distance to the PatternMatcher pose:
 | scale, geometry | 0.326 | 0.776 | 1.007 | 2.81 |
 | scale, hybrid | **0.293** | **0.713** | **0.843** | 2.50 |
 
-Closer to the PatternMatcher: translation hybrid 741 / 1005, angle geometry
+Closer to the TemplateMatch: translation hybrid 741 / 1005, angle geometry
 555 / 1005, scale hybrid 603 / 1005.
 
 Verdict: **FAIL as a precision gate, PASS on detections**.  Geometry finds the
 same parts as hybrid on every frame and is 31 % faster, but its translation is
 less precise (median 1.0 px vs 0.65 px) and it has gross failures: frame 0855
-lands ~85 px away from both hybrid and the PatternMatcher, which agree within
+lands ~85 px away from both hybrid and the TemplateMatch, which agree within
 2.4 px.  The alignment-polish attempt did not fix it.
 
 Consequence: geometry stays a fast mode, not the precision default.  Either the

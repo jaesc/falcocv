@@ -12,8 +12,8 @@ from falcocv.tools.edge_detection.config import EdgeDetectionConfig
 from falcocv.tools.edge_detection.logic import EdgeDetection
 from falcocv.tools.ocr.config import OCRConfigWidget
 from falcocv.tools.ocr.logic import OCR
-from falcocv.tools.pattern_matcher.config import PatternMatcherConfig
-from falcocv.tools.pattern_matcher.logic import PatternMatcher
+from falcocv.tools.template_match.config import TemplateMatchConfig
+from falcocv.tools.template_match.logic import TemplateMatch
 from falcocv.tools.shape_match.config import ShapeMatchConfig
 from falcocv.tools.shape_match.logic import ShapeMatch
 
@@ -22,7 +22,7 @@ from falcocv.tools.shape_match.logic import ShapeMatch
     "tool_cls, config_cls, maximum",
     [
         (ShapeMatch, ShapeMatchConfig, 100),
-        (PatternMatcher, PatternMatcherConfig, 100),
+        (TemplateMatch, TemplateMatchConfig, 100),
         (BlobDetector, BlobDetectorConfig, 1000),
         (EdgeDetection, EdgeDetectionConfig, 1),
         (BarcodeDecoder, BarcodeDecoderConfig, 100),
