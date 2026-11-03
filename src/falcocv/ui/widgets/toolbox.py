@@ -1,4 +1,13 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QGroupBox, QLabel
+from PyQt6.QtWidgets import (
+    QWidget,
+    QVBoxLayout,
+    QPushButton,
+    QGroupBox,
+    QLabel,
+    QScrollArea,
+    QFrame,
+    QSizePolicy,
+)
 from PyQt6.QtCore import Qt, QMimeData, QPoint
 from PyQt6.QtGui import QDrag, QPainter, QColor
 from falcocv.ui.style import ALT_BG
@@ -50,7 +59,29 @@ class Toolbox(QWidget):
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.WindowStaysOnTopHint)
             self.resize(250, 300)
 
-        layout = QVBoxLayout(self)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.scroll_area = QScrollArea(self)
+        self.scroll_area.setObjectName("ToolboxScroll")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.scroll_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.scroll_area.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding,
+        )
+        self.scroll_area.setMinimumSize(0, 0)
+
+        content = QWidget()
+        content.setObjectName("ToolboxContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         if not embedded:
             layout.addWidget(QLabel("Click to Add or Drag to Workspace:"))
@@ -71,6 +102,8 @@ class Toolbox(QWidget):
             gl.addWidget(btn)
 
         layout.addStretch()
+        self.scroll_area.setWidget(content)
+        outer_layout.addWidget(self.scroll_area)
 
     def paintEvent(self, event):
         p = QPainter(self)
