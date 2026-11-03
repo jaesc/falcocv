@@ -80,24 +80,24 @@ TOOL_HELP["Depth/Range Loader"] = {
     "name": "Depth/Range Loader",
     "category": "Acquisition",
     "purpose": (
-        "Loads single-channel depth / range images (TIFF, PNG, BMP, JPEG) as float32 arrays. "
-        "Automatically converts multi-channel images to grayscale, applies a configurable scale "
-        "factor, and optionally marks zero pixels as invalid (NaN). Can generate a 3D point cloud "
-        "from the depth map using simple metric resolution (x_res, y_res, z_res) for interactive "
-        "3D visualization in the built-in Viewer3D."
+        "Loads single-channel depth / range images (FCD, TIFF, PNG, BMP, JPEG) as float32 "
+        "arrays. Automatically converts multi-channel images to grayscale, applies a "
+        "configurable scale factor, and optionally marks zero pixels as invalid (NaN). "
+        "Can generate a 3D point cloud from the depth map using simple metric resolution "
+        "(x_res, y_res, z_res) for interactive 3D visualization in the built-in Viewer3D."
     ),
     "inputs": [],
     "outputs": [
         {"name": "output image", "type": "VisionImage",
-         "description": "Float32 single-channel depth map. Contains _3d_data (point cloud) if Generate 3D is enabled — toggle with 'Show 3D' checkbox in the viewer."},
+         "description": "Float32 single-channel depth map. Contains _3d_data (point cloud) if Generate 3D is enabled — toggle with 'Show 3D' checkbox in the viewer. Point-cloud colors are generated lazily when a 3D viewer opens."},
     ],
     "params": [
         {"name": "file_path", "default": '""',
          "description": "Path to a depth/range image file on disk."},
         {"name": "scale", "default": "1.0",
          "description": "Multiplier applied to stored integer depths (e.g. mm-per-count for 16-bit exports)."},
-        {"name": "zero_as_invalid", "default": "False",
-         "description": "If True, pixels with value 0 become NaN in the float output."},
+        {"name": "zero_as_invalid", "default": "True",
+         "description": "If True, pixels with value 0 are treated as invalid when generating the point cloud and range views."},
         {"name": "x_res", "default": "1.0",
          "description": "Physical resolution per column in X direction (e.g. mm/pixel)."},
         {"name": "y_res", "default": "1.0",
@@ -105,15 +105,18 @@ TOOL_HELP["Depth/Range Loader"] = {
         {"name": "z_res", "default": "1.0",
          "description": "Scale factor converting depth values to physical Z (e.g. mm/count)."},
         {"name": "z_offset", "default": "0.0",
-         "description": "Subtracted from Z after scaling to center the cloud (e.g. depth_range)."},
+         "description": "Added to Z after scaling to center the cloud (e.g. depth_range)."},
         {"name": "generate_3d", "default": "False",
          "description": "If True, converts the depth map to a 3D point cloud and attaches it as _3d_data on the VisionImage."},
     ],
     "notes": (
         "The depth map is always loaded as float32. If the source image is in an integer format "
         "(uint8, uint16, int16), the scale parameter converts it: result = raw * scale. "
+        "FCD is the native FalcoCV depth container: raw uint16 plus LZ4, faster than LZW TIFF. "
+        "TIFF loading tries imagecodecs, then OpenCV, then tifffile. Use "
+        "scripts/convert_depth_to_fcd.py to convert TIFF batches losslessly. "
         "The 3D point cloud generation uses simple metric scaling (no pinhole model): "
-        "x = col * x_res, y = row * y_res, z = depth * z_res - z_offset. "
+        "x = (width - 1 - col) * x_res, y = row * y_res, z = depth * z_res + z_offset. "
         "Set generate_3d=True and provide the three resolutions to visualize the depth data "
         "as a 3D point cloud — toggle the 'Show 3D' checkbox in the viewer or use the workflow editor."
     ),
@@ -496,21 +499,21 @@ TOOL_HELP["Template Match"] = {
          "description": "ROI for searching. Zero = full image."},
         {"name": "score_threshold", "default": "0.7",
          "description": "Minimum match score (0.0-1.0). Lower = more tolerant."},
-        {"name": "angle_start", "default": "0",
+        {"name": "angle_start", "default": "-3",
          "description": "Start of rotation search range (degrees)."},
-        {"name": "angle_end", "default": "360",
+        {"name": "angle_end", "default": "3",
          "description": "End of rotation search range (degrees)."},
         {"name": "angle_step", "default": "1",
          "description": "Rotation angle step (degrees). Smaller = more precise but slower."},
-        {"name": "scale_start", "default": "0.9",
+        {"name": "scale_start", "default": "1.0",
          "description": "Start of scale search range (fraction of template size)."},
-        {"name": "scale_end", "default": "1.1",
+        {"name": "scale_end", "default": "1.0",
          "description": "End of scale search range."},
-        {"name": "scale_step", "default": "0.05",
+        {"name": "scale_step", "default": "0.1",
          "description": "Scale step. Smaller = more precise but slower."},
-        {"name": "pyramid_levels", "default": "2",
+        {"name": "pyramid_levels", "default": "3",
          "description": "Image pyramid depth for coarse-to-fine search."},
-        {"name": "max_matches", "default": "5",
+        {"name": "max_matches", "default": "1",
          "description": "Maximum number of matches to return."},
         {"name": "min_results", "default": "1",
          "description": "Minimum number of matches required. 0 disables the check; below the minimum the tool is marked as failed."},
@@ -1630,13 +1633,13 @@ TOOL_HELP["Shape Match"] = {
                         "Zero width/height = whole captured image."},
         {"name": "search_roi", "default": "[0, 0, 0, 0, 0]",
          "description": "Search ROI in fixture coordinates. Zero = whole image."},
-        {"name": "angle_start", "default": "-30",
+        {"name": "angle_start", "default": "-3",
          "description": "Start of rotation search (degrees)."},
-        {"name": "angle_end", "default": "30",
+        {"name": "angle_end", "default": "3",
          "description": "End of rotation search (degrees)."},
-        {"name": "scale_start", "default": "0.9",
+        {"name": "scale_start", "default": "1.0",
          "description": "Start of scale search (fraction of template size)."},
-        {"name": "scale_end", "default": "1.1",
+        {"name": "scale_end", "default": "1.0",
          "description": "End of scale search."},
         {"name": "min_score", "default": "0.45",
          "description": "Minimum gradient alignment score (0-1). Lower = more "

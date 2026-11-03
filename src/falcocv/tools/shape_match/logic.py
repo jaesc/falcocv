@@ -24,6 +24,7 @@ from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.depth_viz import depth_to_gray_u8
 
 try:
     from _falco_kernel import (
@@ -196,10 +197,10 @@ class ShapeMatch(BaseTool):
         self.params = {
             "train_roi": [0, 0, 0, 0, 0],
             "search_roi": [0, 0, 0, 0, 0],
-            "angle_start": -30.0,
-            "angle_end": 30.0,
-            "scale_start": 0.9,
-            "scale_end": 1.1,
+            "angle_start": -3.0,
+            "angle_end": 3.0,
+            "scale_start": 1.0,
+            "scale_end": 1.0,
             "min_score": 0.45,
             "min_results": 1,
             "max_matches": 1,
@@ -223,6 +224,9 @@ class ShapeMatch(BaseTool):
             "train_image_token": None,
             "train_mask_b64": None,
             "train_fixture": [0.0, 0.0, 0.0],
+            "range_vmin": None,
+            "range_vmax": None,
+            "range_zero_invalid": True,
             "is_trained": False,
             "template_size": [0, 0],
         }
@@ -329,6 +333,56 @@ class ShapeMatch(BaseTool):
         if image.ndim == 3:
             return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         return image
+
+    @staticmethod
+    def _is_range_data(data) -> bool:
+        return (
+            isinstance(data, np.ndarray)
+            and data.ndim == 2
+            and data.dtype.kind == "f"
+        )
+
+    def _range_limits(self, data: np.ndarray):
+        work = np.asarray(data, dtype=np.float32)
+        valid = np.isfinite(work)
+        if bool(self.params.get("range_zero_invalid", True)):
+            valid &= work != 0.0
+        if not np.any(valid):
+            return None
+        return float(np.min(work[valid])), float(np.max(work[valid]))
+
+    def _range_to_gray(self, data: np.ndarray, vmin: float, vmax: float,
+                       fast: bool = False):
+        if fast:
+            work = np.asarray(data, dtype=np.float32)
+            span = float(vmax) - float(vmin)
+            if span <= 0.0:
+                gray = np.zeros(work.shape, dtype=np.uint8)
+            else:
+                alpha = 255.0 / span
+                normalized = cv2.addWeighted(
+                    work,
+                    alpha,
+                    work,
+                    0.0,
+                    -float(vmin) * alpha,
+                    dtype=cv2.CV_32F,
+                )
+                np.clip(normalized, 0.0, 255.0, out=normalized)
+                gray = normalized.astype(np.uint8)
+            if bool(self.params.get("range_zero_invalid", True)):
+                valid = np.isfinite(work)
+                valid &= work != 0.0
+                gray[~valid] = 0
+            else:
+                gray[~np.isfinite(work)] = 0
+            return gray
+        gray = depth_to_gray_u8(data, vmin, vmax)
+        if bool(self.params.get("range_zero_invalid", True)):
+            valid = np.isfinite(data)
+            valid &= data != 0.0
+            gray[~valid] = 0
+        return gray
 
     def _gradient(self, gray: np.ndarray):
         gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
@@ -708,6 +762,19 @@ class ShapeMatch(BaseTool):
 
     def train_pattern(self) -> None:
         crop = self.training_crop()
+        if self._is_range_data(crop):
+            vmin = self.params.get("range_vmin")
+            vmax = self.params.get("range_vmax")
+            if vmin is None or vmax is None:
+                limits = self._range_limits(self._static_train_image)
+                if limits is None:
+                    raise ValueError("Range image has no valid pixels.")
+                vmin, vmax = limits
+                self.params["range_vmin"] = vmin
+                self.params["range_vmax"] = vmax
+            crop = self._range_to_gray(
+                crop, float(vmin), float(vmax), fast=True
+            )
         mask = self._train_mask
         if mask is not None:
             mask = np.asarray(mask, dtype=np.uint8)
@@ -1042,6 +1109,21 @@ class ShapeMatch(BaseTool):
         data = source.data if isinstance(source, VisionImage) else source
         if not isinstance(data, np.ndarray):
             return
+        if self._is_range_data(data):
+            limits = self._range_limits(data)
+            if limits is None:
+                self.set_error("Range image has no valid pixels")
+                return
+            self.params["range_vmin"], self.params["range_vmax"] = limits
+            data = self._range_to_gray(
+                data,
+                self.params["range_vmin"],
+                self.params["range_vmax"],
+                fast=True,
+            )
+        else:
+            self.params["range_vmin"] = None
+            self.params["range_vmax"] = None
         self._static_train_image = data.copy()
         if isinstance(source, VisionImage):
             fixture = {
@@ -1118,6 +1200,8 @@ class ShapeMatch(BaseTool):
             self._static_train_image = None
             self.params["train_image_b64"] = None
             self.params["train_image_token"] = None
+            self.params["range_vmin"] = None
+            self.params["range_vmax"] = None
         self.data_changed.emit()
 
     def _save_model(self) -> None:
@@ -3256,6 +3340,19 @@ class ShapeMatch(BaseTool):
             self.set_error("Input ROI is empty")
             self.data_changed.emit()
             return
+        is_range = self._is_range_data(raw)
+        if is_range:
+            vmin = self.params.get("range_vmin")
+            vmax = self.params.get("range_vmax")
+            if vmin is None or vmax is None:
+                self.set_error(
+                    "Range input requires a model trained on range images"
+                )
+                self.data_changed.emit()
+                return
+            raw = self._range_to_gray(
+                raw, float(vmin), float(vmax), fast=True
+            )
         vote_factor = self._vote_factor()
         search_factor = int(self._search_factor)
         ecc_factor = int(self._ecc_factor)
@@ -3265,64 +3362,85 @@ class ShapeMatch(BaseTool):
             # the ROI instead of converting the complete frame to gray.  The
             # block origin is a common multiple of all pyramid factors, so the
             # views keep exactly the same global sampling phase.
-            frame = v_img.data
-            if frame.dtype == np.uint8:
-                frame_gray, block_left, block_top = (
-                    self._aligned_roi_gray_block(
-                        frame,
-                        ax,
-                        ay,
-                        roi["aw"],
-                        roi["ah"],
-                        vote_factor,
-                        search_factor,
-                        ecc_factor,
-                    )
-                )
-                local_ax = ax - block_left
-                local_ay = ay - block_top
-                gray_for_match = frame_gray[
-                    local_ay:local_ay + roi["ah"],
-                    local_ax:local_ax + roi["aw"],
-                ]
+            if is_range:
+                # The range-specific ROI is already normalized with the
+                # training vmin/vmax.  Re-normalizing the complete 82 MP frame
+                # here both discarded that scale and cost ~120 ms.
+                frame_gray = raw
+                gray_for_match = raw
                 views = self._pyramid_views(
-                    frame_gray,
-                    local_ax,
-                    local_ay,
+                    raw,
+                    0,
+                    0,
                     roi["aw"],
                     roi["ah"],
                     (vote_factor, search_factor),
                 )
                 vote_gray, vote_map = views[vote_factor]
                 search_gray, search_map = views[search_factor]
-                ecc_gray, ecc_map = None, None
-                ecc_frame = frame_gray
-                ecc_origin = (local_ax, local_ay)
-            else:
-                gray = self._gray(raw)
-                if gray.dtype == np.uint8:
-                    gray_for_match = gray
-                else:
-                    gray_for_match = cv2.normalize(
-                        gray, None, 0, 255, cv2.NORM_MINMAX
-                    ).astype(np.uint8)
-                frame_gray = self._gray(frame)
-                if frame_gray.dtype != np.uint8:
-                    frame_gray = cv2.normalize(
-                        frame_gray, None, 0, 255, cv2.NORM_MINMAX
-                    ).astype(np.uint8)
-                gray_for_match = frame_gray[
-                    ay:ay + roi["ah"], ax:ax + roi["aw"]
-                ]
-                views = self._pyramid_views(
-                    frame_gray, ax, ay, roi["aw"], roi["ah"],
-                    (vote_factor, search_factor),
-                )
-                vote_gray, vote_map = views[vote_factor]
-                search_gray, search_map = views[search_factor]
-                ecc_gray, ecc_map = None, None
-                ecc_frame = frame_gray
+                ecc_gray = raw
+                ecc_map = (1.0, 1.0, 0.0, 0.0)
+                ecc_frame = raw
                 ecc_origin = (ax, ay)
+            else:
+                frame = v_img.data
+                if frame.dtype == np.uint8:
+                    frame_gray, block_left, block_top = (
+                        self._aligned_roi_gray_block(
+                            frame,
+                            ax,
+                            ay,
+                            roi["aw"],
+                            roi["ah"],
+                            vote_factor,
+                            search_factor,
+                            ecc_factor,
+                        )
+                    )
+                    local_ax = ax - block_left
+                    local_ay = ay - block_top
+                    gray_for_match = frame_gray[
+                        local_ay:local_ay + roi["ah"],
+                        local_ax:local_ax + roi["aw"],
+                    ]
+                    views = self._pyramid_views(
+                        frame_gray,
+                        local_ax,
+                        local_ay,
+                        roi["aw"],
+                        roi["ah"],
+                        (vote_factor, search_factor),
+                    )
+                    vote_gray, vote_map = views[vote_factor]
+                    search_gray, search_map = views[search_factor]
+                    ecc_gray, ecc_map = None, None
+                    ecc_frame = frame_gray
+                    ecc_origin = (local_ax, local_ay)
+                else:
+                    gray = self._gray(raw)
+                    if gray.dtype == np.uint8:
+                        gray_for_match = gray
+                    else:
+                        gray_for_match = cv2.normalize(
+                            gray, None, 0, 255, cv2.NORM_MINMAX
+                        ).astype(np.uint8)
+                    frame_gray = self._gray(frame)
+                    if frame_gray.dtype != np.uint8:
+                        frame_gray = cv2.normalize(
+                            frame_gray, None, 0, 255, cv2.NORM_MINMAX
+                        ).astype(np.uint8)
+                    gray_for_match = frame_gray[
+                        ay:ay + roi["ah"], ax:ax + roi["aw"]
+                    ]
+                    views = self._pyramid_views(
+                        frame_gray, ax, ay, roi["aw"], roi["ah"],
+                        (vote_factor, search_factor),
+                    )
+                    vote_gray, vote_map = views[vote_factor]
+                    search_gray, search_map = views[search_factor]
+                    ecc_gray, ecc_map = None, None
+                    ecc_frame = frame_gray
+                    ecc_origin = (ax, ay)
         else:
             # Rotated ROIs are already resampled by ``extract_roi``; keep the
             # previous crop-resize path for them.

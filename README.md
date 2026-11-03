@@ -27,8 +27,9 @@ operator dashboards.
 - **Vision toolset** — acquisition, image enhancement, segmentation, template
   and shape matching, code reading, measurement, deep-learning inspection and
   3D analysis.
-- **Depth + 3D** — depth/range loading, point clouds, plane fitting and a 3D
-  viewer with world-space overlays.
+- **Depth + 3D** - depth/range loading, the native `.fcd` LZ4 container,
+  point clouds, plane fitting and a 3D viewer with world-space overlays. See
+  [`docs/DEPTH_FORMATS.md`](docs/DEPTH_FORMATS.md).
 - **Fixture system** — per-image coordinate transforms; tools work in
   fixture-relative coordinates.
 - **Vector overlays** — annotations are mathematical primitives rendered only

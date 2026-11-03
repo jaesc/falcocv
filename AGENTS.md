@@ -173,6 +173,43 @@ cpp/bin/       → local kernel build output (gitignored)
 - **Kernel A/B measurement** -> rebuilding between measurements moved the
   baseline by 13 % on this machine.  Compare native changes inside one binary
   (extra flag or a second exported function), never across builds.
+- **DepthRangeLoader TIFF path** -> prefer `imagecodecs.tiff_decode`, then
+  `cv2.imread`, then `tifffile`.  On the large `20000x4096` LZW depth frames
+  the imagecodecs path is faster than OpenCV (~375-410 ms vs ~420-480 ms in
+  memory); do not add a frame cache for production runs.  Integer depth is
+  converted with `cv2.addWeighted(..., dtype=CV_32F)`, which combines casting
+  and scaling and is faster than `astype` + multiply; `float32` input keeps the
+  existing no-copy path when `scale == 1.0`.
+- **FCD depth container** -> `.fcd` is a FalcoCV-specific raw-depth container,
+  not TIFF.  It stores shape/dtype in a small JSON header and an LZ4-compressed
+  uint16 payload.  It is smaller than raw and much faster to decode than LZW
+  TIFF (~48 ms vs ~375 ms for the large frames).  `DepthRangeLoader` detects
+  `.fcd` by extension; `scripts/convert_depth_to_fcd.py` converts TIFF batches
+  with verification.  Preserve the TIFF path for existing files.  On the
+  `20000x4096` test frame the loader is ~240-305 ms with `.fcd` vs ~607 ms with
+  TIFF when generating 3D; the full job is ~585-700 ms vs ~957 ms.
+- **Point-cloud colors are lazy** -> loaders keep `_3d_data["colors"] = None`;
+  `ensure_pointcloud_colors(vimg)` generates them only when a 3D viewer uploads
+  the cloud.  This avoids ~47 ms per frame in headless/production jobs.
+- **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
+  native plane fit skips the full 82 MP image-range scan; it samples the image
+  every 32 pixels only for the cover polygon.  The plane and polygon remain
+  identical on `depth.cvj`; the tool drops from ~440 ms to ~120 ms.  If a ROI
+  uses the automatic `0..1` Z sentinel, the full scan is retained.
+- **ShapeMatch/TemplateMatch range input** -> 2D float range images are
+  normalized through a grayscale view. `range_vmin`/`range_vmax` are computed
+  automatically from all valid pixels of the full training image and persisted;
+  inference uses those fixed values. For an axis-aligned ShapeMatch range ROI,
+  use the already-normalized ROI directly: never call `cv2.normalize` on the
+  complete frame, because that discards the training limits and costs ~120 ms.
+  The fast ROI normalization uses `cv2.addWeighted` and an in-place clip; this
+  is exact against the previous NumPy expression.
+  The output keeps the original range data, calibration and `_3d_data` by
+  reference, and sets the 2D fixture when `act_as_fixture` is enabled. No
+  reference plane is required for this matching.
+- **Match tool defaults** -> `TemplateMatch` and `ShapeMatch` default to
+  `angle_start=-3`, `angle_end=3`, `scale_start=1.0`, `scale_end=1.0`.
+  Tests that exercise wider rotations/scales must set their own range.
 - **ShapeMatch ROI monotonicity** -> a bigger search ROI must never lose a match
   found by a smaller one.  That is why the vote factor, the edge quota, the
   candidate floor and the dedupe distance cannot depend on the ROI extent.
@@ -263,7 +300,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `419 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `432 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and

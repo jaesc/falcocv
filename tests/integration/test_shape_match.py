@@ -23,6 +23,8 @@ def _tool(template, max_matches=1):
         {
             "angle_start": -30.0,
             "angle_end": 30.0,
+            "scale_start": 0.9,
+            "scale_end": 1.1,
             "min_score": 0.25,
             "max_matches": max_matches,
             "max_features": 800,

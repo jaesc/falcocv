@@ -17,7 +17,10 @@ from falcocv.ui.tool_config_helpers import (
 from falcocv.ui.widgets.viewer import ImageViewer
 from falcocv.core.depth_viz import COLORMAP_NAMES
 from falcocv.ui.safe_refresh import safe_refresh
-from falcocv.core.pointcloud_utils import generate_pointcloud
+from falcocv.core.pointcloud_utils import (
+    ensure_pointcloud_colors,
+    generate_pointcloud,
+)
 from .logic import DepthRangeLoader
 
 
@@ -51,12 +54,12 @@ def _ensure_3d(tool: DepthRangeLoader, img_obj):
     zero_invalid = bool(tool.params.get("zero_as_invalid", False))
     cloud = generate_pointcloud(
         depth, x_res, y_res, z_res, z_offset, effective_target_points,
-        zero_invalid, "TURBO", True,
+        zero_invalid, "", True,
     )
     img_obj._3d_data = {
         "points": np.asarray(cloud["points"], dtype=np.float32),
         "intensity": np.asarray(cloud["intensity"], dtype=np.float32),
-        "colors": np.asarray(cloud["colors"], dtype=np.uint8) if "colors" in cloud else None,
+        "colors": None,
         "bbox_center": np.asarray(cloud["bbox_center"], dtype=np.float32) if "bbox_center" in cloud else None,
         "bbox_size": np.asarray(cloud["bbox_size"], dtype=np.float32) if "bbox_size" in cloud else None,
     }
@@ -287,7 +290,8 @@ class DepthRangeLoaderConfig(QWidget):
         if self.radio_file.isChecked():
             path, _ = QFileDialog.getOpenFileName(
                 self, "Open range / depth image", "",
-                "Images (*.tif *.tiff *.png *.bmp *.jpg *.jpeg);;All files (*)",
+                "Depth (*.fcd *.tif *.tiff *.png *.bmp *.jpg *.jpeg);;"
+                "FalcoCV depth (*.fcd);;All files (*)",
             )
             if path:
                 self.tool.params["file_path"] = path
@@ -358,11 +362,12 @@ class DepthRangeLoaderConfig(QWidget):
         }
 
     def _on_show3d_toggled(self, checked):
-        if checked:
-            img_obj = self.tool.outputs.get("output image")
-            if img_obj is not None:
-                _ensure_3d(self.tool, img_obj)
+        img_obj = self.tool.outputs.get("output image")
+        if checked and img_obj is not None:
+            _ensure_3d(self.tool, img_obj)
         self.viewer_stack.setCurrentIndex(1 if checked else 0)
+        if checked and img_obj is not None:
+            self._update_3d_viewer(img_obj)
 
     # ── Viewer ──────────────────────────────────────────────────────
 
@@ -373,6 +378,10 @@ class DepthRangeLoaderConfig(QWidget):
             d3 = img_obj._3d_data
             pts = d3.get("points")
             colors = d3.get("colors")
+            if colors is None or len(colors) != len(pts):
+                if self.chk_show3d.isChecked():
+                    ensure_pointcloud_colors(img_obj)
+                    colors = d3.get("colors")
             if colors is None:
                 colors = np.zeros((0, 3), dtype=np.uint8)
             bbox_center = d3.get("bbox_center")

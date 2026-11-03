@@ -9,6 +9,7 @@ from falcocv.core.tool_registry import register_tool
 from falcocv.core.roi_utils import extract_roi
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import propagate_3d
+from falcocv.core.depth_viz import depth_to_gray_u8
 
 
 # Angle conventions
@@ -145,8 +146,8 @@ class TemplateMatch(BaseTool):
             "train_roi": [0, 0, 0, 0, 0],
             "search_roi": [0, 0, 0, 0, 0],
             "score_threshold": 0.7,
-            "angle_start": -10,
-            "angle_end": 10,
+            "angle_start": -3,
+            "angle_end": 3,
             "angle_step": 1,
             "scale_start": 1.0,
             "scale_end": 1.0,
@@ -165,6 +166,9 @@ class TemplateMatch(BaseTool):
             "origin_x": 0.0, # Relative to template center
             "origin_y": 0.0,
             "act_as_fixture": False,
+            "range_vmin": None,
+            "range_vmax": None,
+            "range_zero_invalid": True,
             "copy_overlays_to_input": True,
         }
         self.inputs = {
@@ -191,6 +195,49 @@ class TemplateMatch(BaseTool):
     def is_trained(self):
         return self._template_gray is not None
 
+    @staticmethod
+    def _is_range_data(data) -> bool:
+        return (
+            isinstance(data, np.ndarray)
+            and data.ndim == 2
+            and data.dtype.kind == "f"
+        )
+
+    def _range_limits(self, data):
+        work = np.asarray(data, dtype=np.float32)
+        valid = np.isfinite(work)
+        if bool(self.params.get("range_zero_invalid", True)):
+            valid &= work != 0.0
+        if not np.any(valid):
+            return None
+        return float(np.min(work[valid])), float(np.max(work[valid]))
+
+    def _range_to_gray(self, data, vmin, vmax, fast=False):
+        if fast:
+            work = np.asarray(data, dtype=np.float32)
+            span = float(vmax) - float(vmin)
+            if span <= 0.0:
+                gray = np.zeros(work.shape, dtype=np.uint8)
+            else:
+                gray = np.clip(
+                    (work - float(vmin)) * (255.0 / span),
+                    0.0,
+                    255.0,
+                ).astype(np.uint8)
+            if bool(self.params.get("range_zero_invalid", True)):
+                valid = np.isfinite(work)
+                valid &= work != 0.0
+                gray[~valid] = 0
+            else:
+                gray[~np.isfinite(work)] = 0
+            return gray
+        gray = depth_to_gray_u8(data, vmin, vmax)
+        if bool(self.params.get("range_zero_invalid", True)):
+            valid = np.isfinite(data)
+            valid &= data != 0.0
+            gray[~valid] = 0
+        return gray
+
     def save_train_image(self):
         src_obj = self.inputs.get("input image")
         if src_obj is None: return
@@ -199,6 +246,21 @@ class TemplateMatch(BaseTool):
         src = src_obj.data if isinstance(src_obj, VisionImage) else src_obj
 
         if isinstance(src, np.ndarray):
+            if self._is_range_data(src):
+                limits = self._range_limits(src)
+                if limits is None:
+                    self.set_error("Range image has no valid pixels")
+                    return
+                self.params["range_vmin"], self.params["range_vmax"] = limits
+                src = self._range_to_gray(
+                    src,
+                    self.params["range_vmin"],
+                    self.params["range_vmax"],
+                    fast=True,
+                )
+            else:
+                self.params["range_vmin"] = None
+                self.params["range_vmax"] = None
             self._static_train_image = src.copy()
             _, buffer = cv2.imencode('.png', src)
             self.params["train_image_b64"] = base64.b64encode(buffer).decode('utf-8')
@@ -224,6 +286,8 @@ class TemplateMatch(BaseTool):
         if not keep_image:
             self._static_train_image = None
             self.params["train_image_b64"] = None
+            self.params["range_vmin"] = None
+            self.params["range_vmax"] = None
         self._static_train_fixture = {'x': 0.0, 'y': 0.0, 'angle': 0.0}
         self.params["_static_train_fixture"] = dict(self._static_train_fixture)
         self.params["template_b64"] = None
@@ -295,6 +359,19 @@ class TemplateMatch(BaseTool):
             raise ValueError("No training image captured.")
         if img.size == 0:
             raise ValueError("Training image is empty.")
+        if self._is_range_data(img):
+            vmin = self.params.get("range_vmin")
+            vmax = self.params.get("range_vmax")
+            if vmin is None or vmax is None:
+                limits = self._range_limits(img)
+                if limits is None:
+                    raise ValueError("Range image has no valid pixels.")
+                vmin, vmax = limits
+                self.params["range_vmin"] = vmin
+                self.params["range_vmax"] = vmax
+            img = self._range_to_gray(
+                img, float(vmin), float(vmax), fast=True
+            )
 
         roi_data = self.params["train_roi"]
         if len(roi_data) == 4:
@@ -493,6 +570,19 @@ class TemplateMatch(BaseTool):
             return
         # Extract raw data for OpenCV
         roi_raw = roi_img.data if isinstance(roi_img, VisionImage) else roi_img
+        if self._is_range_data(roi_raw):
+            vmin = self.params.get("range_vmin")
+            vmax = self.params.get("range_vmax")
+            if vmin is None or vmax is None:
+                self.set_error(
+                    "Range input requires a model trained on range images"
+                )
+                self.outputs["output image"] = vision_img
+                self.data_changed.emit()
+                return
+            roi_raw = self._range_to_gray(
+                roi_raw, float(vmin), float(vmax), fast=True
+            )
         search_gray = cv2.cvtColor(roi_raw, cv2.COLOR_BGR2GRAY) if roi_raw.ndim == 3 else roi_raw.copy()
         search_pyr = [search_gray]
         for _ in range(levels - 1): search_pyr.append(cv2.pyrDown(search_pyr[-1]))

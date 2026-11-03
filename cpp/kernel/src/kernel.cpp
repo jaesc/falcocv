@@ -438,6 +438,15 @@ py::dict plane_fit_impl(py::dict input) {
 
     double scale_x = 1.0, scale_y = 1.0, scale_z = 1.0, offset_z = 0.0;
 
+    bool skip_image_range = false;
+    if (p.contains("skip_image_range")) {
+        try {
+            skip_image_range = py::cast<bool>(p["skip_image_range"]);
+        } catch (...) {
+            skip_image_range = false;
+        }
+    }
+
     if (input.contains("image")) {
         try {
             py::array_t<float, py::array::c_style | py::array::forcecast> img_arr(input["image"]);
@@ -445,20 +454,43 @@ py::dict plane_fit_impl(py::dict input) {
             if (ib.ndim == 2) {
                 img_h = static_cast<int>(ib.shape[0]);
                 img_w = static_cast<int>(ib.shape[1]);
-                const float* ip = static_cast<const float*>(ib.ptr);
-                float raw_min = std::numeric_limits<float>::infinity();
-                float raw_max = -std::numeric_limits<float>::infinity();
-                for (std::size_t i = 0; i < static_cast<std::size_t>(img_h) * img_w; ++i) {
-                    const float d = ip[i];
-                    if (std::isfinite(d)) {
-                        raw_min = std::min(raw_min, d);
-                        raw_max = std::max(raw_max, d);
+                if (!skip_image_range) {
+                    const float* ip = static_cast<const float*>(ib.ptr);
+                    float raw_min = std::numeric_limits<float>::infinity();
+                    float raw_max = -std::numeric_limits<float>::infinity();
+                    for (std::size_t i = 0; i < static_cast<std::size_t>(img_h) * img_w; ++i) {
+                        const float d = ip[i];
+                        if (std::isfinite(d)) {
+                            raw_min = std::min(raw_min, d);
+                            raw_max = std::max(raw_max, d);
+                        }
                     }
-                }
-                // calibration is parsed below; store raw range for now
-                if (std::isfinite(raw_min) && std::isfinite(raw_max)) {
-                    img_z_min = raw_min;
-                    img_z_max = raw_max;
+                    // calibration is parsed below; store raw range for now
+                    if (std::isfinite(raw_min) && std::isfinite(raw_max)) {
+                        img_z_min = raw_min;
+                        img_z_max = raw_max;
+                    }
+                } else {
+                    // The fitting ROIs already carry fixed Z bounds.  The
+                    // image range is only needed for the plane-box polygon;
+                    // a strided sample avoids scanning an 82 MP depth image.
+                    const float* ip = static_cast<const float*>(ib.ptr);
+                    const std::size_t total =
+                        static_cast<std::size_t>(img_h) * img_w;
+                    const std::size_t stride = 32;
+                    float raw_min = std::numeric_limits<float>::infinity();
+                    float raw_max = -std::numeric_limits<float>::infinity();
+                    for (std::size_t i = 0; i < total; i += stride) {
+                        const float d = ip[i];
+                        if (std::isfinite(d)) {
+                            raw_min = std::min(raw_min, d);
+                            raw_max = std::max(raw_max, d);
+                        }
+                    }
+                    if (std::isfinite(raw_min) && std::isfinite(raw_max)) {
+                        img_z_min = raw_min;
+                        img_z_max = raw_max;
+                    }
                 }
             }
         } catch (...) {}

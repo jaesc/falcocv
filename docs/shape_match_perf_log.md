@@ -892,6 +892,17 @@ Status:
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.
 
+## Range-image path (2026-11-03)
+
+- Range matching uses fixed `range_vmin`/`range_vmax` from training. The
+  axis-aligned ShapeMatch path must not normalize the complete frame again;
+  doing so discarded the training limits and cost about 120 ms.
+- The fast ROI path uses `cv2.addWeighted` plus an in-place clip; it is
+  bit-identical to the previous NumPy expression.
+- A representative large range frame drops from roughly 957 ms to 585-700 ms
+  end-to-end after the FCD/LZ4, lazy-color and range-path changes. These are
+  aggregated timings only.
+
 ## Privacy
 
 This document contains only aggregated timings, counts and parameter values. It

@@ -15,6 +15,7 @@ from falcocv.ui.tool_config_helpers import (
 from falcocv.ui.widgets.viewer import ImageViewer
 from falcocv.ui.widgets.roi_editor_3d import RoiEditor3DWidget
 from falcocv.core.roi_3d import calib_from_vimg, get_3d_data
+from falcocv.core.pointcloud_utils import ensure_pointcloud_colors
 from .logic import PlaneFitter
 
 
@@ -282,6 +283,9 @@ class PlaneFitterConfig(QWidget):
         cloud = get_3d_data(img_obj)
         pts = cloud.get("points")
         colors = cloud.get("colors")
+        if colors is None or len(colors) != len(pts):
+            ensure_pointcloud_colors(img_obj)
+            colors = cloud.get("colors")
         if colors is None or len(colors) != len(pts):
             colors = np.full((len(pts), 3), 180, dtype=np.uint8)
         bbox_center = cloud.get("bbox_center")

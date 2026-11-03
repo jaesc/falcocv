@@ -1,17 +1,23 @@
 ﻿import os
-import collections
+
 import cv2
 import numpy as np
+
 from falcocv.core.tool_base import BaseTool
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import generate_pointcloud
+from falcocv.core.depth_format import load_depth_fcd
 
-_CACHE_MAX = 4
-_LOAD_CACHE: dict[str, np.ndarray] = {}
-_LOAD_KEYS: collections.OrderedDict = collections.OrderedDict()
+# imagecodecs is the fastest decoder for the large LZW TIFFs.  tifffile is
+# kept as the last fallback for TIFF variants or environments without it.
+try:
+    import imagecodecs
+    _HAS_IMAGECODECS = True
+except Exception:
+    imagecodecs = None  # type: ignore[assignment]
+    _HAS_IMAGECODECS = False
 
-# Optional fast TIFF reader (often 2-3x faster than cv2.imread on compressed TIFFs).
 try:
     import tifffile
     _HAS_TIFFFILE = True
@@ -20,31 +26,7 @@ except Exception:
     _HAS_TIFFFILE = False
 
 
-def _cache_get(path: str):
-    arr = _LOAD_CACHE.get(path)
-    if arr is not None:
-        _LOAD_KEYS.move_to_end(path)
-    return arr
-
-
-def _cache_put(path: str, arr: np.ndarray):
-    if path in _LOAD_CACHE:
-        _LOAD_KEYS.move_to_end(path)
-        return
-    if len(_LOAD_CACHE) >= _CACHE_MAX:
-        oldest = next(iter(_LOAD_KEYS))
-        del _LOAD_CACHE[oldest]
-        del _LOAD_KEYS[oldest]
-    _LOAD_CACHE[path] = arr
-    _LOAD_KEYS[path] = None
-
-
-def _cache_clear():
-    _LOAD_CACHE.clear()
-    _LOAD_KEYS.clear()
-
-
-_VALID_EXTS = {".tif", ".tiff", ".png", ".bmp", ".jpg", ".jpeg"}
+_VALID_EXTS = {".tif", ".tiff", ".fcd", ".png", ".bmp", ".jpg", ".jpeg"}
 
 
 def _load_depth_raw(path):
@@ -59,36 +41,88 @@ def _load_depth_raw(path):
     return raw
 
 
+def _as_depth_array(raw):
+    """Normalise channel layouts returned by different TIFF decoders."""
+    if raw is None:
+        return None
+    if raw.ndim != 3:
+        return raw
+    if raw.shape[2] == 1:
+        return raw[:, :, 0]
+    if raw.shape[2] < 3:
+        return raw[:, :, 0]
+    if raw.dtype == np.uint8:
+        return cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY)
+    # Preserve the source dtype while using standard luminance weights.
+    return (
+        raw[:, :, 0] * 0.299
+        + raw[:, :, 1] * 0.587
+        + raw[:, :, 2] * 0.114
+    ).astype(raw.dtype)
+
+
+def _load_depth_imagecodecs(path):
+    """Decode a TIFF through imagecodecs/libtiff."""
+    if imagecodecs is None:
+        raise RuntimeError("imagecodecs is not installed")
+    with open(path, "rb") as handle:
+        raw = imagecodecs.tiff_decode(handle.read())
+    if raw is None:
+        raise RuntimeError(f"Failed to decode TIFF with imagecodecs: {path}")
+    return _as_depth_array(raw)
+
+
 def _load_depth_tifffile(path):
-    """Load a TIFF faster than cv2.imread for many compression schemes."""
+    """Load a TIFF through tifffile as a final fallback."""
     if tifffile is None:
         raise RuntimeError("tifffile is not installed")
     raw = tifffile.imread(path)
     if raw is None:
         raise RuntimeError(f"Failed to decode image with tifffile: {path}")
-    # tifffile may return a (H, W, 1) array for some single-channel TIFFs.
-    if raw.ndim == 3:
-        if raw.shape[2] == 1:
-            raw = raw[:, :, 0]
-        elif raw.shape[2] >= 3:
-            # Convert to grayscale. Use standard luminance weights.
-            raw = (
-                raw[:, :, 0] * 0.299
-                + raw[:, :, 1] * 0.587
-                + raw[:, :, 2] * 0.114
-            ).astype(raw.dtype)
-        else:
-            raw = raw[:, :, 0]
-    return raw
+    return _as_depth_array(raw)
+
+
+def _load_tiff_depth(path):
+    """Decode a TIFF using the fastest available backend."""
+    errors = []
+    if _HAS_IMAGECODECS:
+        try:
+            return _load_depth_imagecodecs(path)
+        except Exception as exc:
+            errors.append(f"imagecodecs: {exc}")
+    try:
+        return _load_depth_raw(path)
+    except Exception as exc:
+        errors.append(f"cv2: {exc}")
+    if _HAS_TIFFFILE:
+        try:
+            return _load_depth_tifffile(path)
+        except Exception as exc:
+            errors.append(f"tifffile: {exc}")
+    detail = "; ".join(errors) if errors else "no decoder available"
+    raise RuntimeError(f"Failed to decode TIFF {path}: {detail}")
 
 
 def _convert_depth(raw, scale):
+    scale = np.float32(scale)
     if raw.dtype.kind in "iu":
+        # OpenCV's SIMD path performs the uint16 -> float32 conversion and
+        # scaling in one pass.  It is faster than astype + multiply and keeps
+        # the same exact float32 values for the supported integer dtypes.
+        try:
+            return cv2.addWeighted(
+                raw, float(scale), raw, 0.0, 0.0, dtype=cv2.CV_32F
+            )
+        except cv2.error:
+            pass
         d = raw.astype(np.float32)
-        d *= np.float32(scale)
+        if scale != 1.0:
+            d *= scale
     elif raw.dtype.kind == "f":
-        d = raw.astype(np.float32)
-        d *= np.float32(scale)
+        # Preserve an existing float32 buffer when no scaling is needed.
+        d = np.asarray(raw, dtype=np.float32)
+        if scale != 1.0:
+            d = d * scale
     else:
         raise RuntimeError(f"Unsupported depth dtype: {raw.dtype}")
     return d
@@ -96,7 +130,7 @@ def _convert_depth(raw, scale):
 
 @register_tool(prefix="[DPTH]", default_name="Depth Range Loader", group="Acquisition")
 class DepthRangeLoader(BaseTool):
-    """Loads single-channel range / depth images (TIFF, PNG, etc.) as float32.
+    """Loads single-channel range / depth images (FCD, TIFF, PNG, etc.) as float32.
     Supports single-file and folder-stack modes.
     3D point cloud is generated eagerly in C++ when generate_3d is enabled."""
 
@@ -174,28 +208,28 @@ class DepthRangeLoader(BaseTool):
         target_points = int(self.params.get("target_points", 1_000_000))
         effective_target_points = 0 if show_all_points else target_points
 
-        # Prefer tifffile for TIFFs: often much faster on compressed files.
+        # imagecodecs decodes the large LZW TIFFs fastest; cv2 and tifffile
+        # remain fallbacks.  .fcd is a native raw-uint16 + LZ4 container.
         ext = os.path.splitext(path)[1].lower()
-        use_tifffile = _HAS_TIFFFILE and ext in {".tif", ".tiff"}
 
-        raw = _cache_get(path)
+        if ext == ".fcd":
+            raw = load_depth_fcd(path)
+        elif ext in {".tif", ".tiff"}:
+            raw = _load_tiff_depth(path)
+        else:
+            raw = _load_depth_raw(path)
         if raw is None:
-            if use_tifffile:
-                try:
-                    raw = _load_depth_tifffile(path)
-                except Exception as e:
-                    print(f"tifffile decode failed ({e}), falling back to cv2.imread")
-                    raw = _load_depth_raw(path)
-            else:
-                raw = _load_depth_raw(path)
-            _cache_put(path, raw)
+            raise RuntimeError(f"Failed to decode image: {path}")
 
         d = _convert_depth(raw, scale)
 
         # Zero-as-invalid handling is done at cloud generation time. The
         # depth map for display keeps 0 values so the viewer shows a normal
         # colormap instead of rendering invalid pixels as black.
-        d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
+        # Integer sources cannot contain NaN/Inf and are by far the common
+        # case for range images; avoid a full float64 sanitisation pass.
+        if raw.dtype.kind == "f" and not np.isfinite(d).all():
+            d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
 
         vimg = VisionImage(d)
         vimg.scale_x = x_res
@@ -206,12 +240,13 @@ class DepthRangeLoader(BaseTool):
         if generate_3d:
             cloud = generate_pointcloud(
                 d, x_res, y_res, z_res, z_offset,
-                effective_target_points, zero_invalid, "TURBO", True,
+                effective_target_points, zero_invalid, "", True,
             )
             vimg._3d_data = {
                 "points": np.asarray(cloud["points"], dtype=np.float32),
                 "intensity": np.asarray(cloud["intensity"], dtype=np.float32),
-                "colors": np.asarray(cloud["colors"], dtype=np.uint8) if "colors" in cloud else None,
+                # Colors are generated lazily by the 3D viewer.
+                "colors": None,
                 "bbox_center": np.asarray(cloud["bbox_center"], dtype=np.float32) if "bbox_center" in cloud else None,
                 "bbox_size": np.asarray(cloud["bbox_size"], dtype=np.float32) if "bbox_size" in cloud else None,
             }

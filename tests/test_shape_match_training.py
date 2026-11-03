@@ -15,6 +15,8 @@ from falcocv.tools.shape_match.logic import MODEL_VERSION, ShapeMatch
 def _trained():
     template = make_template()
     tool = ShapeMatch()
+    tool.params["angle_start"] = -30.0
+    tool.params["angle_end"] = 30.0
     tool._static_train_image = template.copy()
     tool.params["train_roi"] = [
         0,

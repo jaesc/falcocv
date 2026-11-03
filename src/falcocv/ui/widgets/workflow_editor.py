@@ -21,7 +21,10 @@ from falcocv.tools.depth_range_loader import DepthRangeLoader
 import sys
 import numpy as np
 from falcocv.core.depth_viz import should_offer_depth_controls, map_depth_to_rgb
-from falcocv.core.pointcloud_utils import axis_aligned_bounding_box
+from falcocv.core.pointcloud_utils import (
+    axis_aligned_bounding_box,
+    ensure_pointcloud_colors,
+)
 
 class WorkflowEditor(QWidget):
     _global_show_overlays = True
@@ -495,6 +498,9 @@ class WorkflowEditor(QWidget):
                 d3 = data._3d_data
                 pts = d3["points"]
                 colors = d3.get("colors")
+                if colors is None or len(colors) != len(pts):
+                    ensure_pointcloud_colors(data)
+                    colors = d3.get("colors")
                 intensity = d3.get("intensity")
                 if colors is None and intensity is not None and len(intensity) == len(pts):
                     colors = map_depth_to_rgb(intensity, "TURBO", None, None)

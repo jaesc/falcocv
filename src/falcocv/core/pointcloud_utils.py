@@ -112,6 +112,26 @@ def generate_pointcloud(depth, x_res=1.0, y_res=1.0, z_res=1.0, z_offset=0.0,
     return result
 
 
+def ensure_pointcloud_colors(vimg, colormap="TURBO"):
+    """Generate point-cloud colors on demand.
+
+    Depth loaders intentionally leave ``_3d_data["colors"]`` as ``None`` so
+    headless pipelines do not pay the colormap cost.  Viewers call this helper
+    when they are about to upload the cloud.
+    """
+    data = getattr(vimg, "_3d_data", None)
+    if not data:
+        return False
+    points = data.get("points")
+    intensity = data.get("intensity")
+    if points is None or intensity is None or len(intensity) != len(points):
+        return False
+    if data.get("colors") is not None and len(data["colors"]) == len(points):
+        return True
+    data["colors"] = _intensity_colors(intensity, colormap)
+    return True
+
+
 def ensure_pointcloud_data(vimg, target_points=1_000_000, zero_as_invalid=True):
     """Generate or validate 3D point-cloud data for a depth-like VisionImage.
 

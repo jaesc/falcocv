@@ -82,6 +82,15 @@ class PlaneFitter(BaseTool):
         else:
             rois_abs = rois
 
+        skip_image_range = bool(rois_abs) and all(
+            r.get("z_min") is not None
+            and r.get("z_max") is not None
+            and not (
+                float(r.get("z_min")) == 0.0
+                and float(r.get("z_max")) == 1.0
+            )
+            for r in rois_abs
+        )
         output = _plane_fit({
             "image": depth,
             "points": points,
@@ -93,6 +102,7 @@ class PlaneFitter(BaseTool):
                 "max_iterations": int(self.params.get("max_iterations", 100)),
                 "min_points": int(self.params.get("min_points", 10)),
                 "max_fit_points": int(self.params.get("max_fit_points", 50000)),
+                "skip_image_range": skip_image_range,
             }
         })
 
