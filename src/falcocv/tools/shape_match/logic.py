@@ -221,6 +221,9 @@ class ShapeMatch(BaseTool):
             "show_labels": True,
             "show_overlays": True,
             "act_as_fixture": False,
+            "fixture_use_x": True,
+            "fixture_use_y": True,
+            "fixture_use_angle": True,
             "copy_overlays_to_input": True,
             "model_b64": None,
             "train_image_b64": None,
@@ -3844,9 +3847,14 @@ class ShapeMatch(BaseTool):
 
         if self.params.get("act_as_fixture") and results:
             best = results[0]
-            vision_img.x = best.x
-            vision_img.y = best.y
-            vision_img.angle = best.angle
+            vision_img.apply_fixture(
+                best.x,
+                best.y,
+                best.angle,
+                use_x=bool(self.params.get("fixture_use_x", True)),
+                use_y=bool(self.params.get("fixture_use_y", True)),
+                use_angle=bool(self.params.get("fixture_use_angle", True)),
+            )
 
         self.outputs["output image"] = vision_img
         self.outputs["count"] = len(results)

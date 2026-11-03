@@ -7,7 +7,7 @@ Z ranges, LSQ/RANSAC fitting and the plane/image-box intersection polygon.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -47,10 +47,99 @@ class PlaneModel:
         center = np.asarray(self.center, dtype=np.float64)
         return (points - center) @ normal
 
+    def offset(self, distance) -> "PlaneModel":
+        """Return the same plane shifted ``distance`` along +normal.
+
+        Positive moves the plane towards the camera, so measured heights
+        decrease by ``distance``.  Negative lowers the plane, which is what you
+        need when the features sit below the fitted surface.
+        """
+        distance = float(distance)
+        if distance == 0.0:
+            return self
+        normal = np.asarray(self.normal, dtype=np.float64)
+        center = np.asarray(self.center, dtype=np.float64) + normal * distance
+        return replace(
+            self,
+            distance=self.distance + distance,
+            center=tuple(float(value) for value in center),
+        )
+
+    def frame(self, x_hint=None) -> "PlaneFrame":
+        """Frame anchored to this plane; ``x_hint`` fixes the in-plane X."""
+        return _plane_frame(self, x_hint)
+
 
 def plane_height(plane: PlaneModel, points) -> np.ndarray:
     """Signed height of ``points`` above ``plane`` (positive = camera side)."""
     return plane.height(points)
+
+
+@dataclass(frozen=True)
+class PlaneFrame:
+    """Right-handed frame anchored to a plane.
+
+    ``z`` is the plane normal, ``x`` the fixture direction projected onto the
+    plane and ``y = z x x``.  Coordinates in this frame are invariant to how
+    the part is tilted relative to the camera.
+    """
+
+    origin: tuple[float, float, float]
+    x: tuple[float, float, float]
+    y: tuple[float, float, float]
+    z: tuple[float, float, float]
+
+    def to_plane(self, points):
+        """World points -> (u, v, h) in the frame."""
+        values = np.asarray(points, dtype=np.float64).reshape(-1, 3)
+        origin = np.asarray(self.origin, dtype=np.float64)
+        relative = values - origin
+        u = relative @ np.asarray(self.x, dtype=np.float64)
+        v = relative @ np.asarray(self.y, dtype=np.float64)
+        h = relative @ np.asarray(self.z, dtype=np.float64)
+        return u, v, h
+
+    def to_world(self, u, v, h):
+        """(u, v, h) in the frame -> world points."""
+        u = np.asarray(u, dtype=np.float64)
+        v = np.asarray(v, dtype=np.float64)
+        h = np.asarray(h, dtype=np.float64)
+        origin = np.asarray(self.origin, dtype=np.float64)
+        axes = [
+            np.asarray(self.x, dtype=np.float64),
+            np.asarray(self.y, dtype=np.float64),
+            np.asarray(self.z, dtype=np.float64),
+        ]
+        return origin + u[..., None] * axes[0] + v[..., None] * axes[1] + h[..., None] * axes[2]
+
+
+def _plane_frame(plane, x_hint=None):
+    normal = np.asarray(plane.normal, dtype=np.float64).reshape(3)
+    length = float(np.linalg.norm(normal))
+    if length < 1e-12:
+        normal = np.array([0.0, 0.0, -1.0])
+    else:
+        normal = normal / length
+
+    hint = np.asarray(
+        x_hint if x_hint is not None else (1.0, 0.0, 0.0),
+        dtype=np.float64,
+    ).reshape(3)
+    axis = hint - float(hint @ normal) * normal
+    if float(np.linalg.norm(axis)) < 1e-6:
+        for candidate in ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0)):
+            trial = np.asarray(candidate, dtype=np.float64)
+            axis = trial - float(trial @ normal) * normal
+            if float(np.linalg.norm(axis)) >= 1e-6:
+                break
+    axis = axis / float(np.linalg.norm(axis))
+    other = np.cross(normal, axis)
+    return PlaneFrame(
+        origin=tuple(float(value) for value in plane.center),
+        x=tuple(float(value) for value in axis),
+        y=tuple(float(value) for value in other),
+        z=tuple(float(value) for value in normal),
+    )
 
 
 def normalize_plane(normal, distance, z_epsilon=1e-3):

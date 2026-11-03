@@ -68,7 +68,8 @@ class RoiEditor3DWidget(QGroupBox):
         self._build_z_controls(layout)
 
         # ── Draw buttons ─────────────────────────────────────────────
-        self.btn_draw = QPushButton("Select Region in 2D View")
+        self.btn_draw = QPushButton("Select 2D ROI")
+        self.btn_draw.setToolTip("Draw the ROI on the 2D image")
         self.btn_draw.setCheckable(True)
         self.btn_draw.toggled.connect(self._toggle_draw)
         self.btn_draw.setStyleSheet(f"""
@@ -80,8 +81,8 @@ class RoiEditor3DWidget(QGroupBox):
         """)
         layout.addWidget(self.btn_draw)
 
-        draw3d_row = QHBoxLayout()
-        self.btn_edit_3d = QPushButton("Edit ROI in 3D")
+        draw3d_layout = QVBoxLayout()
+        self.btn_edit_3d = QPushButton("Edit in 3D")
         self.btn_edit_3d.setCheckable(True)
         self.btn_edit_3d.setToolTip(
             "Drag a face to resize, the yellow centre to move in XY, "
@@ -89,14 +90,14 @@ class RoiEditor3DWidget(QGroupBox):
             "2D ROI rotation."
         )
         self.btn_edit_3d.toggled.connect(self._toggle_edit_3d)
-        draw3d_row.addWidget(self.btn_edit_3d)
+        draw3d_layout.addWidget(self.btn_edit_3d)
 
-        self.btn_draw_3d = QPushButton("Draw ROI in 3D")
+        self.btn_draw_3d = QPushButton("Draw in 3D")
         self.btn_draw_3d.setCheckable(True)
         self.btn_draw_3d.setToolTip("Click and drag on the 3D view to draw a new ROI")
         self.btn_draw_3d.toggled.connect(self._toggle_draw_3d)
-        draw3d_row.addWidget(self.btn_draw_3d)
-        layout.addLayout(draw3d_row)
+        draw3d_layout.addWidget(self.btn_draw_3d)
+        layout.addLayout(draw3d_layout)
 
     def _build_2d_controls(self, parent_layout):
         grp = QGroupBox("2D Region (XY)")
@@ -135,25 +136,33 @@ class RoiEditor3DWidget(QGroupBox):
         z_layout = QVBoxLayout(grp)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("Z min:"))
         self.spin_z_min = QDoubleSpinBox()
-        self.spin_z_min.setRange(-1e9, 1e9)
-        self.spin_z_min.setDecimals(3)
-        self.spin_z_min.valueChanged.connect(self._on_z_changed)
-        row.addWidget(self.spin_z_min)
-
-        row.addWidget(QLabel("Z max:"))
         self.spin_z_max = QDoubleSpinBox()
-        self.spin_z_max.setRange(-1e9, 1e9)
-        self.spin_z_max.setDecimals(3)
-        self.spin_z_max.valueChanged.connect(self._on_z_changed)
-        row.addWidget(self.spin_z_max)
+        for label, spin in (
+            ("Z min", self.spin_z_min),
+            ("Z max", self.spin_z_max),
+        ):
+            spin.setRange(-1e9, 1e9)
+            spin.setDecimals(3)
+            spin.setMinimumWidth(70)
+            spin.setMaximumWidth(110)
+            spin.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+            )
+            spin.valueChanged.connect(self._on_z_changed)
+            field = QWidget()
+            field_layout = QVBoxLayout(field)
+            field_layout.setContentsMargins(0, 0, 0, 0)
+            field_layout.setSpacing(1)
+            field_layout.addWidget(QLabel(label))
+            field_layout.addWidget(spin)
+            row.addWidget(field)
+        z_layout.addLayout(row)
 
         self.btn_auto_z = QPushButton("Auto-fit Z")
         self.btn_auto_z.clicked.connect(self._on_auto_z)
-        row.addWidget(self.btn_auto_z)
-        row.addStretch()
-        z_layout.addLayout(row)
+        z_layout.addWidget(self.btn_auto_z)
+
         parent_layout.addWidget(grp)
 
     def set_tool(self, tool, viewer_2d=None, viewer_3d=None):
@@ -284,13 +293,14 @@ class RoiEditor3DWidget(QGroupBox):
         roi_2d = entry.get("roi", [0, 0, 0, 0, 0])
 
         img_obj = self.tool.inputs.get("input image") if hasattr(self.tool, "inputs") else None
-        if img_obj is not None:
-            from falcocv.core.vision_image import VisionImage
-            v_img = VisionImage.from_array(img_obj) if not hasattr(img_obj, "fixture_to_image") else img_obj
-            roi_abs = v_img.fixture_to_image(roi_2d)
-            self.viewer_2d.set_roi(roi_abs)
-        else:
-            self.viewer_2d.set_roi(roi_2d)
+        if img_obj is None:
+            # Without the image we cannot map fixture coordinates to pixels;
+            # setting the ROI anyway would place it at the wrong scale.
+            return
+        from falcocv.core.vision_image import VisionImage
+        v_img = VisionImage.from_array(img_obj) if not hasattr(img_obj, "fixture_to_image") else img_obj
+        roi_abs = v_img.fixture_to_image(roi_2d)
+        self.viewer_2d.set_roi(roi_abs)
 
     def _update_viewers(self):
         self._update_viewer_2d_roi()

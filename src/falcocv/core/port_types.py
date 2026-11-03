@@ -15,9 +15,15 @@ from __future__ import annotations
 
 IMAGE = "image"
 PLANE = "plane"
+FEATURES = "features"
 ANY = "any"
 
-PORT_LABELS = {IMAGE: "Image", PLANE: "Plane", ANY: "Any"}
+PORT_LABELS = {
+    IMAGE: "Image",
+    PLANE: "Plane",
+    FEATURES: "Features",
+    ANY: "Any",
+}
 LABEL_TO_PORT = {label: kind for kind, label in PORT_LABELS.items()}
 
 # Legacy block metadata used display labels and extra kinds.  Older values map
@@ -26,6 +32,8 @@ _ALIASES = {
     "image": IMAGE,
     "img": IMAGE,
     "plane": PLANE,
+    "features": FEATURES,
+    "feature": FEATURES,
     "any": ANY,
     "number": ANY,
     "string": ANY,

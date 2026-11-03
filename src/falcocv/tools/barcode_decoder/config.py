@@ -6,6 +6,9 @@ from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_fixture_axis_row,
+    make_record_selector,
+    set_fixture_axes_enabled,
     add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
@@ -71,6 +74,17 @@ class BarcodeDecoderConfig(QWidget):
             lambda c: self.tool.params.__setitem__("act_as_fixture", c) or self.tool.mark_dirty()
         )
         self.controls_layout.addWidget(self.chk_fixture)
+        self.fixture_axes = add_fixture_axis_row(
+            self.controls_layout, self.tool
+        )
+        set_fixture_axes_enabled(
+            self.fixture_axes, self.chk_fixture.isChecked()
+        )
+        self.chk_fixture.toggled.connect(
+            lambda checked: set_fixture_axes_enabled(
+                self.fixture_axes, checked
+            )
+        )
 
         fixture_row = QHBoxLayout()
         fixture_row.addWidget(QLabel("Fixture angle offset:"))
@@ -131,12 +145,12 @@ class BarcodeDecoderConfig(QWidget):
         self.right_panel = QWidget()
         self.viewer_layout = QVBoxLayout(self.right_panel)
         self.viewer_layout.setContentsMargins(0, 0, 0, 0)
-        self.record_selector = QComboBox()
+        self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("output image", "output image")
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
         self.viewer_layout.addWidget(self.record_selector)
-
+        self.viewer_layout.addSpacing(8)
         self.viewer = ImageViewer()
         if hasattr(self, "roi_editor"):
             self.roi_editor.set_tool(self.tool, self.viewer)

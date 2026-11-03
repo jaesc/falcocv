@@ -17,3 +17,4 @@ import falcocv.tools.classifier
 import falcocv.tools.anomaly_detector
 import falcocv.tools.depth_range_loader
 import falcocv.tools.plane_fitter
+import falcocv.tools.height_blobs

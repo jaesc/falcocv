@@ -22,6 +22,9 @@ from PyQt6.QtCore import QRectF, QTimer, Qt, QThread, pyqtSignal as Signal
 from falcocv.ui.style import ALT_BG, BORDER, SUCCESS, WARNING, disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_fixture_axis_row,
+    make_record_selector,
+    set_fixture_axes_enabled,
     add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
@@ -164,10 +167,11 @@ class TemplateMatchConfig(QWidget):
         self.right_panel = QWidget()
         self.viewer_layout = QVBoxLayout(self.right_panel)
         self.viewer_layout.setContentsMargins(0, 0, 0, 0)
-        self.record_selector = QComboBox()
+        self.record_selector = make_record_selector()
         [self.record_selector.addItem(k, k) for k in ["input image", "train image", "output image"]]
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
         self.viewer_layout.addWidget(self.record_selector)
+        self.viewer_layout.addSpacing(8)
         self.viewer = ImageViewer(); self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.right_panel)
 
@@ -266,6 +270,19 @@ class TemplateMatchConfig(QWidget):
         self.chk_fixture.setChecked(self.tool.params.get("act_as_fixture", False))
         self.chk_fixture.toggled.connect(lambda v: self._set_param("act_as_fixture", v))
         res_lyt.addWidget(self.chk_fixture)
+        self.fixture_axes = add_fixture_axis_row(
+            res_lyt,
+            self.tool,
+            on_change=lambda key, value: self._set_param(key, value),
+        )
+        set_fixture_axes_enabled(
+            self.fixture_axes, self.chk_fixture.isChecked()
+        )
+        self.chk_fixture.toggled.connect(
+            lambda checked: set_fixture_axes_enabled(
+                self.fixture_axes, checked
+            )
+        )
 
         layout.addWidget(res_group)
 

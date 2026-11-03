@@ -169,6 +169,9 @@ class TemplateMatch(BaseTool):
             "origin_x": 0.0, # Relative to template center
             "origin_y": 0.0,
             "act_as_fixture": False,
+            "fixture_use_x": True,
+            "fixture_use_y": True,
+            "fixture_use_angle": True,
             "range_vmin": None,
             "range_vmax": None,
             "range_zero_invalid": True,
@@ -807,9 +810,14 @@ class TemplateMatch(BaseTool):
         if self.params.get("act_as_fixture") and len(final_results) > 0:
             best = final_results[0]
             # Apply fixture transform to the already-overlay-drawn image
-            vision_img.x = best.x
-            vision_img.y = best.y
-            vision_img.angle = best.angle
+            vision_img.apply_fixture(
+                best.x,
+                best.y,
+                best.angle,
+                use_x=bool(self.params.get("fixture_use_x", True)),
+                use_y=bool(self.params.get("fixture_use_y", True)),
+                use_angle=bool(self.params.get("fixture_use_angle", True)),
+            )
 
         self.outputs["output image"] = vision_img
 

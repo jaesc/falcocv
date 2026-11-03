@@ -525,6 +525,12 @@ TOOL_HELP["Template Match"] = {
          "description": "User-defined origin Y offset from template center."},
         {"name": "act_as_fixture", "default": "False",
          "description": "If True, the match position/angle is applied as a fixture transform on the output image."},
+        {"name": "fixture_use_x", "default": "True",
+         "description": "Copy the match X into the output fixture X."},
+        {"name": "fixture_use_y", "default": "True",
+         "description": "Copy the match Y into the output fixture Y."},
+        {"name": "fixture_use_angle", "default": "True",
+         "description": "Copy the match angle into the output fixture angle."},
     ],
     "result": {
         "class": "TemplateMatchResult",
@@ -930,6 +936,83 @@ TOOL_HELP["Python Script"] = {
         "Breakpoints persist while the config window is open and are auto-cleaned when it closes."
     ),
     "see_also": ["Block"],
+}
+
+TOOL_HELP["Height Blobs 3D"] = {
+    "name": "Height Blobs 3D",
+    "category": "3D",
+    "purpose": (
+        "Segments the 3D ROI into regions that rise above a reference plane and "
+        "measures each one. The tip is the centroid of the band just below the "
+        "highest point, expressed in the frame of the plane, so the result does "
+        "not depend on how the part is tilted."
+    ),
+    "inputs": [
+        {"name": "input image", "type": "VisionImage (depth)",
+         "description": "Depth / range image."},
+        {"name": "reference plane", "type": "PlaneModel",
+         "description": "Plane published by Plane Fitter. Required."},
+    ],
+    "outputs": [
+        {"name": "output image", "type": "VisionImage",
+         "description": "Input image with the blob contours and height labels."},
+        {"name": "binary mask", "type": "VisionImage",
+         "description": "Mask used for the segmentation, for tuning the thresholds."},
+        {"name": "results", "type": "ToolResults[HeightBlobResult]",
+         "description": "One entry per blob: u, v, h, area, volume and height stats."},
+        {"name": "warnings", "type": "list[str]",
+         "description": "Hints such as 'apply a negative plane_offset'."},
+        {"name": "features", "type": "FeatureSet",
+         "description": "Measured points plus the plane frame they are expressed in."},
+    ],
+    "params": [
+        {"name": "rois", "default": "[]",
+         "description": "3D ROIs: rotated footprint plus a Z band. Only points inside are measured."},
+        {"name": "plane_offset", "default": "0",
+         "description": "Shifts the plane along its normal. Positive moves it towards the camera; "
+                        "use a negative value when the part sits below the fitted surface."},
+        {"name": "direction", "default": '"above"',
+         "description": "above measures regions on the camera side of the plane; below measures "
+                        "regions behind it. The tip is always the furthest point along the "
+                        "measurement direction and is reported as a positive 'depth'."},
+        {"name": "min_height", "default": "0.2",
+         "description": "Minimum height above the plane for a pixel to belong to a blob."},
+        {"name": "seed_height", "default": "0.5",
+         "description": "Hysteresis seed: a blob must reach this height somewhere to be kept."},
+        {"name": "median_px", "default": "0",
+         "description": "Median filter on the height map (0, 3, 5). Can erase very thin pins."},
+        {"name": "close_px", "default": "1",
+         "description": "Binary closing radius; merges 1-2 px gaps between pixels of the same part."},
+        {"name": "open_px", "default": "1",
+         "description": "Binary opening radius; removes isolated pixels."},
+        {"name": "connectivity", "default": "8",
+         "description": "4 or 8 neighbours for connected components."},
+        {"name": "min_points", "default": "3",
+         "description": "Minimum pixels per blob."},
+        {"name": "watershed", "default": "False",
+         "description": "Split touching blobs using a distance-transform watershed."},
+        {"name": "watershed_erode_px", "default": "2",
+         "description": "Erosion used to find one seed per blob before the watershed."},
+        {"name": "tip_band", "default": "0.05",
+         "description": "Band under the highest point used to compute the tip position."},
+        {"name": "tip_stat", "default": '"mean"',
+         "description": "mean or median of the tip band."},
+        {"name": "sort_mode", "default": '"u"',
+         "description": "none, u, v, h, area or grid. grid groups by row_tolerance then u."},
+        {"name": "sort_descending", "default": "False",
+         "description": "Reverse the order."},
+        {"name": "row_tolerance", "default": "0.5",
+         "description": "Row height (mm) used by the grid sort."},
+    ],
+    "notes": (
+        "Connect Plane Fitter to 'reference plane'. Heights are measured along the "
+        "plane normal, so a tilted part does not bias them. 'direction' selects the "
+        "side of the plane that is measured: use 'below' when the features sit "
+        "behind the fitted surface (for example pins recessed under the connector "
+        "top). The 'binary mask' output is the fastest way to tune the thresholds, "
+        "and the 3D view shows each measured tip."
+    ),
+    "see_also": ["Plane Fitter", "Shape Match", "Blob Detector"],
 }
 
 TOOL_HELP["Block"] = {
@@ -1674,6 +1757,12 @@ TOOL_HELP["Shape Match"] = {
                         "0 = template center."},
         {"name": "act_as_fixture", "default": "False",
          "description": "Use the best match origin as the output fixture."},
+        {"name": "fixture_use_x", "default": "True",
+         "description": "Copy the match X into the output fixture X."},
+        {"name": "fixture_use_y", "default": "True",
+         "description": "Copy the match Y into the output fixture Y."},
+        {"name": "fixture_use_angle", "default": "True",
+         "description": "Copy the match angle into the output fixture angle."},
         {"name": "show_search_roi", "default": "True",
          "description": "Draw the search ROI in the output image."},
         {"name": "show_found_region", "default": "True",

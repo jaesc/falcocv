@@ -4,6 +4,7 @@ import pytest
 
 from falcocv.core.port_types import (
     ANY,
+    FEATURES,
     IMAGE,
     PLANE,
     connection_candidates,
@@ -153,6 +154,7 @@ GOLDEN_IMAGE_PORTS = {
     "FiltersTool": ({"input image"}, {"output image"}),
     "FixtureOverlay": ({"input image"}, {"output image"}),
     "GigeCameraLoader": (set(), {"output image"}),
+    "HeightBlobs3D": ({"input image"}, {"output image", "binary mask"}),
     "HistogramTool": ({"input image"}, {"output image"}),
     "ImageCalculatorTool": ({"image_A", "image_B"}, {"output image"}),
     "ImageLoader": (set(), {"output image"}),
@@ -207,6 +209,14 @@ def test_every_tool_declares_its_image_and_plane_ports():
 
     # Block has dynamic ports typed through port_metadata.
     assert "Block" in classes
+
+    # Typed non-image ports: the plane datum and the measured features.
+    height_blobs = classes["HeightBlobs3D"]()
+    assert height_blobs.get_input_port_type("reference plane") == PLANE
+    assert height_blobs.get_output_port_type("features") == FEATURES
+    plane_fitter = classes["PlaneFitter"]()
+    assert plane_fitter.get_output_port_type("plane") == PLANE
+
     assert set(GOLDEN_IMAGE_PORTS) | set(GOLDEN_PLANE_PORTS) == checked
 
 

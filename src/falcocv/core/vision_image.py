@@ -468,6 +468,23 @@ class VisionImage:
     def get_matrix(self):
         return cv2.getRotationMatrix2D((self.x, self.y), self._angle, 1.0)
 
+    def apply_fixture(self, x, y, angle, use_x=True, use_y=True,
+                      use_angle=True, angle_offset=0.0):
+        """Apply a measured pose as this image's fixture.
+
+        Only the selected components are copied; the rest keep the fixture
+        this image already had (inherited from the upstream image).  The angle
+        is normalised to [-180, 180].
+        """
+        if use_x:
+            self.x = float(x)
+        if use_y:
+            self.y = float(y)
+        if use_angle:
+            self.angle = (
+                (float(angle) + float(angle_offset) + 180.0) % 360.0
+            ) - 180.0
+
     def fixture_to_image(self, roi_fixture):
         if len(roi_fixture) == 4:
             fx, fy, fw, fh = roi_fixture

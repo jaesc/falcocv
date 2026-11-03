@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
     save_params_splitter,
@@ -61,13 +62,13 @@ class PlaneFitterConfig(QWidget):
         vb.setContentsMargins(5, 2, 5, 2)
         vb.setSpacing(4)
 
-        self.record_selector = QComboBox()
+        self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("output image", "output image")
         self.record_selector.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
         vb.addWidget(self.record_selector)
-
+        vb.addSpacing(8)
         self.chk_show3d = QCheckBox("Show 3D")
         self.chk_show3d.setVisible(False)
         self.chk_show3d.toggled.connect(self._on_show3d_toggled)

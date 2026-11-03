@@ -20,6 +20,9 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.style import SUCCESS, WARNING, disabled_css
 from falcocv.ui.tool_config_helpers import (
+    add_fixture_axis_row,
+    make_record_selector,
+    set_fixture_axes_enabled,
     add_min_results_group,
     configure_params_splitter,
     connect_execution_time,
@@ -63,11 +66,12 @@ class ShapeMatchConfig(QWidget):
         self.right_panel = QWidget()
         self.viewer_layout = QVBoxLayout(self.right_panel)
         self.viewer_layout.setContentsMargins(0, 0, 0, 0)
-        self.record_selector = QComboBox()
+        self.record_selector = make_record_selector()
         for key in ("input image", "train image", "output image"):
             self.record_selector.addItem(key, key)
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
         self.viewer_layout.addWidget(self.record_selector)
+        self.viewer_layout.addSpacing(8)
         self.viewer = ImageViewer()
         self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.right_panel)
@@ -379,6 +383,19 @@ class ShapeMatchConfig(QWidget):
             lambda checked: self._set_param("act_as_fixture", checked)
         )
         results_layout.addWidget(self.chk_fixture)
+        self.fixture_axes = add_fixture_axis_row(
+            results_layout,
+            self.tool,
+            on_change=lambda key, value: self._set_param(key, value),
+        )
+        set_fixture_axes_enabled(
+            self.fixture_axes, self.chk_fixture.isChecked()
+        )
+        self.chk_fixture.toggled.connect(
+            lambda checked: set_fixture_axes_enabled(
+                self.fixture_axes, checked
+            )
+        )
         layout.addWidget(results_group)
 
         self.spin_min_results = add_min_results_group(

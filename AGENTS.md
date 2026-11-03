@@ -221,6 +221,16 @@ cpp/bin/       → local kernel build output (gitignored)
   `Workflow.remove_port_connections`, so the wiring is never left dangling.
   The viewer's record selector also uses the port kinds (plus a value check for
   untyped ports); it never inspects port names.
+- **Height Blobs 3D** -> one feature per connected region above the reference
+  plane.  Heights are computed per pixel from the depth grid (mirrored X,
+  `z = depth*z_res + offset_z`), not from the strided cloud, so thin pins keep
+  full resolution.  `plane_offset` shifts the plane along +normal (positive =
+  towards the camera); a negative value is how features below the fitted
+  surface are measured.  The tip is the centroid of the `tip_band` under the
+  maximum, expressed in `PlaneFrame` (u, v in-plane, h along the normal), which
+  makes the measurement tilt-invariant.  Blob statistics run on each
+  component's bounding box, never over the whole ROI crop: a 13 MP ROI went
+  from 2.9 s to 0.26 s with that change.
 - **PlaneModel** -> `PlaneFitter` publishes `outputs["plane"]` as a
   `core.plane_fit.PlaneModel`.  The normal is unit length and its sense is
   fixed at creation (points towards the camera, `normal[2] <= 0`), so

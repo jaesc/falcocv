@@ -10,10 +10,13 @@ Provides a uniform layout for parameter panel + viewer:
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QVBoxLayout,
@@ -32,7 +35,64 @@ __all__ = [
     "create_execution_footer",
     "connect_execution_time",
     "add_min_results_group",
+    "make_record_selector",
+    "add_fixture_axis_row",
+    "set_fixture_axes_enabled",
 ]
+
+
+def make_record_selector(parent: QWidget | None = None) -> QComboBox:
+    """Image-record selector with the same size in every tool config."""
+    combo = QComboBox(parent)
+    combo.setMinimumWidth(285)
+    combo.setSizeAdjustPolicy(
+        QComboBox.SizeAdjustPolicy.AdjustToContents
+    )
+    combo.setSizePolicy(
+        QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+    )
+    return combo
+
+
+def add_fixture_axis_row(layout, tool, on_change=None):
+    """Add the X / Y / Angle selection under an 'act as fixture' checkbox.
+
+    Returns the three checkboxes so the caller can enable them only while the
+    main fixture checkbox is active.
+    """
+    row = QHBoxLayout()
+    row.addWidget(QLabel("Use:"))
+    boxes = []
+    for key, text in (
+        ("fixture_use_x", "X"),
+        ("fixture_use_y", "Y"),
+        ("fixture_use_angle", "Angle"),
+    ):
+        box = QCheckBox(text)
+        box.setChecked(bool(tool.params.get(key, True)))
+        box.toggled.connect(_fixture_axis_slot(tool, key, on_change))
+        row.addWidget(box)
+        boxes.append(box)
+    row.addStretch()
+    layout.addLayout(row)
+    return boxes
+
+
+def _fixture_axis_slot(tool, key, on_change):
+    def slot(checked):
+        if on_change is not None:
+            on_change(key, bool(checked))
+        else:
+            tool.params[key] = bool(checked)
+            tool.mark_dirty()
+
+    return slot
+
+
+def set_fixture_axes_enabled(boxes, enabled):
+    """Enable the axis checkboxes only while the fixture toggle is active."""
+    for box in boxes or ():
+        box.setEnabled(bool(enabled))
 
 
 def wrap_params_scroll(panel: QWidget) -> QScrollArea:
@@ -51,8 +111,8 @@ def wrap_params_scroll(panel: QWidget) -> QScrollArea:
 def _min_left_width(panel: QWidget) -> int:
     """Compute a sensible minimum width for the parameter panel."""
     hint = panel.minimumSizeHint().width()
-    # Add a small margin for the scrollbar and internal spacing.
-    return max(180, hint + 12)
+    # Add room for the frame and the vertical scrollbar.
+    return max(180, hint + 32)
 
 
 def configure_params_splitter(
@@ -60,6 +120,7 @@ def configure_params_splitter(
     scroll_left: QScrollArea,
     right_panel: QWidget,
     tool_type: str,
+    measure: QWidget | None = None,
 ) -> None:
     """Configure the splitter shared by all tool config widgets.
 
@@ -70,7 +131,11 @@ def configure_params_splitter(
       panel is sized to a sensible default (capped to avoid an overly wide
       panel when some control groups have a large minimumSizeHint).
     """
-    panel = scroll_left.widget()
+    panel = (
+        measure
+        if measure is not None
+        else (scroll_left.widget() if hasattr(scroll_left, "widget") else scroll_left)
+    )
     min_left = _min_left_width(panel)
     # Allow the user to resize down to 180 px; the scroll area will show a
     # horizontal scrollbar if a control group is wider than the viewport.

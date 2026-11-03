@@ -42,6 +42,9 @@ class BarcodeDecoder(BaseTool):
             "show_labels": True,
             "show_found_origin": True,
             "act_as_fixture": False,
+            "fixture_use_x": True,
+            "fixture_use_y": True,
+            "fixture_use_angle": True,
             "fixture_angle_offset": 0.0,
             "max_count": 1,
             "min_results": 1,
@@ -234,10 +237,17 @@ class BarcodeDecoder(BaseTool):
 
         if self.params.get("act_as_fixture") and results.Count > 0:
             best = results[0]
-            offset = float(self.params.get("fixture_angle_offset", 0.0))
-            out_img.x = best.x
-            out_img.y = best.y
-            out_img.angle = (best.angle + offset + 180.0) % 360.0 - 180.0
+            out_img.apply_fixture(
+                best.x,
+                best.y,
+                best.angle,
+                use_x=bool(self.params.get("fixture_use_x", True)),
+                use_y=bool(self.params.get("fixture_use_y", True)),
+                use_angle=bool(self.params.get("fixture_use_angle", True)),
+                angle_offset=float(
+                    self.params.get("fixture_angle_offset", 0.0)
+                ),
+            )
 
         self.outputs["output image"] = out_img
         self._copy_overlays_to_input(out_img, img)

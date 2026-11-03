@@ -197,3 +197,19 @@ def test_shape_match_capture_roi_train_uses_roi(qtbot):
     assert abs(tool._template_size[1] - 90) <= 2
 
     dialog.close()
+
+@pytest.mark.parametrize("reg", TOOLS, ids=lambda r: r.tool_type)
+def test_record_selector_uses_the_shared_width(qtbot, reg):
+    """Every tool with a record selector uses the same minimum width."""
+    tool = create_tool(reg.tool_type)
+    dialog = ToolConfigDialog(tool)
+    qtbot.addWidget(dialog)
+    dialog.show()
+    qtbot.wait(50)
+
+    widget = dialog._config_widget
+    selector = getattr(widget, "record_selector", None)
+    if selector is None:
+        pytest.skip("tool has no record selector")
+    assert selector.minimumWidth() >= 285
+    dialog.close()

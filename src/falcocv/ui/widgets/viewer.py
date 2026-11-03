@@ -265,6 +265,9 @@ class ImageViewer(QGraphicsView):
         # Scale between original image pixels and on-screen (downsampled) pixels.
         self._display_scale_x = 1.0
         self._display_scale_y = 1.0
+        # ROI in original image pixels; re-applied whenever the display scale
+        # changes so the order of set_roi / set_image does not matter.
+        self._roi_data = None
         self.set_roi_editing(False)
 
     def eventFilter(self, source, event):
@@ -405,6 +408,7 @@ class ImageViewer(QGraphicsView):
             self.pixmap_item.setPixmap(QPixmap())
             self._current_image_shape = None
             self._overlay_primitives = self._build_overlay_cache()
+            self.roi_rect_item.hide()
             return
 
         # Float range images must not use raw float buffers as Grayscale8.
@@ -436,6 +440,10 @@ class ImageViewer(QGraphicsView):
         else:
             self._display_scale_x = 1.0
             self._display_scale_y = 1.0
+
+        # The display scale just changed: the stored ROI is in original pixels
+        # and must be re-projected onto the new pixmap.
+        self._apply_roi()
 
         self._overlay_primitives = self._build_overlay_cache()
 
@@ -734,6 +742,17 @@ class ImageViewer(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def set_roi(self, data):
+        """Set the ROI in original image pixels and render it.
+
+        The value is kept so ``set_image`` can re-apply it after the display
+        scale changes; otherwise a ROI set before the image loads would stay
+        in the wrong place.
+        """
+        self._roi_data = data
+        self._apply_roi()
+
+    def _apply_roi(self):
+        data = self._roi_data
         if data is None:
             self.roi_rect_item.hide()
             self.roi_rect_item.setEnabled(False)

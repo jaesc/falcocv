@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QRectF, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    make_record_selector,
     add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
@@ -179,13 +180,13 @@ class BlobDetectorConfig(QWidget):
         self.right_panel = QWidget()
         self.viewer_layout = QVBoxLayout(self.right_panel)
         self.viewer_layout.setContentsMargins(0, 0, 0, 0)
-        self.record_selector = QComboBox()
+        self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("binary mask", "binary mask")
         self.record_selector.addItem("output image", "output image")
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
         self.viewer_layout.addWidget(self.record_selector)
-
+        self.viewer_layout.addSpacing(8)
         self.viewer = ImageViewer()
         if hasattr(self, "roi_editor"):
             self.roi_editor.set_tool(self.tool, self.viewer)

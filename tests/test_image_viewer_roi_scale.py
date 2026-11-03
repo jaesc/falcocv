@@ -93,3 +93,37 @@ def test_no_downsample_no_conversion(_qapp):
     item = viewer.roi_rect_item
     assert abs(item.rect().width() - 30.0) < 1e-3
     assert abs(item.pos().x() - 10.0) < 1e-3
+
+
+def test_roi_set_before_the_image_is_reapplied(_qapp):
+    from falcocv.ui.widgets.viewer import ImageViewer
+
+    viewer = ImageViewer()
+    # ROI arrives before the image (config built, image not loaded yet).
+    viewer.set_roi([1000.0, 2000.0, 500.0, 800.0])
+
+    viewer.set_image(np.zeros((8192, 4096), dtype=np.uint8))
+
+    item = viewer.roi_rect_item
+    assert viewer._display_scale_x > 1.0
+    assert abs(item.rect().width() - 500.0 / viewer._display_scale_x) < 1.0
+    assert abs(item.rect().height() - 800.0 / viewer._display_scale_y) < 1.0
+    assert abs(item.pos().x() - 1000.0 / viewer._display_scale_x) < 1.0
+    assert abs(item.pos().y() - 2000.0 / viewer._display_scale_y) < 1.0
+
+
+def test_roi_survives_a_new_image_with_another_scale(_qapp):
+    from falcocv.ui.widgets.viewer import ImageViewer
+
+    viewer = ImageViewer()
+    viewer.set_image(np.zeros((8192, 4096), dtype=np.uint8))
+    assert viewer._display_scale_x > 1.0
+    viewer.set_roi([1000.0, 2000.0, 500.0, 800.0])
+
+    # A smaller image is shown at 1:1; the stored ROI is in original pixels.
+    viewer.set_image(np.zeros((2048, 1024), dtype=np.uint8))
+    assert viewer._display_scale_x == 1.0
+
+    item = viewer.roi_rect_item
+    assert abs(item.rect().width() - 500.0) < 1.0
+    assert abs(item.pos().x() - 1000.0) < 1.0
