@@ -69,6 +69,59 @@ def _screen_pt(v, world_pt):
 
 
 
+def test_set_roi_applies_the_rotation(_qapp):
+    import math
+
+    v = _make_viewer(_qapp)
+    v.set_roi([0.0, 0.0, 0.0], [10.0, 10.0, 10.0], rotation=-25.0)
+    assert v._roi_rotation == -25.0
+    ex, ey, _ez = v._roi_axes()
+    angle = math.radians(-25.0)
+    assert ex[0] == pytest.approx(math.cos(angle))
+    assert ex[1] == pytest.approx(math.sin(angle))
+    assert ey[0] == pytest.approx(-math.sin(angle))
+    assert ey[1] == pytest.approx(math.cos(angle))
+
+
+def test_rotated_face_handles_follow_the_rotated_axes(_qapp):
+    v = _make_viewer(_qapp)
+    v.set_roi_edit_mode(True)
+    v.set_roi([0.0, 0.0, 0.0], [10.0, 10.0, 10.0], rotation=90.0)
+    h = v._roi_size * 0.5
+    c = v._roi_center
+    ex, ey, ez = v._roi_axes()
+    faces = [
+        (c + ex * h[0], 0),
+        (c + ey * h[1], 1),
+        (c + ez * h[2], 2),
+        (c - ex * h[0], 3),
+        (c - ey * h[1], 4),
+        (c - ez * h[2], 5),
+    ]
+    for fc, axis in faces:
+        pt = _screen_pt(v, fc)
+        assert v._hit_roi_handle(pt) == axis, f"failed for handle {axis}"
+
+
+def test_shift_drag_on_center_handle_moves_the_z_band(_qapp):
+    v = _make_viewer(_qapp)
+    v.set_roi_edit_mode(True)
+    c0 = v._roi_center.copy()
+    v._roi_dragging = True
+    v._roi_drag_axis = 6
+    v._roi_drag_shift = True
+    v._roi_drag_start_mouse = _screen_pt(v, c0)
+    v._roi_drag_start_center = c0.copy()
+    v._roi_drag_start_size = v._roi_size.copy()
+
+    ez = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    v._handle_roi_drag(_screen_pt(v, c0 + ez * 10.0))
+
+    assert v._roi_center[2] > c0[2] + 1.0
+    assert abs(v._roi_center[0] - c0[0]) < 1e-3
+    assert abs(v._roi_center[1] - c0[1]) < 1e-3
+
+
 def test_hit_center_handle(_qapp):
     v = _make_viewer(_qapp)
     v.set_roi_edit_mode(True)

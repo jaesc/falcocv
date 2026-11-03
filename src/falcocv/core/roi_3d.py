@@ -1,10 +1,17 @@
 """3D ROI utilities — conversion between 2D image ROIs and 3D bounding boxes."""
 
+import math
+
 import numpy as np
 
 
 def roi_2d_to_3d(roi_2d, depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0, flip_x=True):
-    """Convert a 2D image ROI to a 3D bounding box using depth and calibration.
+    """Convert a 2D image ROI to a rotated 3D box using depth and calibration.
+
+    The ROI is a rectangle in image space plus a Z band, so the box carries a
+    single rotation about Z: the 2D angle.  The returned angle is in world
+    degrees with the sign flipped, matching ``plane_fit`` (the image uses
+    clockwise-positive angles and the world frame counter-clockwise).
 
     Parameters
     ----------
@@ -26,6 +33,8 @@ def roi_2d_to_3d(roi_2d, depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=
         Box dimensions in 3D space.
     z_min, z_max : float
         Depth range in metric units.
+    angle_world : float
+        Box rotation about Z in degrees (world convention, counter-clockwise).
     """
     x, y, w, h, angle = float(roi_2d[0]), float(roi_2d[1]), float(roi_2d[2]), float(roi_2d[3]), float(roi_2d[4]) if len(roi_2d) >= 5 else 0.0
 
@@ -50,10 +59,11 @@ def roi_2d_to_3d(roi_2d, depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=
 
     center_3d = np.array([cx, cy, cz], dtype=np.float32)
     size_3d = np.array([sx, sy, max(sz, 1e-6)], dtype=np.float32)
-    return center_3d, size_3d, z_min, z_max
+    return center_3d, size_3d, z_min, z_max, -angle
 
 
-def roi_3d_to_2d(center_3d, size_3d, scale_x=1.0, scale_y=1.0, image_width=None, flip_x=True):
+def roi_3d_to_2d(center_3d, size_3d, scale_x=1.0, scale_y=1.0, image_width=None, flip_x=True,
+                 angle=0.0):
     """Convert a 3D bounding box XY extent to a 2D image ROI.
 
     Parameters
@@ -68,6 +78,9 @@ def roi_3d_to_2d(center_3d, size_3d, scale_x=1.0, scale_y=1.0, image_width=None,
         Width of the source image in pixels. Required when flip_x is True.
     flip_x : bool
         If True (default), undo the world-X mirroring used by the point cloud.
+    angle : float
+        Box rotation about Z in world degrees (counter-clockwise).  It is
+        flipped back to the image convention in the returned ROI.
 
     Returns
     -------
@@ -87,7 +100,7 @@ def roi_3d_to_2d(center_3d, size_3d, scale_x=1.0, scale_y=1.0, image_width=None,
         x = 0.0
     y = cy_3d / scale_y - h * 0.5 if abs(scale_y) > 1e-12 else 0.0
 
-    return [x, y, w, h, 0.0]
+    return [x, y, w, h, -float(angle)]
 
 
 def _auto_z_range(depth, rx, ry, rw, rh, scale_z, offset_z):
@@ -114,15 +127,28 @@ def _auto_z_range(depth, rx, ry, rw, rh, scale_z, offset_z):
     return z_min, z_max
 
 
-def extract_points_in_rois(points, rois, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0):
+def extract_points_in_rois(points, rois, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0,
+                           image_width=None, flip_x=True):
     """Extract points falling within any of the given 3D ROIs.
+
+    The ROI is a rotated rectangle in image space plus a Z band, so the test is
+    done in the rectangle frame: the points are rotated back by the ROI angle
+    and compared against the half extents.  The angle sign and the X mirroring
+    match ``plane_fit``, so the selection agrees with the fitted plane.
 
     Parameters
     ----------
     points : (N, 3) float32
-        Full point cloud.
+        Full point cloud, already in world coordinates (X mirrored when
+        ``flip_x`` was used to build it).
     rois : list of dict
-        Each dict: {"roi": [x, y, w, h, angle], "z_min": float, "z_max": float}
+        Each dict: {"roi": [x, y, w, h, angle], "z_min": float, "z_max": float}.
+        ``z_min``/``z_max`` are world units, like the stored tool params.
+    image_width : int, optional
+        Image width used to mirror the ROI centre.  Required for the default
+        ``flip_x=True``; without it the ROI is taken as already in world X.
+    flip_x : bool
+        Mirror the ROI centre the same way ``roi_2d_to_3d`` does.
 
     Returns
     -------
@@ -132,26 +158,37 @@ def extract_points_in_rois(points, rois, scale_x=1.0, scale_y=1.0, scale_z=1.0, 
     if len(points) == 0 or not rois:
         return np.zeros(len(points), dtype=bool)
 
+    xs = points[:, 0]
+    ys = points[:, 1]
+    zs = points[:, 2]
     mask = np.zeros(len(points), dtype=bool)
     for roi_entry in rois:
         roi_2d = roi_entry["roi"]
+        x, y, w, h = float(roi_2d[0]), float(roi_2d[1]), float(roi_2d[2]), float(roi_2d[3])
+        angle = float(roi_2d[4]) if len(roi_2d) >= 5 else 0.0
         z_min = float(roi_entry.get("z_min", 0.0))
         z_max = float(roi_entry.get("z_max", 1.0))
-        x, y, w, h = float(roi_2d[0]), float(roi_2d[1]), float(roi_2d[2]), float(roi_2d[3])
 
-        cx_3d = (x + w * 0.5) * scale_x
-        cy_3d = (y + h * 0.5) * scale_y
-        sx_3d = w * scale_x
-        sy_3d = h * scale_y
-        sz_3d = z_max - z_min
-        cz_3d = (z_min + z_max) * 0.5
+        cx_img = x + w * 0.5
+        if flip_x and image_width is not None:
+            cx_img = (image_width - 1) - cx_img
+        cx = cx_img * scale_x
+        cy = (y + h * 0.5) * scale_y
+        half_x = w * scale_x * 0.5
+        half_y = h * scale_y * 0.5
 
-        half = np.array([sx_3d, sy_3d, sz_3d], dtype=np.float32) * 0.5
-        center = np.array([cx_3d, cy_3d, cz_3d], dtype=np.float32)
-        lo = center - half
-        hi = center + half
-        roi_mask = np.all((points >= lo) & (points <= hi), axis=1)
-        mask |= roi_mask
+        dx = xs - cx
+        dy = ys - cy
+        if abs(angle) < 1e-6:
+            inside = (np.abs(dx) <= half_x) & (np.abs(dy) <= half_y)
+        else:
+            a_rad = math.radians(-angle)
+            ca, sa = math.cos(a_rad), math.sin(a_rad)
+            local_x = dx * ca + dy * sa
+            local_y = -dx * sa + dy * ca
+            inside = (np.abs(local_x) <= half_x) & (np.abs(local_y) <= half_y)
+        inside &= (zs >= z_min) & (zs <= z_max)
+        mask |= inside
 
     return mask
 
@@ -198,7 +235,7 @@ def roi_3d_from_params(params, index=0, depth=None, scale_x=1.0, scale_y=1.0, sc
             roi_abs = list(roi_2d)
 
     z_min, z_max = z_range_from_params(params, index)
-    center_3d, size_3d, z_min_auto, z_max_auto = roi_2d_to_3d(
+    center_3d, size_3d, z_min_auto, z_max_auto, _angle = roi_2d_to_3d(
         roi_abs, depth, scale_x, scale_y, scale_z, offset_z
     )
 

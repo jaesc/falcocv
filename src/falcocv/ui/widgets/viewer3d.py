@@ -226,10 +226,12 @@ class Viewer3D(QOpenGLWidget):
         # ROI box
         self._roi_center = np.array([0.0, 0.0, 0.0], dtype=np.float32)
         self._roi_size = np.array([50.0, 50.0, 50.0], dtype=np.float32)
+        self._roi_rotation = 0.0
         self._roi_visible = False
         self._roi_edit_mode = False
         self._roi_dragging = False
         self._roi_drag_axis = -1  # 0=x, 1=y, 2=z (face handles), 6=center translate
+        self._roi_drag_shift = False
         self._roi_hover_axis = -1
         self._roi_drag_start_mouse = None
         self._roi_drag_start_center = None
@@ -561,13 +563,15 @@ class Viewer3D(QOpenGLWidget):
         if self._gl_initialized:
             self.update()
 
-    def set_roi(self, data, size=None):
-        """Set the 3D ROI box position and size.
+    def set_roi(self, data, size=None, rotation=None):
+        """Set the 3D ROI box position, size and rotation about Z.
 
         Accepts either:
           - set_roi(None)                 -> hide ROI
           - set_roi(center, size)         -> explicit arrays
-          - set_roi({"center": c, "size": s}) or set_roi([c, s])
+          - set_roi(center, size, angle)  -> explicit rotation (world degrees)
+          - set_roi({"center": c, "size": s, "rotation": [0, 0, angle]})
+          - set_roi([c, s])
         """
         if data is None:
             self._roi_visible = False
@@ -578,12 +582,18 @@ class Viewer3D(QOpenGLWidget):
         if isinstance(data, dict):
             center = np.asarray(data.get("center", [0.0, 0.0, 0.0]), dtype=np.float32)
             size_arr = np.asarray(data.get("size", [1.0, 1.0, 1.0]), dtype=np.float32)
+            if "rotation" in data:
+                rotation = data["rotation"]
         elif isinstance(data, (list, tuple)) and size is None and len(data) == 2:
             center = np.asarray(data[0], dtype=np.float32)
             size_arr = np.asarray(data[1], dtype=np.float32)
         else:
             center = np.asarray(data, dtype=np.float32)
             size_arr = np.asarray(size, dtype=np.float32)
+
+        if rotation is not None:
+            values = np.asarray(rotation, dtype=np.float64).reshape(-1)
+            self._roi_rotation = float(values[2]) if values.size >= 3 else float(values[0])
 
         self._roi_center = center
         self._roi_size = size_arr
@@ -592,6 +602,23 @@ class Viewer3D(QOpenGLWidget):
         if self._gl_initialized:
             self._build_roi_buffers()
             self.update()
+
+    def set_roi_rotation(self, angle):
+        """Rotate the box about Z (world degrees, counter-clockwise)."""
+        self._roi_rotation = float(angle or 0.0)
+        if self._gl_initialized and self._roi_visible:
+            self._build_roi_buffers()
+            self.update()
+
+    def _roi_axes(self):
+        """World axes of the box: X/Y rotated about Z, Z unchanged."""
+        angle = math.radians(float(self._roi_rotation))
+        ca, sa = math.cos(angle), math.sin(angle)
+        return (
+            np.array([ca, sa, 0.0], dtype=np.float32),
+            np.array([-sa, ca, 0.0], dtype=np.float32),
+            np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        )
 
     def show_roi(self, visible=True):
         self._roi_visible = visible
@@ -782,12 +809,17 @@ class Viewer3D(QOpenGLWidget):
 
         h = self._roi_size * 0.5
         c = self._roi_center
+        ex, ey, ez = self._roi_axes()
+
+        def corner(sx, sy, sz):
+            return c + ex * (sx * h[0]) + ey * (sy * h[1]) + ez * (sz * h[2])
 
         corners = np.array([
-            [-1, -1, -1], [1, -1, -1], [1, -1, 1], [-1, -1, 1],
-            [-1, 1, -1], [1, 1, -1], [1, 1, 1], [-1, 1, 1],
+            corner(-1, -1, -1), corner(1, -1, -1),
+            corner(1, -1, 1), corner(-1, -1, 1),
+            corner(-1, 1, -1), corner(1, 1, -1),
+            corner(1, 1, 1), corner(-1, 1, 1),
         ], dtype=np.float32)
-        corners = corners * h + c
 
         # 12 edges
         edges = [
@@ -805,40 +837,38 @@ class Viewer3D(QOpenGLWidget):
         handle_color = (0.0, 0.8, 1.0)
         hs = float(0.15 * np.max(self._roi_size))  # handle size scalar
         face_centers = [
-            (c + [h[0], 0, 0], [1, 0, 0]),   # +X  (axis idx 0)
-            (c - [h[0], 0, 0], [-1, 0, 0]),  # -X  (axis idx 3)
-            (c + [0, h[1], 0], [0, 1, 0]),   # +Y  (axis idx 1)
-            (c - [0, h[1], 0], [0, -1, 0]),  # -Y  (axis idx 4)
-            (c + [0, 0, h[2]], [0, 0, 1]),   # +Z  (axis idx 2)
-            (c - [0, 0, h[2]], [0, 0, -1]),  # -Z  (axis idx 5)
+            (c + ex * h[0], ex),   # +X  (axis idx 0)
+            (c - ex * h[0], ex),   # -X  (axis idx 3)
+            (c + ey * h[1], ey),   # +Y  (axis idx 1)
+            (c - ey * h[1], ey),   # -Y  (axis idx 4)
+            (c + ez * h[2], ez),   # +Z  (axis idx 2)
+            (c - ez * h[2], ez),   # -Z  (axis idx 5)
         ]
-
-        for fc, axis in face_centers:
-            # Build a small quad centered at fc, perpendicular to axis
-            if abs(axis[0]) > 0:
-                pts = np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]], dtype=np.float32)
-            elif abs(axis[1]) > 0:
-                pts = np.array([[-1, 0, -1], [1, 0, -1], [1, 0, 1], [-1, 0, 1]], dtype=np.float32) * 0.5
-            else:
-                pts = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], dtype=np.float32) * 0.5
-
-            pts = pts * hs
-            # Rotate quad to face direction
-            if abs(axis[1]) > 0:
-                pts_3d = np.column_stack([pts[:, 0], np.full(4, fc[1]), pts[:, 2]])
-            elif abs(axis[2]) > 0:
-                pts_3d = pts  # already on XY plane, just offset by fc below
-            else:
-                pts_3d = np.column_stack([np.full(4, fc[0]), pts[:, 0], pts[:, 1]])
-
-            pts_3d = pts_3d + fc
+        axis_list = (ex, ey, ez)
+        for fc, normal in face_centers:
+            span = [
+                axis for axis in axis_list
+                if abs(float(np.dot(axis, normal))) < 0.5
+            ]
+            u, v = span[0], span[1]
+            pts_3d = np.array([
+                fc - u * hs - v * hs,
+                fc + u * hs - v * hs,
+                fc + u * hs + v * hs,
+                fc - u * hs + v * hs,
+            ], dtype=np.float32)
             for p in pts_3d:
                 verts.extend([*p, *handle_color])
 
-        # Center translation handle (yellow square on XY plane)
+        # Center translation handle (yellow square on the ROI XY plane)
         center_handle_color = (1.0, 0.9, 0.0)
         chs = float(0.12 * np.max(self._roi_size))
-        center_pts = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]], dtype=np.float32) * chs + c
+        center_pts = np.array([
+            c - ex * chs - ey * chs,
+            c + ex * chs - ey * chs,
+            c + ex * chs + ey * chs,
+            c - ex * chs + ey * chs,
+        ], dtype=np.float32)
         for p in center_pts:
             verts.extend([*p, *center_handle_color])
 
@@ -1028,6 +1058,9 @@ class Viewer3D(QOpenGLWidget):
                 if axis >= 0:
                     self._roi_dragging = True
                     self._roi_drag_axis = axis
+                    self._roi_drag_shift = bool(
+                        event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+                    )
                     self._roi_drag_start_mouse = event.pos()
                     self._roi_drag_start_center = self._roi_center.copy()
                     self._roi_drag_start_size = self._roi_size.copy()
@@ -1140,7 +1173,7 @@ class Viewer3D(QOpenGLWidget):
             self.roi_changed.emit({
                 "center": self._roi_center.tolist(),
                 "size": self._roi_size.tolist(),
-                "rotation": [0.0, 0.0, 0.0],
+                "rotation": [0.0, 0.0, self._roi_rotation],
             })
             self.update()
             event.accept()
@@ -1164,7 +1197,7 @@ class Viewer3D(QOpenGLWidget):
                 self.roi_changed.emit({
                     "center": c.tolist(),
                     "size": s.tolist(),
-                    "rotation": [0.0, 0.0, 0.0],
+                    "rotation": [0.0, 0.0, self._roi_rotation],
                 })
                 roi_created = True
             # Auto-finish draw mode: one gesture = one ROI.
@@ -1270,24 +1303,28 @@ class Viewer3D(QOpenGLWidget):
 
         h = self._roi_size * 0.5
         c = self._roi_center
+        ex, ey, ez = self._roi_axes()
         handle_centers = [
-            (c + [h[0], 0, 0], 0),    # +X
-            (c + [0, h[1], 0], 1),    # +Y
-            (c + [0, 0, h[2]], 2),    # +Z
-            (c - [h[0], 0, 0], 3),    # -X
-            (c - [0, h[1], 0], 4),    # -Y
-            (c - [0, 0, h[2]], 5),    # -Z
-            (c, 6),                   # center XY translate
+            (c + ex * h[0], 0),    # +X
+            (c + ey * h[1], 1),    # +Y
+            (c + ez * h[2], 2),    # +Z
+            (c - ex * h[0], 3),    # -X
+            (c - ey * h[1], 4),    # -Y
+            (c - ez * h[2], 5),    # -Z
+            (c, 6),                # center translate
         ]
 
         scale = self._world_to_screen_scale(c)
         handle_world_size = 0.15 * float(np.max(self._roi_size))
         # Handle radius in pixels: at least 10 px, larger if ROI is big on screen.
         hit_radius_px = max(10.0, handle_world_size * scale)
+        # The center handle is the main way to move the box, so it wins ties
+        # against the face handles that overlap it on small ROIs.
+        center_bias = 0.8
 
         mx, my = float(mouse_pos.x()), float(mouse_pos.y())
         best_axis = -1
-        best_z = float("inf")
+        best_dist = float("inf")
 
         for center, axis in handle_centers:
             sp = self._project_world_to_screen(center)
@@ -1296,18 +1333,44 @@ class Viewer3D(QOpenGLWidget):
             dx = sp.x() - mx
             dy = sp.y() - my
             dist = math.hypot(dx, dy)
-            if dist <= hit_radius_px:
-                # If multiple handles overlap (small ROI), prefer the closest to camera.
-                # Use the projected depth (clip Z/W) as tie-breaker.
-                if dist < best_z:
-                    best_z = dist
-                    best_axis = axis
+            if axis == 6:
+                dist *= center_bias
+            if dist <= hit_radius_px and dist < best_dist:
+                best_dist = dist
+                best_axis = axis
 
         return best_axis
 
     def _handle_roi_drag(self, mouse_pos):
         """Handle ROI drag: resize (face handles) or translate (center handle)."""
         if self._roi_drag_axis == 6:
+            if self._roi_drag_shift:
+                # Shift + drag translates the Z band instead of moving in XY.
+                c0 = self._roi_drag_start_center
+                _ex, _ey, ez = self._roi_axes()
+                start_sp = self._project_world_to_screen(c0)
+                axis_sp = self._project_world_to_screen(c0 + ez * 10.0)
+                if start_sp is None or axis_sp is None:
+                    return
+                axis_x = float(axis_sp.x() - start_sp.x())
+                axis_y = float(axis_sp.y() - start_sp.y())
+                axis_len = math.hypot(axis_x, axis_y)
+                if axis_len < 1e-3:
+                    return
+                dx = float(mouse_pos.x()) - float(
+                    self._roi_drag_start_mouse.x()
+                )
+                dy = float(mouse_pos.y()) - float(
+                    self._roi_drag_start_mouse.y()
+                )
+                delta_px = (dx * axis_x + dy * axis_y) / axis_len
+                scale = self._world_to_screen_scale(c0)
+                if scale <= 0:
+                    return
+                self._roi_center = c0 + ez * (delta_px / scale)
+                self._build_roi_buffers()
+                self.update()
+                return
             # Center translation: drag parallel to the ROI center XY plane.
             start_hit = self._roi_drag_start_hit
             if start_hit is None:
@@ -1323,23 +1386,26 @@ class Viewer3D(QOpenGLWidget):
 
         axis = self._roi_drag_axis % 3
         sign = 1 if self._roi_drag_axis < 3 else -1
-        base = np.zeros(3, dtype=np.float32)
-        base[axis] = 1.0
+        ex, ey, ez = self._roi_axes()
+        unit = (ex, ey, ez)[axis]
 
         # Drag the face while keeping the opposite face fixed. We use a
         # screen-space projection so the handle follows the mouse one-to-one
         # regardless of camera angle or perspective distortion.
         h0 = self._roi_drag_start_size * 0.5
         c0 = self._roi_drag_start_center
-        old_min = c0[axis] - h0[axis]
-        old_max = c0[axis] + h0[axis]
+        center_projection = float(np.dot(c0, unit))
+        old_min = center_projection - h0[axis]
+        old_max = center_projection + h0[axis]
         fixed = old_max if sign < 0 else old_min
         original_face = old_max if sign > 0 else old_min
 
         # Project the drag axis to screen to know which screen direction
         # corresponds to pulling/pushing this face.
         start_sp = self._project_world_to_screen(c0)
-        axis_sp = self._project_world_to_screen(c0 + base * sign * max(h0[axis], 1.0))
+        axis_sp = self._project_world_to_screen(
+            c0 + unit * (sign * max(h0[axis], 1.0))
+        )
         if start_sp is None or axis_sp is None:
             return
         axis_screen_x = float(axis_sp.x() - start_sp.x())
@@ -1352,7 +1418,7 @@ class Viewer3D(QOpenGLWidget):
         dy = float(mouse_pos.y()) - float(self._roi_drag_start_mouse.y())
         delta_px = (dx * axis_screen_x + dy * axis_screen_y) / axis_screen_len
 
-        scale = self._world_to_screen_scale(c0)
+        scale = self._world_to_screen_scale(c0 + unit * (sign * h0[axis]))
         if scale <= 0:
             return
         delta_world = delta_px / scale
@@ -1364,12 +1430,11 @@ class Viewer3D(QOpenGLWidget):
         else:
             new_face = min(new_face, fixed - 0.1)
 
-        new_center = self._roi_drag_start_center.copy()
-        new_center[axis] = (fixed + new_face) * 0.5
+        self._roi_center = c0 + unit * (
+            (fixed + new_face) * 0.5 - center_projection
+        )
         new_size = self._roi_drag_start_size.copy()
         new_size[axis] = max(abs(new_face - fixed), 0.1)
-
-        self._roi_center = new_center
         self._roi_size = new_size
         self._build_roi_buffers()
         self.update()

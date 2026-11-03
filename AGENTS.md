@@ -207,6 +207,15 @@ cpp/bin/       → local kernel build output (gitignored)
   The output keeps the original range data, calibration and `_3d_data` by
   reference, and sets the 2D fixture when `act_as_fixture` is enabled. No
   reference plane is required for this matching.
+- **3D ROI model** -> a 3D ROI is a rotated 2D rectangle plus a Z band, not a
+  6-DoF box.  `roi_2d_to_3d` returns `(center, size, z_min, z_max, angle)` with
+  the angle flipped to world degrees (`-image angle`), the same convention as
+  `plane_fit`.  Point selection rotates into the ROI frame
+  (`extract_points_in_rois`); never compare against an axis-aligned AABB, and
+  keep the X mirroring (`flip_x`) consistent with the cloud.  The 3D viewer
+  draws the rotated footprint: rotate in 2D, move/resize in 3D (centre handle
+  moves in XY, Shift + centre moves the Z band, faces resize with the opposite
+  face fixed).
 - **Match tool defaults** -> `TemplateMatch` and `ShapeMatch` default to
   `angle_start=-3`, `angle_end=3`, `scale_start=1.0`, `scale_end=1.0`.
   Tests that exercise wider rotations/scales must set their own range.

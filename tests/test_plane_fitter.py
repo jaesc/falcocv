@@ -200,7 +200,7 @@ def test_roi_3d_to_fixture_conversion():
         roi_changed = pyqtSignal(dict)
         roi_drawing_finished = pyqtSignal()
 
-        def set_roi(self, center, size):
+        def set_roi(self, center, size, rotation=None):
             pass
 
         def show_roi(self, visible):
@@ -269,7 +269,7 @@ def test_roi_2d_to_3d_sync_with_fixture():
         roi_changed = pyqtSignal(dict)
         roi_drawing_finished = pyqtSignal()
 
-        def set_roi(self, center, size):
+        def set_roi(self, center, size, rotation=None):
             captured["center"] = list(center)
             captured["size"] = list(size)
 
@@ -314,6 +314,69 @@ def test_roi_2d_to_3d_sync_with_fixture():
     assert abs(captured["size"][1] - 20.0) < 1e-3
 
 
+def test_roi_2d_to_3d_sync_keeps_the_rotation():
+    """A rotated 2D ROI must reach the 3D viewer with the world angle."""
+    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtCore import QObject, pyqtSignal
+    from falcocv.ui.widgets.roi_editor_3d import RoiEditor3DWidget
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+
+    depth = _make_depth_plane(200, 200)
+    vimg = VisionImage(depth, x=0.0, y=0.0, angle=0.0,
+                       scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0)
+    ensure_pointcloud_data(vimg, target_points=100_000)
+
+    tool = PlaneFitter()
+    tool.set_input("input image", vimg)
+    tool.params["rois"] = [{
+        "roi": [30.0, 40.0, 50.0, 30.0, 20.0],
+        "z_min": 0.0,
+        "z_max": 1.0,
+    }]
+
+    captured = {}
+
+    class DummyViewer(QObject):
+        roi_changed = pyqtSignal(dict)
+        roi_drawing_finished = pyqtSignal()
+
+        def set_roi(self, center, size, rotation=None):
+            captured["center"] = list(center)
+            captured["size"] = list(size)
+            captured["rotation"] = rotation
+
+        def show_roi(self, visible):
+            pass
+
+        def set_roi_edit_mode(self, enabled):
+            pass
+
+        def set_roi_draw_mode(self, enabled):
+            pass
+
+        def roi_draw_mode_active(self):
+            return False
+
+        def get_draw_screen_rect(self):
+            return None
+
+        def get_drawing_plane_z(self):
+            return 0.0
+
+        def screen_rect_to_world_points(self, rect, plane_z):
+            return None
+
+    editor = RoiEditor3DWidget()
+    editor.set_tool(tool, viewer_2d=None, viewer_3d=DummyViewer())
+    editor._update_viewer_3d_roi()
+
+    assert "rotation" in captured
+    assert captured["rotation"] == pytest.approx(-20.0)
+
+
 def test_3d_draw_backprojects_to_image_roi():
     """Drawing a screen rect in 3D must produce the matching 2D image ROI."""
     from PyQt6.QtWidgets import QApplication
@@ -351,7 +414,7 @@ def test_3d_draw_backprojects_to_image_roi():
             self._rect = None
             self._plane_z = 12.0
 
-        def set_roi(self, center, size):
+        def set_roi(self, center, size, rotation=None):
             captured["center"] = list(center)
             captured["size"] = list(size)
 
@@ -500,7 +563,7 @@ def test_2d_roi_to_3d_box_uses_image_scale():
         roi_changed = pyqtSignal(dict)
         roi_drawing_finished = pyqtSignal()
 
-        def set_roi(self, center, size):
+        def set_roi(self, center, size, rotation=None):
             captured["center"] = list(center)
             captured["size"] = list(size)
 

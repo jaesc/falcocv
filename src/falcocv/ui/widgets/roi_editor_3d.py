@@ -83,7 +83,11 @@ class RoiEditor3DWidget(QGroupBox):
         draw3d_row = QHBoxLayout()
         self.btn_edit_3d = QPushButton("Edit ROI in 3D")
         self.btn_edit_3d.setCheckable(True)
-        self.btn_edit_3d.setToolTip("Drag face handles to resize/translate the ROI")
+        self.btn_edit_3d.setToolTip(
+            "Drag a face to resize, the yellow centre to move in XY, "
+            "Shift + drag the centre to move the Z band. The box follows the "
+            "2D ROI rotation."
+        )
         self.btn_edit_3d.toggled.connect(self._toggle_edit_3d)
         draw3d_row.addWidget(self.btn_edit_3d)
 
@@ -257,14 +261,16 @@ class RoiEditor3DWidget(QGroupBox):
         else:
             display_z_min, display_z_max = z_min, z_max
 
-        center_3d, size_3d, _, _ = roi_2d_to_3d(roi_2d, depth, *calib)
+        center_3d, size_3d, _, _, angle_world = roi_2d_to_3d(roi_2d, depth, *calib)
 
         cz = (display_z_min + display_z_max) * 0.5
         sz = max(display_z_max - display_z_min, 1e-6)
         center_3d[2] = cz
         size_3d[2] = sz
 
-        self.viewer_3d.set_roi(center_3d.tolist(), size_3d.tolist())
+        self.viewer_3d.set_roi(
+            center_3d.tolist(), size_3d.tolist(), rotation=angle_world
+        )
         self.viewer_3d.show_roi(True)
 
     def _update_viewer_2d_roi(self):
@@ -624,7 +630,12 @@ class RoiEditor3DWidget(QGroupBox):
             if depth is not None and hasattr(depth, "shape") and depth.ndim >= 2:
                 image_width = int(depth.shape[1])
 
-        roi_2d_image = roi_3d_to_2d(center_3d, size_3d, scale_x, scale_y, image_width=image_width)
+        rotation = roi_dict.get("rotation") or [0.0, 0.0, 0.0]
+        angle_world = float(rotation[2]) if len(rotation) >= 3 else 0.0
+        roi_2d_image = roi_3d_to_2d(
+            center_3d, size_3d, scale_x, scale_y,
+            image_width=image_width, angle=angle_world,
+        )
         z_min = float(center_3d[2]) - float(size_3d[2]) * 0.5
         z_max = float(center_3d[2]) + float(size_3d[2]) * 0.5
 
