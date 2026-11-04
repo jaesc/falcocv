@@ -18,6 +18,7 @@ class HMISlot:
     name: str = ""
     job_path: str = ""
     _controller: Any = None
+    engine_context: Any = None
 
     @property
     def controller(self) -> WorkflowController | None:
@@ -32,6 +33,9 @@ class HMISlot:
 
     def run(self, advance=True):
         if self._controller:
+            workflow = getattr(self._controller, "workflow", None)
+            if workflow is not None:
+                workflow.engine_context = self.engine_context
             self._controller.run(advance=advance)
 
 
@@ -62,6 +66,7 @@ DEFAULT_LAYOUT: dict[str, Any] = {
 
 class HMIProject:
     def __init__(self):
+        self.context: dict[str, Any] = {}
         self.slots: list[HMISlot] = []
         self.layout: dict = dict(DEFAULT_LAYOUT)
         self.script: str = (
@@ -78,6 +83,11 @@ class HMIProject:
             "#   ok = proj.confirm('msg')       — Yes/No/Cancel (blocking)\n"
             "#   c = proj.confirm('msg',['A','B']) — custom options (blocking)\n"
             "#   proj.input('msg', width='400px', height='200px', font_size='18px') — styled\n"
+            "#\n"
+            "# Pass connected objects to job Python Script tools:\n"
+            "#   context['mecheye'] = mecheye_ctl\n"
+            "#   context['plc'] = plc\n"
+            "# In a job Python Script: self.engine.get('mecheye'), self.engine.get('plc')\n"
             "#\n"
             "# Widget config examples:\n"
             "#   w = proj.widgets['My counter']\n"
@@ -126,7 +136,7 @@ class HMIProject:
         self.project_id = clean
 
     def add_slot(self, name: str = "", job_path: str = "") -> HMISlot:
-        slot = HMISlot(name=name, job_path=job_path)
+        slot = HMISlot(name=name, job_path=job_path, engine_context=self.context)
         self.slots.append(slot)
         return slot
 
@@ -253,6 +263,7 @@ class HMIProject:
             if slot.name == slot_name:
                 if self._script_stop.is_set():
                     return
+                slot.engine_context = self.context
                 slot.run(advance=advance)
                 return
 
@@ -495,6 +506,8 @@ class HMIProject:
         self.log("")
         self.log("Objects:")
         self.log("  proj                  — the HMIProject")
+        self.log("  context               — live objects passed to job scripts")
+        self.log("  proj.context          — same context dict")
         self.log("  proj.widgets[name]    — access any widget")
         self.log("  proj.get_widget_value(name) — evaluate field+condition")
         self.log("  proj.slots            — job slots")
@@ -551,6 +564,7 @@ class HMIProject:
             "sleep": self._interruptible_sleep,
             "help": self._script_help,
             "_stop": self._script_stop,
+            "context": self.context,
             "proj": self,
         }
 
@@ -588,6 +602,7 @@ class HMIProject:
             "sleep": self._interruptible_sleep,
             "help": self._script_help,
             "_stop": self._script_stop,
+            "context": self.context,
             "proj": self,
         }
 

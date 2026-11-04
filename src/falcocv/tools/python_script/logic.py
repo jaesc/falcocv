@@ -33,6 +33,7 @@ class PythonScriptTool(BaseTool):
         self._instance = None
         self._script_modified_time = 0
         self._script_code_hash = 0
+        self._engine_context_key = None
         self.engine_context = None
         self._debug_breakpoints = set()
         self._debug_editor = None
@@ -110,6 +111,9 @@ class PythonScriptTool(BaseTool):
         self._set_ports("outputs", names)
 
     def _load_module(self):
+        context_key = id(self.engine_context) if self.engine_context is not None else None
+        if self._instance is not None and self._engine_context_key != context_key:
+            self._instance = None
         sp = self.params.get("script_path", "")
         if sp and os.path.exists(sp):
             mt = os.path.getmtime(sp)
@@ -121,6 +125,7 @@ class PythonScriptTool(BaseTool):
             sys.modules[mn] = m
             spec.loader.exec_module(m)
             self._instance = m.CustomTool(engine_context=self.engine_context)
+            self._engine_context_key = context_key
             self._script_modified_time = mt
             return
         code = self.params.get("script_code", "")
@@ -135,6 +140,7 @@ class PythonScriptTool(BaseTool):
         if "CustomTool" not in ns:
             raise AttributeError("Script must define 'CustomTool'")
         self._instance = ns["CustomTool"](engine_context=self.engine_context)
+        self._engine_context_key = context_key
         self._script_code_hash = ch
         self._script_modified_time = 0
 

@@ -22,6 +22,7 @@ class Block(BaseTool):
         return normalize_kind(self.port_metadata.get("outputs", {}).get(name))
 
     def run(self, advance=False):
+        self.workflow.engine_context = self.engine_context
         self.workflow.run(advance=advance)
         if self.workflow.last_error:
             raise RuntimeError(self.workflow.last_error)

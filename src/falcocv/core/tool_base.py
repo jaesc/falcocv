@@ -73,6 +73,8 @@ class BaseTool(abc.ABC):
     #: Whether the config dialog offers the per-tool Run / Auto controls.
     #: Sources and special tools opt out.
     supports_manual_run = True
+    #: Runtime-only context injected by the HMI (live PLC/scanner objects, ...).
+    engine_context = None
 
     def __init__(self, name):
         self.name = name

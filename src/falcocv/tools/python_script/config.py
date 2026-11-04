@@ -33,7 +33,10 @@ from falcocv.core.vision_image import VisionImage
 class CustomTool:
     # Called once when the tool is loaded or the script is recompiled.
     def __init__(self, engine_context):
-        self.engine = engine_context
+        self.engine = engine_context or {}
+        # Live objects can be passed from the HMI script through engine_context:
+        #   mecheye = self.engine.get("mecheye")
+        #   plc = self.engine.get("plc")
 
     # Called on every workflow execution.
     # Args:

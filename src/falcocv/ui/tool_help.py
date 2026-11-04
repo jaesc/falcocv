@@ -80,11 +80,11 @@ TOOL_HELP["Depth/Range Loader"] = {
     "name": "Depth/Range Loader",
     "category": "Acquisition",
     "purpose": (
-        "Loads single-channel depth / range images (FCD, TIFF, PNG, BMP, JPEG) as float32 "
-        "arrays. Automatically converts multi-channel images to grayscale, applies a "
-        "configurable scale factor, and optionally marks zero pixels as invalid (NaN). "
-        "Can generate a 3D point cloud from the depth map using simple metric resolution "
-        "(x_res, y_res, z_res) for interactive 3D visualization in the built-in Viewer3D."
+        "Loads single-channel depth / range images (FCD v3, TIFF, PNG, BMP, JPEG) as float32 "
+        "arrays. FCD v3 stores raw uint16 counts plus X/Y/Z calibration in its header; "
+        "other formats use the scale and X/Y/Z calibration parameters. "
+        "Can generate a 3D point cloud using simple metric resolution for interactive "
+        "3D visualization in the built-in Viewer3D."
     ),
     "inputs": [],
     "outputs": [
@@ -95,7 +95,7 @@ TOOL_HELP["Depth/Range Loader"] = {
         {"name": "file_path", "default": '""',
          "description": "Path to a depth/range image file on disk."},
         {"name": "scale", "default": "1.0",
-         "description": "Multiplier applied to stored integer depths (e.g. mm-per-count for 16-bit exports)."},
+         "description": "Multiplier applied to raw integer/float depths for non-FCD inputs. Ignored for calibrated FCD v3 images."},
         {"name": "zero_as_invalid", "default": "True",
          "description": "If True, pixels with value 0 are treated as invalid when generating the point cloud and range views."},
         {"name": "x_res", "default": "1.0",
@@ -110,15 +110,16 @@ TOOL_HELP["Depth/Range Loader"] = {
          "description": "If True, converts the depth map to a 3D point cloud and attaches it as _3d_data on the VisionImage."},
     ],
     "notes": (
-        "The depth map is always loaded as float32. If the source image is in an integer format "
-        "(uint8, uint16, int16), the scale parameter converts it: result = raw * scale. "
-        "FCD is the native FalcoCV depth container: raw uint16 plus LZ4, faster than LZW TIFF. "
+        "The depth map is always loaded as float32. For non-FCD inputs, the scale parameter "
+        "converts raw values: result = raw * scale. "
+        "FCD v3 is the native FalcoCV depth container: uint16 raw counts, LZ4 compression "
+        "and X/Y/Z calibration in the header. FCD v3 calibration takes precedence over "
+        "the manual X/Y/Z fields and the scale parameter is ignored. "
         "TIFF loading tries imagecodecs, then OpenCV, then tifffile. Use "
-        "scripts/convert_depth_to_fcd.py to convert TIFF batches losslessly. "
-        "The 3D point cloud generation uses simple metric scaling (no pinhole model): "
-        "x = (width - 1 - col) * x_res, y = row * y_res, z = depth * z_res + z_offset. "
-        "Set generate_3d=True and provide the three resolutions to visualize the depth data "
-        "as a 3D point cloud — toggle the 'Show 3D' checkbox in the viewer or use the workflow editor."
+        "scripts/convert_depth_to_fcd.py to convert raw TIFF batches to FCD v3. "
+        "The 3D point cloud generation uses x = (width - 1 - col) * x_res, "
+        "y = row * y_res, z = depth * z_res + z_offset. "
+        "Set generate_3d=True to visualize the depth data as a 3D point cloud."
     ),
     "see_also": ["Image Loader", "Blob Detector", "Filters"],
 }
@@ -928,6 +929,8 @@ TOOL_HELP["Python Script"] = {
     "notes": (
         "The script must define a CustomTool subclass with __init__() and process(inputs) methods. "
         "Access inputs by name via the inputs dict. Set outputs with self.set_output(name, value). "
+        "Live objects passed by the HMI are available as self.engine['name'] "
+        "(for example self.engine['mecheye'] or self.engine['plc']). "
         "Draw overlays with self.draw_*() methods. "
         "Port kinds filter the connection menu, exactly like a Block: an Image input only accepts "
         "Image outputs from earlier tools. "
@@ -1391,6 +1394,7 @@ TOOL_HELP["HMI Project"] = {
         {"name": "sleep(seconds)", "default": "—", "description": "Interruptible sleep — checks <code>_stop</code> every 0.1 s and returns early if stop is requested."},
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties."},
+        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['mecheye'] = mecheye_ctl</code>."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly: <code>proj.widgets['My counter']['min'] = 0</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of all configured job slots. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code>, <code>.run()</code>."},
         {"name": "proj.layout", "default": "—", "description": "Raw layout dict with keys <code>rows</code>, <code>cols</code>, <code>widgets</code>."},
@@ -1449,6 +1453,7 @@ TOOL_HELP["HMI Scripting"] = {
         {"name": "sleep(seconds)", "default": "—", "description": "Interruptible sleep — checks <code>_stop</code> every 0.1 s and returns early if stop is requested."},
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties. Read/write widget configs: <code>proj.widgets['name']['min'] = 0</code>."},
+        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['mecheye'] = mecheye_ctl</code>."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly."},
         {"name": "proj.get_widget_value(name)", "default": "—", "description": "Evaluate a widget's field + condition. Returns <code>{'value': ..., 'status': 'pass'|'fail'|'error'}</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of <code>HMISlot</code>. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code> (the <code>WorkflowController</code>), and <code>.run()</code>."},
@@ -1462,6 +1467,16 @@ TOOL_HELP["HMI Scripting"] = {
         "The namespace includes all functions listed above plus the <code>proj</code> object. "
         "Standard Python modules are available. The <code>_stop</code> event is set when "
         "the user presses Stop — long-running loops must check it.</p>"
+        "<h3>Passing Live Objects to Job Scripts</h3>"
+        "<p>The <code>context</code> dict is runtime-only and is injected into every "
+        "job Python Script tool as <code>engine_context</code>:</p>"
+        "<pre>"
+        "context['mecheye'] = mecheye_ctl\n"
+        "context['plc'] = plc\n\n"
+        "# Inside a job Python Script:\n"
+        "mecheye = self.engine.get('mecheye')\n"
+        "plc = self.engine.get('plc')\n"
+        "</pre>"
         "<h3>Interacting with Job Tools</h3>"
         "<p>Each slot has a <code>WorkflowController</code> that holds the loaded job. "
         "You can set tool inputs <b>before</b> calling <code>run_slot()</code> and read "

@@ -36,7 +36,9 @@ operator dashboards.
 - **Vector overlays** — annotations are mathematical primitives rendered only
   by visible viewers; source pixels are never modified.
 - **Scripting + debugger** — editor, breakpoints, stepping and variable/watch
-  panels.
+  panels. HMI runtime objects can be passed to job Python Scripts through the
+  shared `context` / `engine_context`; see
+  [`docs/HMI_CONTEXT.md`](docs/HMI_CONTEXT.md).
 - **HMI designer + web server** — design operator dashboards, deploy them to a
   FastAPI server and open them from any browser.
 - **Camera acquisition** — GigE Vision and USB3 Vision cameras through Harvesters
