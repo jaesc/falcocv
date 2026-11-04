@@ -8,7 +8,7 @@ from falcocv.core.port_types import IMAGE
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import generate_pointcloud
-from falcocv.core.depth_format import load_depth_fcd
+from falcocv.core.depth_format import load_depth_fcd_with_metadata
 
 # imagecodecs is the fastest decoder for the large LZW TIFFs.  tifffile is
 # kept as the last fallback for TIFF variants or environments without it.
@@ -212,11 +212,12 @@ class DepthRangeLoader(BaseTool):
         effective_target_points = 0 if show_all_points else target_points
 
         # imagecodecs decodes the large LZW TIFFs fastest; cv2 and tifffile
-        # remain fallbacks.  .fcd is a native raw-uint16 + LZ4 container.
+        # remain fallbacks.  .fcd v3 is a calibrated raw-uint16 + LZ4 container.
         ext = os.path.splitext(path)[1].lower()
+        fcd_metadata = None
 
         if ext == ".fcd":
-            raw = load_depth_fcd(path)
+            raw, fcd_metadata = load_depth_fcd_with_metadata(path)
         elif ext in {".tif", ".tiff"}:
             raw = _load_tiff_depth(path)
         else:
@@ -224,14 +225,25 @@ class DepthRangeLoader(BaseTool):
         if raw is None:
             raise RuntimeError(f"Failed to decode image: {path}")
 
-        d = _convert_depth(raw, scale)
+        if fcd_metadata is not None:
+            # FCD v3 stores raw uint16 counts and the calibration needed to
+            # convert them to millimetres.  Keep the legacy pipeline view:
+            # float32 counts plus scale_z/offset_z.
+            calibration = fcd_metadata.get("calibration", {})
+            x_res = float(calibration.get("x_res", x_res))
+            y_res = float(calibration.get("y_res", y_res))
+            z_res = float(calibration.get("z_scale", 1.0))
+            z_offset = float(calibration.get("z_offset", 0.0))
+            # FCD v3 is raw uint16 counts.  Use the same SIMD uint16 -> float32
+            # conversion as the TIFF path; no Z conversion is done here.
+            d = _convert_depth(raw, 1.0)
+            zero_invalid = True
+        else:
+            d = _convert_depth(raw, scale)
 
-        # Zero-as-invalid handling is done at cloud generation time. The
-        # depth map for display keeps 0 values so the viewer shows a normal
-        # colormap instead of rendering invalid pixels as black.
-        # Integer sources cannot contain NaN/Inf and are by far the common
-        # case for range images; avoid a full float64 sanitisation pass.
-        if raw.dtype.kind == "f" and not np.isfinite(d).all():
+        # Non-FCD float inputs still use the legacy zero sanitisation.  FCD v3
+        # is integer raw counts, so no full-frame NaN scan is needed.
+        if fcd_metadata is None and raw.dtype.kind == "f" and not np.isfinite(d).all():
             d = np.nan_to_num(d, nan=0.0, posinf=0.0, neginf=0.0)
 
         vimg = VisionImage(d)
@@ -239,6 +251,8 @@ class DepthRangeLoader(BaseTool):
         vimg.scale_y = y_res
         vimg.scale_z = z_res
         vimg.offset_z = z_offset
+        if fcd_metadata is not None:
+            vimg.metadata.update(fcd_metadata)
 
         if generate_3d:
             cloud = generate_pointcloud(

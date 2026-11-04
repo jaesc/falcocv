@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
-from falcocv.core.depth_format import load_depth_fcd, save_depth_fcd
+from falcocv.core.depth_format import load_depth_fcd_with_metadata, save_depth_fcd
 
 try:
     import imagecodecs
@@ -85,6 +85,14 @@ def main(argv=None) -> int:
         "--level", type=int, default=None,
         help="optional LZ4 compression level",
     )
+    parser.add_argument("--x-res", type=float, default=1.0,
+                        help="physical X resolution stored in the FCD header")
+    parser.add_argument("--y-res", type=float, default=1.0,
+                        help="physical Y resolution stored in the FCD header")
+    parser.add_argument("--z-res", type=float, default=1.0,
+                        help="raw-count to mm scale stored as z_scale")
+    parser.add_argument("--z-offset", type=float, default=0.0,
+                        help="world Z offset stored in the FCD header")
     args = parser.parse_args(argv)
 
     source_dir = args.input.resolve()
@@ -116,18 +124,32 @@ def main(argv=None) -> int:
         raw = _decode_tiff(source)
         if raw is None:
             raise RuntimeError(f"decoded image is empty: {source}")
-        save_depth_fcd(destination, raw, level=args.level)
+        if raw.dtype != np.uint16:
+            raise RuntimeError(
+                f"FCD v3 conversion requires uint16 raw depth, got {raw.dtype}"
+            )
+        metadata = {
+            "x_res": args.x_res,
+            "y_res": args.y_res,
+            "z_scale": args.z_res,
+            "z_offset": args.z_offset,
+            "unit": "mm",
+            "source": str(source),
+        }
+        save_depth_fcd(destination, raw, metadata=metadata, level=args.level)
         if args.verify:
-            restored = load_depth_fcd(destination)
+            restored, header = load_depth_fcd_with_metadata(destination)
             if not np.array_equal(restored, raw):
                 raise RuntimeError(f"verification failed: {destination}")
+            if header["calibration"]["z_scale"] != args.z_res:
+                raise RuntimeError(f"calibration verification failed: {destination}")
 
         converted += 1
         total_source_bytes += source.stat().st_size
         total_output_bytes += destination.stat().st_size
         print(
             f"[{converted}/{len(sources)}] {relative} "
-            f"{raw.shape} {raw.dtype} "
+            f"{raw.shape} {raw.dtype} raw -> FCD v3 "
             f"{source.stat().st_size / 1e6:.1f} -> "
             f"{destination.stat().st_size / 1e6:.1f} MB"
         )

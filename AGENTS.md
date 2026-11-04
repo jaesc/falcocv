@@ -180,14 +180,17 @@ cpp/bin/       → local kernel build output (gitignored)
   converted with `cv2.addWeighted(..., dtype=CV_32F)`, which combines casting
   and scaling and is faster than `astype` + multiply; `float32` input keeps the
   existing no-copy path when `scale == 1.0`.
-- **FCD depth container** -> `.fcd` is a FalcoCV-specific raw-depth container,
-  not TIFF.  It stores shape/dtype in a small JSON header and an LZ4-compressed
-  uint16 payload.  It is smaller than raw and much faster to decode than LZW
-  TIFF (~48 ms vs ~375 ms for the large frames).  `DepthRangeLoader` detects
-  `.fcd` by extension; `scripts/convert_depth_to_fcd.py` converts TIFF batches
-  with verification.  Preserve the TIFF path for existing files.  On the
-  `20000x4096` test frame the loader is ~240-305 ms with `.fcd` vs ~607 ms with
-  TIFF when generating 3D; the full job is ~585-700 ms vs ~957 ms.
+- **FCD v3 depth container** -> `.fcd` is a FalcoCV-specific **calibrated raw
+  uint16** container, not TIFF.  The magic is `FCD3`; the JSON header stores
+  shape, dtype, `value_type="raw_counts"`, unit, `x_res`/`y_res`/`z_scale`/
+  `z_offset`, `invalid_value=0` and optional model/timestamp.  The LZ4 payload
+  is the raw uint16 image.  `DepthRangeLoader` exposes float32 raw counts with
+  `scale_z`/`offset_z`; TemplateMatch/ShapeMatch keep their raw-count ranges.
+  There is no FCD v1/v2 compatibility.  Measured on a `20000x4096` frame:
+  ~32.5 MB/file and ~90 ms decode.  TIFF/PNG inputs remain raw-count images
+  using the loader parameters.  The TIFF path is kept for existing files.
+  `scripts/convert_depth_to_fcd.py` copies the original uint16 TIFF values and
+  stores `--x-res/--y-res/--z-res/--z-offset` in the FCD header.
 - **Point-cloud colors are lazy** -> loaders keep `_3d_data["colors"] = None`;
   `ensure_pointcloud_colors(vimg)` generates them only when a 3D viewer uploads
   the cloud.  This avoids ~47 ms per frame in headless/production jobs.
@@ -209,6 +212,14 @@ cpp/bin/       → local kernel build output (gitignored)
   `parameter_changed` separately from `data_changed`, avoiding refresh loops.
   Closing the config dialog stops the timer and disconnects the signal.
   `supports_manual_run = False` marks sources and special tools.
+- **HMI runtime context** -> `HMIProject.context` is a runtime dict exposed as
+  `context` in the HMI script and `proj.context`.  `run_slot` injects it into
+  `workflow.engine_context`; `PythonScriptTool` passes it to
+  `CustomTool.__init__(engine_context=...)`, recreating the instance when the
+  context identity changes, and `Block` forwards it to nested workflows.  Use
+  this for live objects such as an already-connected scanner controller or PLC;
+  it is intentionally never serialized.  The defaults of both the HMI script and
+  the Python Script template document the handoff.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -379,7 +390,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `563 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `565 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and
