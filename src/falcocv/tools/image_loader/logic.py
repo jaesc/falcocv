@@ -8,6 +8,7 @@ from falcocv.core.tool_registry import register_tool
 
 @register_tool(prefix="[LOAD]", default_name="Image Loader", group="Acquisition")
 class ImageLoader(BaseTool):
+    supports_manual_run = False
     output_port_types = {"output image": IMAGE}
     def __init__(self, name="Image Loader"):
         super().__init__(name)

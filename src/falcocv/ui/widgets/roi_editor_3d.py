@@ -271,7 +271,8 @@ class RoiEditor3DWidget(QGroupBox):
         if z_min == 0.0 and z_max == 1.0 and roi_2d[2] > 0 and roi_2d[3] > 0 and depth is not None:
             from falcocv.core.roi_3d import _auto_z_range
             display_z_min, display_z_max = _auto_z_range(
-                depth, roi_2d[0], roi_2d[1], roi_2d[2], roi_2d[3], calib[2], calib[3]
+                depth, roi_2d[0], roi_2d[1], roi_2d[2], roi_2d[3],
+                calib[2], calib[3], margin=self._auto_z_margin(),
             )
         else:
             display_z_min, display_z_max = z_min, z_max
@@ -365,12 +366,26 @@ class RoiEditor3DWidget(QGroupBox):
             return
         calib = calib_from_vimg(img_obj)
         fix_to_img = img_obj.fixture_to_image if hasattr(img_obj, "fixture_to_image") else None
-        result = auto_fit_z(self.tool.params, self._active_index, depth, calib[2], calib[3],
-                            fixture_to_image_fn=fix_to_img)
+        result = auto_fit_z(
+            self.tool.params, self._active_index, depth, calib[2], calib[3],
+            fixture_to_image_fn=fix_to_img, margin=self._auto_z_margin(),
+        )
         if result is not None:
             self._update_spins()
             self._update_viewer_3d_roi()
             self.roi_list_changed.emit()
+
+    def _auto_z_margin(self):
+        """Return the tool's non-negative Auto-fit Z margin."""
+        if self.tool is None:
+            return 0.0
+        try:
+            margin = float(self.tool.params.get("auto_z_margin", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+        if not np.isfinite(margin) or margin < 0.0:
+            return 0.0
+        return margin
 
     def _toggle_draw(self, checked):
         if self.viewer_2d:
@@ -458,8 +473,10 @@ class RoiEditor3DWidget(QGroupBox):
             calib = calib_from_vimg(img_obj)
             if depth is not None and hasattr(depth, "ndim") and depth.ndim == 2:
                 fix_to_img = img_obj.fixture_to_image if hasattr(img_obj, "fixture_to_image") else None
-                auto_fit_z(self.tool.params, self._active_index, depth, calib[2], calib[3],
-                           fixture_to_image_fn=fix_to_img)
+                auto_fit_z(
+                    self.tool.params, self._active_index, depth, calib[2], calib[3],
+                    fixture_to_image_fn=fix_to_img, margin=self._auto_z_margin(),
+                )
 
         z = z_range_from_params(self.tool.params, self._active_index)
 
@@ -612,8 +629,10 @@ class RoiEditor3DWidget(QGroupBox):
             if depth is not None and hasattr(depth, "ndim") and depth.ndim == 2:
                 calib = calib_from_vimg(img_obj)
                 fix_to_img = img_obj.fixture_to_image if hasattr(img_obj, "fixture_to_image") else None
-                auto_fit_z(self.tool.params, self._active_index, depth, calib[2], calib[3],
-                           fixture_to_image_fn=fix_to_img)
+                auto_fit_z(
+                    self.tool.params, self._active_index, depth, calib[2], calib[3],
+                    fixture_to_image_fn=fix_to_img, margin=self._auto_z_margin(),
+                )
 
         z = z_range_from_params(self.tool.params, self._active_index)
 

@@ -7,6 +7,7 @@ from falcocv.core.workflow import Workflow
 
 @register_tool(prefix="[BLCK]", default_name="Block", group="Logic")
 class Block(BaseTool):
+    supports_manual_run = False
     def __init__(self, name="Block"):
         super().__init__(name)
         self.workflow = Workflow(parent_tool=self)

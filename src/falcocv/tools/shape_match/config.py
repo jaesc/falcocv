@@ -21,7 +21,7 @@ from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.style import SUCCESS, WARNING, disabled_css
 from falcocv.ui.tool_config_helpers import (
     add_fixture_axis_row,
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     set_fixture_axes_enabled,
     add_min_results_group,
@@ -71,9 +71,7 @@ class ShapeMatchConfig(QWidget):
         for key in ("input image", "train image", "output image"):
             self.record_selector.addItem(key, key)
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
-        add_record_selector(
-            self.viewer_layout, self.record_selector, left=8, right=8
-        )
+        add_record_header(self.viewer_layout, self.record_selector, tool=self.tool)
         self.viewer = ImageViewer()
         self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.right_panel)

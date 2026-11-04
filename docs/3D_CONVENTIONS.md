@@ -25,6 +25,21 @@ the default 3D viewer and plane overlays.
 - positive moves the plane up and reduces measured heights;
 - negative lowers it and increases measured heights.
 
+## ROI auto-fit Z margin
+
+`PlaneFitter` has an `auto_z_margin` parameter (default **3.0 mm**). When
+**Auto-fit Z** is used, the detected depth range is expanded symmetrically:
+
+```text
+z_min = detected_min - auto_z_margin
+z_max = detected_max + auto_z_margin
+```
+
+This keeps the ROI usable when another part is a few tenths of a millimetre or
+a millimetre away. It changes the selected Z band, not the plane-fitting
+algorithm. Existing saved ranges are not rewritten automatically; press
+**Auto-fit Z** again (or draw a new ROI) to apply the current margin.
+
 ## Height Blobs 3D
 
 `reference plane` is optional.

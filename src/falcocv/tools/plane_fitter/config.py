@@ -2,12 +2,12 @@ import numpy as np
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QGroupBox, QStackedWidget, QSplitter, QComboBox,
-    QDoubleSpinBox, QSpinBox, QCheckBox, QSizePolicy,
+    QDoubleSpinBox, QSpinBox, QCheckBox,
 )
 from PyQt6.QtCore import Qt
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -60,32 +60,22 @@ class PlaneFitterConfig(QWidget):
         rl = QVBoxLayout(self.right_panel)
         rl.setContentsMargins(0, 0, 0, 0)
 
-        # View toggle bar
-        self.view_bar = QWidget()
-        vb = QHBoxLayout(self.view_bar)
-        vb.setContentsMargins(5, 2, 5, 2)
-        vb.setSpacing(4)
-
         self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("output image", "output image")
-        self.record_selector.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
-        add_record_selector(
-            vb, self.record_selector, left=8, right=8
-        )
         self.chk_show3d = QCheckBox("Show 3D")
         self.chk_show3d.setVisible(False)
         self.chk_show3d.toggled.connect(self._on_show3d_toggled)
-        vb.addWidget(self.chk_show3d)
 
         self.chk_overlays = QCheckBox("Show Overlays")
         self.chk_overlays.setChecked(bool(self.tool.params.get("show_overlays", True)))
         self.chk_overlays.toggled.connect(self._on_overlays_toggled)
-        vb.addWidget(self.chk_overlays)
-
-        vb.addStretch()
-        rl.addWidget(self.view_bar)
+        add_record_header(
+            rl, self.record_selector,
+            (self.chk_show3d, self.chk_overlays),
+            tool=self.tool,
+        )
 
         self.viewer_stack = QStackedWidget()
         self.viewer = ImageViewer()
@@ -181,6 +171,25 @@ class PlaneFitterConfig(QWidget):
         min_row.addStretch()
         gl.addLayout(min_row)
 
+        auto_row = QHBoxLayout()
+        auto_row.addWidget(QLabel("Auto-fit Z ±:"))
+        self.spin_auto_margin = QDoubleSpinBox()
+        self.spin_auto_margin.setRange(0.0, 1e6)
+        self.spin_auto_margin.setDecimals(3)
+        self.spin_auto_margin.setSingleStep(0.5)
+        self.spin_auto_margin.setKeyboardTracking(False)
+        self.spin_auto_margin.setSuffix(" mm")
+        self.spin_auto_margin.setValue(
+            float(self.tool.params.get("auto_z_margin", 3.0))
+        )
+        self.spin_auto_margin.setToolTip(
+            "Margin added above and below the detected depth range by Auto-fit Z."
+        )
+        self.spin_auto_margin.valueChanged.connect(self._on_auto_z_margin)
+        auto_row.addWidget(self.spin_auto_margin)
+        auto_row.addStretch()
+        gl.addLayout(auto_row)
+
         parent_layout.addWidget(grp)
 
     def _build_overlays(self, parent_layout):
@@ -257,6 +266,10 @@ class PlaneFitterConfig(QWidget):
 
     def _on_min_points(self, val):
         self.tool.params["min_points"] = int(val)
+        self.tool.mark_dirty()
+
+    def _on_auto_z_margin(self, val):
+        self.tool.params["auto_z_margin"] = float(val)
         self.tool.mark_dirty()
 
     def _on_roi_list_changed(self):
@@ -430,6 +443,12 @@ class PlaneFitterConfig(QWidget):
         self.spin_min_pts.blockSignals(True)
         self.spin_min_pts.setValue(int(self.tool.params.get("min_points", 10)))
         self.spin_min_pts.blockSignals(False)
+
+        self.spin_auto_margin.blockSignals(True)
+        self.spin_auto_margin.setValue(
+            float(self.tool.params.get("auto_z_margin", 3.0))
+        )
+        self.spin_auto_margin.blockSignals(False)
 
         overlays_on = bool(self.tool.params.get("show_overlays", True))
         if hasattr(self, "chk_overlays"):

@@ -191,16 +191,35 @@ cpp/bin/       → local kernel build output (gitignored)
 - **Point-cloud colors are lazy** -> loaders keep `_3d_data["colors"] = None`;
   `ensure_pointcloud_colors(vimg)` generates them only when a 3D viewer uploads
   the cloud.  This avoids ~47 ms per frame in headless/production jobs.
-- **Tool config record selectors** -> use
-  `add_record_selector(layout, combo, left=8, right=8)` from
-  `ui/tool_config_helpers.py`; never add the combo directly.  The shared helper
-  keeps the 8 px left margin and the gap to the following controls identical
-  across every tool config.
+- **Tool config record selectors** -> use `make_record_selector()` and
+  `add_record_header(parent_layout, combo, extra_widgets, tool)` from
+  `ui/tool_config_helpers.py` for the viewer's top row; never add the combo
+  directly.  `add_record_header` creates the horizontal row and its trailing
+  stretch, so every processing tool has Run/Auto at `x=8`, then the selector
+  after them with an 8 px gap, at `y=0`, width `285`.  The Auto button widens
+  only enough for its `AUTO ON` checked label.  `add_record_selector` is only for an existing
+  `QHBoxLayout`; passing a `QVBoxLayout` turns the left/right spacers into
+  vertical spacers and breaks the alignment.  ImageLoader, DepthRangeLoader,
+  GigE, Python Script and Block intentionally have no record selector or run
+  controls.
+- **Tool config Run/Auto** -> `ToolRunControls` lives at the left of the
+  selector row.  `Run` calls `tool.execute()`; `Auto` is opt-in and runs the
+  same tool 250 ms after the last `parameter_changed` event.  It never reruns
+  upstream or downstream tools.  `BaseTool.mark_dirty` emits
+  `parameter_changed` separately from `data_changed`, avoiding refresh loops.
+  Closing the config dialog stops the timer and disconnects the signal.
+  `supports_manual_run = False` marks sources and special tools.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
   identical on `depth.cvj`; the tool drops from ~440 ms to ~120 ms.  If a ROI
   uses the automatic `0..1` Z sentinel, the full scan is retained.
+- **PlaneFitter auto-fit Z margin** -> `auto_z_margin` (default `3.0`, `0`
+  disables) expands the exact depth range on both sides when Auto-fit Z runs
+  or a new ROI is drawn.  It changes the selected Z band only, never the plane
+  fit itself.  Existing saved ranges are not rewritten until Auto-fit Z is
+  pressed again.  The shared 3D ROI editor reads the parameter from the tool;
+  Height Blobs has no such parameter and keeps a zero margin.
 - **ShapeMatch/TemplateMatch range input** -> 2D float range images are
   normalized through a grayscale view. `range_vmin`/`range_vmax` are computed
   automatically from all valid pixels of the full training image and persisted;
@@ -360,7 +379,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `536 passed, 7 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `563 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and

@@ -26,6 +26,7 @@ from PyQt6.QtCore import Qt
 
 from falcocv.core.config import ConfigManager
 from falcocv.ui.style import ALT_BG, BORDER, PANEL_BG, SUCCESS
+from falcocv.ui.widgets.tool_run_controls import ToolRunControls
 
 
 __all__ = [
@@ -37,6 +38,7 @@ __all__ = [
     "add_min_results_group",
     "make_record_selector",
     "add_record_selector",
+    "add_record_header",
     "add_fixture_axis_row",
     "set_fixture_axes_enabled",
 ]
@@ -45,12 +47,12 @@ __all__ = [
 def make_record_selector(parent: QWidget | None = None) -> QComboBox:
     """Image-record selector with the same size in every tool config."""
     combo = QComboBox(parent)
-    combo.setMinimumWidth(285)
+    combo.setFixedWidth(285)
     combo.setSizeAdjustPolicy(
         QComboBox.SizeAdjustPolicy.AdjustToContents
     )
     combo.setSizePolicy(
-        QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
+        QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed
     )
     return combo
 
@@ -59,12 +61,41 @@ def add_record_selector(layout, combo, left=8, right=8):
     """Add a record selector with consistent breathing room.
 
     The small left margin separates the selector from the dialog edge without
-    changing the selector's minimum width; the right gap keeps the following
-    toolbar controls from touching it.
+    changing the selector's width; the right gap keeps the following toolbar
+    controls from touching it.  Use :func:`add_record_header` when adding the
+    selector to a vertical layout, so the spacing stays horizontal.
     """
     layout.addSpacing(int(left))
     layout.addWidget(combo)
     layout.addSpacing(int(right))
+
+
+def add_record_header(layout, combo, extra_widgets=(), tool=None):
+    """Add the standard viewer header row to a vertical layout.
+
+    A record selector must always live in a horizontal row.  Calling
+    ``add_record_selector`` directly on a ``QVBoxLayout`` inserts vertical
+    spacers, which makes the selector drift down and lose its left margin.
+
+    When ``tool`` supports manual running, the row is:
+    ``8px | Run Auto | 8px | selector | 8px | extra widgets``.
+    """
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(0)
+    row.addSpacing(8)
+    if tool is not None and bool(getattr(tool, "supports_manual_run", False)):
+        row.addWidget(ToolRunControls(tool))
+        row.addSpacing(8)
+    row.addWidget(combo)
+    row.addSpacing(8)
+    for index, widget in enumerate(extra_widgets):
+        if index:
+            row.addSpacing(4)
+        row.addWidget(widget)
+    row.addStretch()
+    layout.addLayout(row)
+    return row
 
 
 def add_fixture_axis_row(layout, tool, on_change=None):

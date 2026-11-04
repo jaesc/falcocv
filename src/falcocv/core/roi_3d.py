@@ -103,8 +103,12 @@ def roi_3d_to_2d(center_3d, size_3d, scale_x=1.0, scale_y=1.0, image_width=None,
     return [x, y, w, h, -float(angle)]
 
 
-def _auto_z_range(depth, rx, ry, rw, rh, scale_z, offset_z):
-    """Auto-detect Z min/max within a 2D rectangle on a depth map."""
+def _auto_z_range(depth, rx, ry, rw, rh, scale_z, offset_z, margin=0.0):
+    """Auto-detect Z min/max within a 2D rectangle on a depth map.
+
+    ``margin`` is added above and below the detected range.  A non-negative
+    finite value is required; without it the exact depth range is returned.
+    """
     h_img, w_img = depth.shape[:2]
     x0 = max(0, int(round(rx)))
     y0 = max(0, int(round(ry)))
@@ -119,8 +123,15 @@ def _auto_z_range(depth, rx, ry, rw, rh, scale_z, offset_z):
     if valid.size == 0:
         return 0.0, 1.0
 
-    z_min = float(np.min(valid)) * scale_z + offset_z
-    z_max = float(np.max(valid)) * scale_z + offset_z
+    try:
+        margin = float(margin)
+    except (TypeError, ValueError):
+        margin = 0.0
+    if not np.isfinite(margin) or margin < 0.0:
+        margin = 0.0
+
+    z_min = float(np.min(valid)) * scale_z + offset_z - margin
+    z_max = float(np.max(valid)) * scale_z + offset_z + margin
     if z_max - z_min < 1e-6:
         z_max = z_min + 1.0
 
@@ -299,13 +310,15 @@ def remove_roi(params, index):
         del rois[index]
 
 
-def auto_fit_z(params, index, depth, scale_z=1.0, offset_z=0.0, fixture_to_image_fn=None):
+def auto_fit_z(params, index, depth, scale_z=1.0, offset_z=0.0,
+               fixture_to_image_fn=None, margin=0.0):
     """Auto-detect Z range for a given ROI and update params.
 
     The ROI stored in ``params`` is in fixture/relative coordinates. ``depth``
     is indexed in absolute image coordinates, so when there is a fixture offset
     or rotation, pass ``fixture_to_image_fn`` (typically ``VisionImage.fixture_to_image``)
-    to convert the ROI to absolute pixels before indexing.
+    to convert the ROI to absolute pixels before indexing.  ``margin`` is added
+    above and below the detected range, in world Z units.
     """
     roi_2d = roi_2d_from_params(params, index)
     if roi_2d is None:
@@ -317,7 +330,9 @@ def auto_fit_z(params, index, depth, scale_z=1.0, offset_z=0.0, fixture_to_image
         except Exception:
             roi_abs = list(roi_2d)
     x, y, w, h = float(roi_abs[0]), float(roi_abs[1]), float(roi_abs[2]), float(roi_abs[3])
-    z_min, z_max = _auto_z_range(depth, x, y, w, h, scale_z, offset_z)
+    z_min, z_max = _auto_z_range(
+        depth, x, y, w, h, scale_z, offset_z, margin=margin
+    )
     update_z_range_in_params(params, index, z_min, z_max)
     return z_min, z_max
 

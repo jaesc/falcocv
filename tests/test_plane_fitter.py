@@ -499,6 +499,8 @@ def test_3d_draw_backprojects_to_image_roi():
     tool = PlaneFitter()
     tool.set_input("input image", vimg)
     tool.params["rois"] = []
+    # Geometry check: use the exact auto range, without the default margin.
+    tool.params["auto_z_margin"] = 0.0
 
     captured = {}
 
@@ -959,5 +961,43 @@ def test_auto_fit_z_without_fixture_fn_uses_raw():
     z_min, z_max = auto_fit_z(params, 0, depth, 1.0, 0.0)
     assert z_min is not None
     assert abs(z_min - 9.0) < 0.01
+
+
+def test_auto_fit_z_margin_expands_both_sides():
+    depth = np.full((20, 20), 10.0, dtype=np.float32)
+    depth[5:15, 5:15] = 12.0
+    params = {"rois": []}
+    add_roi(params)
+    update_roi_2d_in_params(params, 0, [2.0, 2.0, 16.0, 16.0, 0.0])
+
+    z_min, z_max = auto_fit_z(params, 0, depth, 1.0, 0.0, margin=3.0)
+    assert z_min == pytest.approx(7.0)
+    assert z_max == pytest.approx(15.0)
+
+
+def test_auto_fit_z_margin_on_uniform_patch():
+    depth = np.full((10, 10), 5.0, dtype=np.float32)
+    params = {"rois": []}
+    add_roi(params)
+    update_roi_2d_in_params(params, 0, [0.0, 0.0, 10.0, 10.0, 0.0])
+
+    z_min, z_max = auto_fit_z(params, 0, depth, 1.0, 0.0, margin=3.0)
+    assert z_min == pytest.approx(2.0)
+    assert z_max == pytest.approx(8.0)
+
+
+def test_auto_fit_z_zero_margin_keeps_old_fallback():
+    depth = np.full((10, 10), 5.0, dtype=np.float32)
+    params = {"rois": []}
+    add_roi(params)
+    update_roi_2d_in_params(params, 0, [0.0, 0.0, 10.0, 10.0, 0.0])
+
+    z_min, z_max = auto_fit_z(params, 0, depth, 1.0, 0.0, margin=0.0)
+    assert z_min == pytest.approx(5.0)
+    assert z_max == pytest.approx(6.0)
+
+
+def test_plane_fitter_auto_z_margin_defaults_to_three_mm():
+    assert PlaneFitter().params["auto_z_margin"] == pytest.approx(3.0)
 
 

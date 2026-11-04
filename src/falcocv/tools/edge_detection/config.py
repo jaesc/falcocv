@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     add_min_results_group,
     wrap_params_scroll,
@@ -235,9 +235,7 @@ class EdgeDetectionConfig(QWidget):
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("output image", "output image")
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
-        add_record_selector(
-            self.viewer_layout, self.record_selector, left=8, right=8
-        )
+        add_record_header(self.viewer_layout, self.record_selector, tool=self.tool)
         self.viewer = ImageViewer()
         self.roi_editor.set_tool(self.tool, self.viewer)
         self.viewer.set_roi_direction_visible(True)

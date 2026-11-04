@@ -8,7 +8,6 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox,
     QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QSpinBox,
@@ -27,7 +26,7 @@ from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
     configure_params_splitter,
     create_execution_footer,
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     wrap_params_scroll,
 )
@@ -80,28 +79,25 @@ class HeightBlobs3DConfig(QWidget):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
-        bar = QHBoxLayout()
         self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
         self.record_selector.addItem("output image", "output image")
         self.record_selector.addItem("binary mask", "binary mask")
         self.record_selector.currentIndexChanged.connect(self.update_viewer)
-        add_record_selector(
-            bar, self.record_selector, left=8, right=8
-        )
         self.chk_show3d = QCheckBox("Show 3D")
         self.chk_show3d.setVisible(False)
         self.chk_show3d.toggled.connect(self._on_show3d_toggled)
-        bar.addWidget(self.chk_show3d)
 
         self.chk_overlays = QCheckBox("Show Overlays")
         self.chk_overlays.setChecked(
             bool(self.tool.params.get("show_overlays", True))
         )
         self.chk_overlays.toggled.connect(self._on_overlays)
-        bar.addWidget(self.chk_overlays)
-        bar.addStretch()
-        right_layout.addLayout(bar)
+        add_record_header(
+            right_layout, self.record_selector,
+            (self.chk_show3d, self.chk_overlays),
+            tool=self.tool,
+        )
 
         self.viewer_stack = QStackedWidget()
         self.viewer = ImageViewer()

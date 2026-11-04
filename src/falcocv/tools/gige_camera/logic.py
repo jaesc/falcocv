@@ -28,6 +28,7 @@ _POOL_LOCK = threading.Lock()
 
 @register_tool(prefix="[GIGE]", default_name="GigE Camera", group="Acquisition")
 class GigeCameraLoader(BaseTool):
+    supports_manual_run = False
     output_port_types = {"output image": IMAGE}
     """
     Acquires frames from a GigE Vision or USB3 Vision camera using Harvesters + GenTL.

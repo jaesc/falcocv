@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import TEXT_MUTED, disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -202,16 +202,12 @@ class ImageCalculatorConfig(QWidget):
         self.viewer_layout = QVBoxLayout(self.right_panel)
         self.viewer_layout.setContentsMargins(0, 0, 0, 0)
 
-        header_lyt = QHBoxLayout()
         self.record_selector = make_record_selector()
         self.record_selector.addItem("Output Image", "output image")
         self.record_selector.addItem("Image A", "image_A")
         self.record_selector.addItem("Image B", "image_B")
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
-        add_record_selector(
-            header_lyt, self.record_selector, left=8, right=8
-        )
-        self.viewer_layout.addLayout(header_lyt)
+        add_record_header(self.viewer_layout, self.record_selector, tool=self.tool)
 
         self.viewer = ImageViewer()
         self.roi_editor.set_tool(self.tool, self.viewer)

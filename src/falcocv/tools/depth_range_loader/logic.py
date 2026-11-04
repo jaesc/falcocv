@@ -131,6 +131,7 @@ def _convert_depth(raw, scale):
 
 @register_tool(prefix="[DPTH]", default_name="Depth Range Loader", group="Acquisition")
 class DepthRangeLoader(BaseTool):
+    supports_manual_run = False
     output_port_types = {"output image": IMAGE}
     """Loads single-channel range / depth images (FCD, TIFF, PNG, etc.) as float32.
     Supports single-file and folder-stack modes.

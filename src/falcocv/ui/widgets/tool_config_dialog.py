@@ -68,6 +68,10 @@ class ToolConfigDialog(QDialog):
             traceback.print_exc()
 
     def closeEvent(self, event):
+        if self._config_widget is not None:
+            from falcocv.ui.widgets.tool_run_controls import ToolRunControls
+            for controls in self._config_widget.findChildren(ToolRunControls):
+                controls.shutdown()
         if self._config_widget is not None and hasattr(self._config_widget, 'on_config_closed'):
             try:
                 self._config_widget.on_config_closed()

@@ -40,6 +40,7 @@ class PlaneFitter(BaseTool):
             "max_iterations": 100,
             "min_points": 10,
             "max_fit_points": 50000,
+            "auto_z_margin": 3.0,
             "copy_overlays_to_input": True,
             "show_overlays": True,
         }

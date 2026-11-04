@@ -26,6 +26,19 @@ def test_overlay_section_and_toolbar_stay_in_sync(qtbot):
     assert tool.params["copy_overlays_to_input"] is False
 
 
+def test_auto_z_margin_spin_updates_tool(qtbot):
+    tool = PlaneFitter()
+    config = PlaneFitterConfig(tool)
+    qtbot.addWidget(config)
+
+    assert config.spin_auto_margin.value() == 3.0
+    assert config.roi_editor._auto_z_margin() == 3.0
+
+    config.spin_auto_margin.setValue(5.5)
+    assert tool.params["auto_z_margin"] == 5.5
+    assert config.roi_editor._auto_z_margin() == 5.5
+
+
 def test_roi_z_edit_is_not_overwritten_by_refresh(qtbot):
     tool = PlaneFitter()
     tool.params["rois"] = [

@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                              QSplitter)
 from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.tool_config_helpers import (
-    add_record_selector,
+    add_record_header,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -114,9 +114,7 @@ class MeasurementConfig(QWidget):
         self.record_selector.addItem("Output Image", "output image")
         self.record_selector.setCurrentIndex(1)
         self.record_selector.currentIndexChanged.connect(self.on_record_changed)
-        add_record_selector(
-            self.viewer_layout, self.record_selector, left=8, right=8
-        )
+        add_record_header(self.viewer_layout, self.record_selector, tool=self.tool)
         self.viewer = ImageViewer()
         self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.viewer_container)

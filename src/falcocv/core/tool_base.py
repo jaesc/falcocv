@@ -70,6 +70,9 @@ class BaseTool(abc.ABC):
     #: not listed are untyped (``ANY``); never inferred from the port name.
     input_port_types: dict[str, str] = {}
     output_port_types: dict[str, str] = {}
+    #: Whether the config dialog offers the per-tool Run / Auto controls.
+    #: Sources and special tools opt out.
+    supports_manual_run = True
 
     def __init__(self, name):
         self.name = name
@@ -86,6 +89,7 @@ class BaseTool(abc.ABC):
         self._controller = None
         self._config_window = None
         self.data_changed = CallbackList()
+        self.parameter_changed = CallbackList()
         self.structure_changed = CallbackList()
 
     def set_controller(self, controller):
@@ -95,6 +99,7 @@ class BaseTool(abc.ABC):
         if self._controller:
             self._controller.mark_dirty(self)
         self.data_changed.emit()
+        self.parameter_changed.emit()
 
     def execute(self, advance=False):
         start_ns = time.perf_counter_ns()

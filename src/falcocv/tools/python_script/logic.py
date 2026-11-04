@@ -19,6 +19,7 @@ _PY_VER = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.
 
 @register_tool(prefix="[PYTH]", default_name="Python Script", group="Logic")
 class PythonScriptTool(BaseTool):
+    supports_manual_run = False
     debugger_paused = CallbackList()
     debugger_resumed = CallbackList()
 
