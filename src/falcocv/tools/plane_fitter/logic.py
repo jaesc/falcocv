@@ -1,6 +1,6 @@
 import numpy as np
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
-from falcocv.core.port_types import IMAGE, PLANE
+from falcocv.core.port_types import IMAGE, PLANE, RESULTS
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.roi_3d import calib_from_vimg, get_3d_data
@@ -30,7 +30,7 @@ class PlaneFitResult(ToolResult):
 @register_tool(prefix="[PLAN]", default_name="Plane Fitter", group="3D")
 class PlaneFitter(BaseTool):
     input_port_types = {"input image": IMAGE}
-    output_port_types = {"output image": IMAGE, "plane": PLANE}
+    output_port_types = {"output image": IMAGE, "plane": PLANE, "results": RESULTS}
     def __init__(self, name="Plane Fitter"):
         super().__init__(name)
         self.params = {
@@ -141,7 +141,7 @@ class PlaneFitter(BaseTool):
             return
 
         # Fix the normal sense once, here: every consumer receives the same
-        # orientation and heights are positive on the camera side.
+        # orientation and heights are positive above the plane (+Z/up).
         normal, distance, edge_on = normalize_plane(normal, distance)
         normal = np.asarray(normal, dtype=np.float32)
 

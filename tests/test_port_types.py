@@ -4,9 +4,9 @@ import pytest
 
 from falcocv.core.port_types import (
     ANY,
-    FEATURES,
     IMAGE,
     PLANE,
+    RESULTS,
     connection_candidates,
     normalize_kind,
     parent_input_candidates,
@@ -177,6 +177,14 @@ def _registered_tools():
     return {reg.tool_type: reg.cls for reg in get_all_tools()}
 
 
+def test_every_tool_with_results_declares_results_kind():
+    classes = _registered_tools()
+    for name, tool_class in classes.items():
+        tool = tool_class()
+        if "results" in tool.outputs:
+            assert tool.get_output_port_type("results") == RESULTS, name
+
+
 def test_every_tool_declares_its_image_and_plane_ports():
     classes = _registered_tools()
     checked = set()
@@ -210,10 +218,10 @@ def test_every_tool_declares_its_image_and_plane_ports():
     # Block has dynamic ports typed through port_metadata.
     assert "Block" in classes
 
-    # Typed non-image ports: the plane datum and the measured features.
+    # Typed non-image ports: the plane datum and the structured results.
     height_blobs = classes["HeightBlobs3D"]()
     assert height_blobs.get_input_port_type("reference plane") == PLANE
-    assert height_blobs.get_output_port_type("features") == FEATURES
+    assert height_blobs.get_output_port_type("results") == RESULTS
     plane_fitter = classes["PlaneFitter"]()
     assert plane_fitter.get_output_port_type("plane") == PLANE
 

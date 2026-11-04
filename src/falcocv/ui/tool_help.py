@@ -923,7 +923,7 @@ TOOL_HELP["Python Script"] = {
         {"name": "script_path", "default": '""',
          "description": "Path to an external Python file (alternative to embedded code)."},
         {"name": "port_metadata", "default": "{}",
-         "description": "Input and output ports with their kind (Image, Plane or Any). Ports are created and typed in the Terminals tab."},
+         "description": "Input and output ports with their kind (Image, Plane, Results, Features or Any). Ports are created and typed in the Terminals tab."},
     ],
     "notes": (
         "The script must define a CustomTool subclass with __init__() and process(inputs) methods. "
@@ -951,7 +951,7 @@ TOOL_HELP["Height Blobs 3D"] = {
         {"name": "input image", "type": "VisionImage (depth)",
          "description": "Depth / range image."},
         {"name": "reference plane", "type": "PlaneModel",
-         "description": "Plane published by Plane Fitter. Required."},
+         "description": "Plane published by Plane Fitter. Optional; without it, the horizontal capture-zero plane at Z=offset_z is used."},
     ],
     "outputs": [
         {"name": "output image", "type": "VisionImage",
@@ -960,20 +960,22 @@ TOOL_HELP["Height Blobs 3D"] = {
          "description": "Mask used for the segmentation, for tuning the thresholds."},
         {"name": "results", "type": "ToolResults[HeightBlobResult]",
          "description": "One entry per blob: u, v, h, area, volume and height stats."},
+        {"name": "count", "type": "int",
+         "description": "Number of measured height blobs."},
+        {"name": "results", "type": "ToolResults[HeightBlobResult]",
+         "description": "Measured features with u, v, h, depth, area, volume and height statistics."},
         {"name": "warnings", "type": "list[str]",
          "description": "Hints such as 'apply a negative plane_offset'."},
-        {"name": "features", "type": "FeatureSet",
-         "description": "Measured points plus the plane frame they are expressed in."},
     ],
     "params": [
         {"name": "rois", "default": "[]",
          "description": "3D ROIs: rotated footprint plus a Z band. Only points inside are measured."},
         {"name": "plane_offset", "default": "0",
-         "description": "Shifts the plane along its normal. Positive moves it towards the camera; "
+         "description": "Shifts the plane along its normal. Positive moves it up (+Z); "
                         "use a negative value when the part sits below the fitted surface."},
         {"name": "direction", "default": '"above"',
-         "description": "above measures regions on the camera side of the plane; below measures "
-                        "regions behind it. The tip is always the furthest point along the "
+         "description": "above measures regions on the +Z/up side of the plane; below measures "
+                        "regions on the other side. The tip is always the furthest point along the "
                         "measurement direction and is reported as a positive 'depth'."},
         {"name": "min_height", "default": "0.2",
          "description": "Minimum height above the plane for a pixel to belong to a blob."},
@@ -998,14 +1000,13 @@ TOOL_HELP["Height Blobs 3D"] = {
         {"name": "tip_stat", "default": '"mean"',
          "description": "mean or median of the tip band."},
         {"name": "sort_mode", "default": '"u"',
-         "description": "none, u, v, h, area or grid. grid groups by row_tolerance then u."},
+         "description": "none, u, v, h, area or grid. grid automatically detects the row/column orientation, then orders rows and columns."},
         {"name": "sort_descending", "default": "False",
          "description": "Reverse the order."},
-        {"name": "row_tolerance", "default": "0.5",
-         "description": "Row height (mm) used by the grid sort."},
     ],
     "notes": (
-        "Connect Plane Fitter to 'reference plane'. Heights are measured along the "
+        "Connect Plane Fitter to 'reference plane' or leave it unconnected to use "
+        "the capture-zero plane at z=offset_z. Heights are measured along the "
         "plane normal, so a tilted part does not bias them. 'direction' selects the "
         "side of the plane that is measured: use 'below' when the features sit "
         "behind the fitted surface (for example pins recessed under the connector "
@@ -1027,7 +1028,7 @@ TOOL_HELP["Block"] = {
     "outputs": [],
     "params": [
         {"name": "port_metadata", "default": "{}",
-         "description": "Dict with 'inputs' and 'outputs' entries defining the block's external interface and the kind of each port: Image, Plane or Any."},
+         "description": "Dict with 'inputs' and 'outputs' entries defining the block's external interface and the kind of each port: Image, Plane, Results, Features or Any."},
     ],
     "notes": (
         "Double-click a Block to edit its internal workflow. The block's inputs and outputs "

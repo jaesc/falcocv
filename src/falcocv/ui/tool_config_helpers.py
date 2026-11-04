@@ -36,6 +36,7 @@ __all__ = [
     "connect_execution_time",
     "add_min_results_group",
     "make_record_selector",
+    "add_record_selector",
     "add_fixture_axis_row",
     "set_fixture_axes_enabled",
 ]
@@ -52,6 +53,18 @@ def make_record_selector(parent: QWidget | None = None) -> QComboBox:
         QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed
     )
     return combo
+
+
+def add_record_selector(layout, combo, left=8, right=8):
+    """Add a record selector with consistent breathing room.
+
+    The small left margin separates the selector from the dialog edge without
+    changing the selector's minimum width; the right gap keeps the following
+    toolbar controls from touching it.
+    """
+    layout.addSpacing(int(left))
+    layout.addWidget(combo)
+    layout.addSpacing(int(right))
 
 
 def add_fixture_axis_row(layout, tool, on_change=None):

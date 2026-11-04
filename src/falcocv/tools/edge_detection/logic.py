@@ -14,7 +14,7 @@ Inspired by Cognex VisionPro caliper tools.
 import cv2
 import numpy as np
 from falcocv.core.tool_base import BaseTool
-from falcocv.core.port_types import IMAGE
+from falcocv.core.port_types import IMAGE, RESULTS
 from falcocv.core.tool_base import ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
@@ -35,7 +35,7 @@ class SingleEdgeResult(ToolResult):
 @register_tool(prefix="[EDGE]", default_name="Edge Detection", group="Vision Tools")
 class EdgeDetection(BaseTool):
     input_port_types = {"input image": IMAGE}
-    output_port_types = {"output image": IMAGE}
+    output_port_types = {"output image": IMAGE, "results": RESULTS}
     def __init__(self, name="Edge Detector"):
         super().__init__(name)
         self.params = {

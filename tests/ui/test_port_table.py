@@ -1,6 +1,6 @@
 """Shared port editor: adding, renaming and typing reach the tool."""
 
-from falcocv.core.port_types import ANY, IMAGE, PLANE
+from falcocv.core.port_types import ANY, IMAGE, PLANE, RESULTS
 from falcocv.tools.python_script.logic import PythonScriptTool
 from falcocv.ui.widgets.port_table import PortTable
 
@@ -35,6 +35,15 @@ def test_port_table_rename_keeps_the_kind(qtbot):
     assert "frame" in tool.outputs
     assert "output image" not in tool.outputs
     assert tool.get_output_port_type("frame") == IMAGE
+
+
+def test_port_table_offers_results_kind(qtbot):
+    tool = PythonScriptTool()
+    table = PortTable(tool, "outputs")
+    qtbot.addWidget(table)
+
+    combo = table.table.cellWidget(0, 1)
+    assert combo.findData(RESULTS) >= 0
 
 
 def test_port_table_removes_a_port(qtbot):

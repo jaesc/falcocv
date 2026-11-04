@@ -11,6 +11,7 @@ from falcocv.core.overlay_layer import OverlayType
 from falcocv.ui.widgets.viewer import ImageViewer
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_record_selector,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -136,8 +137,9 @@ class FixtureOverlayConfig(QWidget):
         self.record_selector.addItem("Output Image", "output image")
         self.record_selector.setCurrentIndex(0)
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
-        header_lyt.addWidget(self.record_selector)
-        header_lyt.addSpacing(8)
+        add_record_selector(
+            header_lyt, self.record_selector, left=8, right=8
+        )
         self.viewer_layout.addLayout(header_lyt)
 
         self.viewer = ImageViewer()

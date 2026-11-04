@@ -21,10 +21,10 @@ except ImportError:
 class PlaneModel:
     """A plane in world coordinates with a deterministic normal sense.
 
-    ``normal`` is unit length and points towards the camera
-    (``normal[2] <= 0``), so ``height(point) > 0`` means the point is above the
-    plane, closer to the camera.  A plane has two equivalent normals; fixing
-    the sense here keeps every consumer from having to guess.
+    ``normal`` is unit length and points towards world +Z/up
+    (``normal[2] >= 0``), so ``height(point) > 0`` means the point is above the
+    plane.  A plane has two equivalent normals; fixing the sense here keeps
+    every consumer from having to guess.
 
     ``calib`` is the ``(scale_x, scale_y, scale_z, offset_z)`` used to build
     the world coordinates.  It is a guard, not geometry: a consumer with a
@@ -41,7 +41,7 @@ class PlaneModel:
     edge_on: bool = False
 
     def height(self, points) -> np.ndarray:
-        """Signed height of ``points`` above the plane (positive = camera side)."""
+        """Signed height of ``points`` above the plane (positive = +Z/up)."""
         points = np.asarray(points, dtype=np.float64)
         normal = np.asarray(self.normal, dtype=np.float64)
         center = np.asarray(self.center, dtype=np.float64)
@@ -50,9 +50,9 @@ class PlaneModel:
     def offset(self, distance) -> "PlaneModel":
         """Return the same plane shifted ``distance`` along +normal.
 
-        Positive moves the plane towards the camera, so measured heights
-        decrease by ``distance``.  Negative lowers the plane, which is what you
-        need when the features sit below the fitted surface.
+        Positive moves the plane up (+Z), so measured heights decrease by
+        ``distance``.  Negative lowers the plane, which is what you need when
+        the features sit below the fitted surface.
         """
         distance = float(distance)
         if distance == 0.0:
@@ -71,7 +71,7 @@ class PlaneModel:
 
 
 def plane_height(plane: PlaneModel, points) -> np.ndarray:
-    """Signed height of ``points`` above ``plane`` (positive = camera side)."""
+    """Signed height of ``points`` above ``plane`` (positive = +Z/up)."""
     return plane.height(points)
 
 
@@ -117,7 +117,7 @@ def _plane_frame(plane, x_hint=None):
     normal = np.asarray(plane.normal, dtype=np.float64).reshape(3)
     length = float(np.linalg.norm(normal))
     if length < 1e-12:
-        normal = np.array([0.0, 0.0, -1.0])
+        normal = np.array([0.0, 0.0, 1.0])
     else:
         normal = normal / length
 
@@ -152,10 +152,10 @@ def normalize_plane(normal, distance, z_epsilon=1e-3):
     values = np.asarray(normal, dtype=np.float64).reshape(3)
     length = float(np.linalg.norm(values))
     if length < 1e-12:
-        return (0.0, 0.0, -1.0), -float(distance), True
+        return (0.0, 0.0, 1.0), float(distance), True
     values = values / length
     plane_distance = float(distance) / length
-    if values[2] > 0.0:
+    if values[2] < 0.0:
         values = -values
         plane_distance = -plane_distance
     elif abs(values[2]) < z_epsilon:

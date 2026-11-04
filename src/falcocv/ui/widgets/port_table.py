@@ -1,7 +1,8 @@
 """Shared editor for a tool's input or output ports.
 
 Both Block and Python Script use it: the name is editable and the kind is
-chosen from a combo (Image / Plane / Any).  Renaming a port follows the
+chosen from a combo (Image / Plane / Results / Features / Any).  Renaming a
+port follows the
 connection list so the wiring is not lost.
 """
 

@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QFileDialog, QSp
 from PyQt6.QtCore import Qt
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_record_selector,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -92,8 +93,9 @@ class ImageLoaderConfig(QWidget):
 
         self.record_selector = make_record_selector()
         self.record_selector.addItem(f"{tool.name}.output_image")
-        header_lyt.addWidget(self.record_selector)
-        header_lyt.addSpacing(8)
+        add_record_selector(
+            header_lyt, self.record_selector, left=8, right=8
+        )
         self.viewer_layout.addLayout(header_lyt)
 
         self.viewer = ImageViewer()

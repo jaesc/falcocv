@@ -21,7 +21,7 @@ import numpy as np
 
 from falcocv.core.roi_utils import extract_roi
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
-from falcocv.core.port_types import IMAGE
+from falcocv.core.port_types import IMAGE, RESULTS
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 from falcocv.core.pointcloud_utils import propagate_3d
@@ -192,7 +192,7 @@ class ShapeMatchResult(ToolResult):
 @register_tool(prefix="[SHAP]", default_name="Shape Match", group="Vision Tools")
 class ShapeMatch(BaseTool):
     input_port_types = {"input image": IMAGE}
-    output_port_types = {"output image": IMAGE}
+    output_port_types = {"output image": IMAGE, "results": RESULTS}
     """Rotation/scale/translation shape matcher with explicit solvers."""
 
     def __init__(self, name="Shape Match"):

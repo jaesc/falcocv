@@ -27,6 +27,7 @@ from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
     configure_params_splitter,
     create_execution_footer,
+    add_record_selector,
     make_record_selector,
     wrap_params_scroll,
 )
@@ -85,8 +86,9 @@ class HeightBlobs3DConfig(QWidget):
         self.record_selector.addItem("output image", "output image")
         self.record_selector.addItem("binary mask", "binary mask")
         self.record_selector.currentIndexChanged.connect(self.update_viewer)
-        bar.addWidget(self.record_selector)
-        bar.addSpacing(8)
+        add_record_selector(
+            bar, self.record_selector, left=8, right=8
+        )
         self.chk_show3d = QCheckBox("Show 3D")
         self.chk_show3d.setVisible(False)
         self.chk_show3d.toggled.connect(self._on_show3d_toggled)
@@ -273,12 +275,6 @@ class HeightBlobs3DConfig(QWidget):
             lambda checked: self._set_param("sort_descending", bool(checked))
         )
         order_layout.addWidget(self.chk_desc)
-        self.spin_row_tol = self._double_spin(
-            "row_tolerance", 1e-4, 1000.0, 3, 0.05, " mm"
-        )
-        order_layout.addWidget(
-            self._field("Row tolerance", self.spin_row_tol)
-        )
         parent_layout.addWidget(order)
 
         overlays = QGroupBox("Overlays")
@@ -301,8 +297,10 @@ class HeightBlobs3DConfig(QWidget):
         parent_layout.addWidget(overlays)
 
     def _build_results(self, parent_layout):
-        group = QGroupBox("Features")
+        group = QGroupBox("Results")
         layout = QVBoxLayout(group)
+        self.label_count = QLabel("Count: 0")
+        layout.addWidget(self.label_count)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             ["#", "u", "v", "h", "depth", "area"]
@@ -352,6 +350,8 @@ class HeightBlobs3DConfig(QWidget):
     def refresh_ui(self):
         self.label_time.setText(f"{self.tool.last_execution_time_ms:.1f} ms")
 
+        count = int(self.tool.outputs.get("count") or 0)
+        self.label_count.setText(f"Count: {count}")
         results = self.tool.outputs.get("results") or []
         self.table.setRowCount(len(results))
         for row, result in enumerate(results):

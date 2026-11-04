@@ -74,4 +74,5 @@ TOOL_PREFIXES: dict[str, str] = {
     "OCR":        "[IOCR]",
     "FixtureOverlay": "[FIXT]",
     "PlaneFitter": "[PLAN]",
+    "HeightBlobs3D": "[3DBL]",
 }

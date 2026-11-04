@@ -29,7 +29,8 @@ operator dashboards.
   3D analysis.
 - **Depth + 3D** - depth/range loading, the native `.fcd` LZ4 container,
   point clouds, plane fitting and a 3D viewer with world-space overlays. See
-  [`docs/DEPTH_FORMATS.md`](docs/DEPTH_FORMATS.md).
+  [`docs/DEPTH_FORMATS.md`](docs/DEPTH_FORMATS.md) and
+  [`docs/3D_CONVENTIONS.md`](docs/3D_CONVENTIONS.md).
 - **Fixture system** — per-image coordinate transforms; tools work in
   fixture-relative coordinates.
 - **Vector overlays** — annotations are mathematical primitives rendered only

@@ -191,6 +191,11 @@ cpp/bin/       → local kernel build output (gitignored)
 - **Point-cloud colors are lazy** -> loaders keep `_3d_data["colors"] = None`;
   `ensure_pointcloud_colors(vimg)` generates them only when a 3D viewer uploads
   the cloud.  This avoids ~47 ms per frame in headless/production jobs.
+- **Tool config record selectors** -> use
+  `add_record_selector(layout, combo, left=8, right=8)` from
+  `ui/tool_config_helpers.py`; never add the combo directly.  The shared helper
+  keeps the 8 px left margin and the gap to the following controls identical
+  across every tool config.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -207,37 +212,52 @@ cpp/bin/       → local kernel build output (gitignored)
   The output keeps the original range data, calibration and `_3d_data` by
   reference, and sets the 2D fixture when `act_as_fixture` is enabled. No
   reference plane is required for this matching.
-- **Workflow port types** -> every tool declares its image and plane ports as
-  class attributes (`input_port_types` / `output_port_types` with `IMAGE` /
-  `PLANE`); unlisted ports are `ANY`.  Never infer a kind from the port name.
-  The connection menu only offers earlier tools (workflow order, which also
-  makes cycles impossible) and compatible kinds: an `ANY` output only feeds
-  `ANY` inputs, so a typed input cannot be wired to `results`.  Blocks type
-  their dynamic ports through `port_metadata` (`Image` / `Plane` / `Any`) and
-  answer `get_input_port_type` / `get_output_port_type` from it.  A new image
-  port must be declared: `tests/test_port_types.py` fails otherwise.  Both use
-  the shared `ui/widgets/port_table.py`, which edits the name and the kind;
-  renaming follows `Workflow.rename_port` and removing drops
+- **Workflow port types** -> every tool declares its image, plane and structured
+  result ports as class attributes (`input_port_types` / `output_port_types`
+  with `IMAGE` / `PLANE` / `RESULTS`); unlisted ports are `ANY`.  Never infer a
+  kind from the port name.  The connection menu only offers earlier tools
+  (workflow order, which also makes cycles impossible) and compatible kinds:
+  an `ANY` output only feeds `ANY` inputs, so a typed input cannot be wired to
+  an untyped output.  Blocks type their dynamic ports through `port_metadata`
+  (`Image` / `Plane` / `Results` / `Any`) and answer `get_input_port_type` /
+  `get_output_port_type` from it.  A new image port must be declared:
+  `tests/test_port_types.py` fails otherwise.  Both use the shared
+  `ui/widgets/port_table.py`, which edits the name and the kind; renaming
+  follows `Workflow.rename_port` and removing drops
   `Workflow.remove_port_connections`, so the wiring is never left dangling.
-  The viewer's record selector also uses the port kinds (plus a value check for
-  untyped ports); it never inspects port names.
+  Every tool that publishes `results` must declare it as `RESULTS`; Block and
+  Python Script expose the kind through the shared port table.  The viewer's
+  record selector also uses the port kinds (plus a value check for untyped
+  ports); it never inspects port names.
 - **Height Blobs 3D** -> one feature per connected region above the reference
   plane.  Heights are computed per pixel from the depth grid (mirrored X,
   `z = depth*z_res + offset_z`), not from the strided cloud, so thin pins keep
   full resolution.  `plane_offset` shifts the plane along +normal (positive =
-  towards the camera); a negative value is how features below the fitted
-  surface are measured.  The tip is the centroid of the `tip_band` under the
-  maximum, expressed in `PlaneFrame` (u, v in-plane, h along the normal), which
-  makes the measurement tilt-invariant.  Blob statistics run on each
-  component's bounding box, never over the whole ROI crop: a 13 MP ROI went
-  from 2.9 s to 0.26 s with that change.
+  up/+Z); a negative value is how features below the fitted surface are
+  measured.  The tip is the centroid of the `tip_band` under the maximum,
+  expressed in `PlaneFrame` (u, v in-plane, h along the normal), which makes
+  the measurement tilt-invariant.  Blob statistics run on each component's
+  bounding box, never over the whole ROI crop: a 13 MP ROI went from 2.9 s to
+  0.26 s with that change.  The public structured output is `results` typed
+  `RESULTS`; `count` mirrors the result count.  There is no separate `features`
+  output: a duplicate port confused the Results table and port menu.  Without
+  a reference-plane connection, the tool uses a horizontal capture-zero plane
+  at `z = offset_z` and emits a warning.  Tool prefix: `[3DBL]`.
+  `grid` ordering estimates the row/column axis from nearest-neighbour vectors
+  and groups rows from the largest projected gap; there is no `row_tolerance`
+  parameter.  This keeps 3x2 and 4x4 matrices stable under slight rotations
+  and noise.
+- **PlaneFitter UI** -> Z min/max spin boxes use `setKeyboardTracking(False)`
+  and are not rewritten while focused, so a `mark_dirty` refresh cannot
+  interrupt editing.  The left panel has an Overlays group for `show_overlays`
+  and `copy_overlays_to_input`, synchronized with the view-bar checkbox.
 - **PlaneModel** -> `PlaneFitter` publishes `outputs["plane"]` as a
-  `core.plane_fit.PlaneModel`.  The normal is unit length and its sense is
-  fixed at creation (points towards the camera, `normal[2] <= 0`), so
-  `plane.height(point) > 0` means the point is above the plane.  Consumers
-  connect it to a `reference plane` input and must not flip the sign again.
-  `calib` is a guard: warn when it differs from the consumer image.  `edge_on`
-  marks a plane seen edge-on, where heights are not meaningful.
+  `core.plane_fit.PlaneModel`.  The normal is unit length and points towards
+  world +Z/up (`normal[2] >= 0`), so `plane.height(point) > 0` means the point
+  is above the plane.  Consumers connect it to a `reference plane` input and
+  must not flip the sign again.  `calib` is a guard: warn when it differs from
+  the consumer image.  `edge_on` marks a plane seen edge-on, where heights are
+  not meaningful.
 - **3D ROI model** -> a 3D ROI is a rotated 2D rectangle plus a Z band, not a
   6-DoF box.  `roi_2d_to_3d` returns `(center, size, z_min, z_max, angle)` with
   the angle flipped to world degrees (`-image angle`), the same convention as
@@ -340,7 +360,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `432 passed, 3 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `536 passed, 7 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and

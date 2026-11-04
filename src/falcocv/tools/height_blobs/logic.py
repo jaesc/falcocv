@@ -12,9 +12,9 @@ import math
 import cv2
 import numpy as np
 
-from falcocv.core.features import FeaturePoint, FeatureSet
+from falcocv.core.features import FeaturePoint
 from falcocv.core.plane_fit import PlaneModel
-from falcocv.core.port_types import FEATURES, IMAGE, PLANE
+from falcocv.core.port_types import IMAGE, PLANE, RESULTS
 from falcocv.core.pointcloud_utils import _is_depth_like
 from falcocv.core.roi_3d import calib_from_vimg
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
@@ -44,13 +44,13 @@ class HeightBlobResult(ToolResult):
         )
 
 
-@register_tool(prefix="[H3D]", default_name="Height Blobs 3D", group="3D")
+@register_tool(prefix="[3DBL]", default_name="Height Blobs 3D", group="3D")
 class HeightBlobs3D(BaseTool):
     input_port_types = {"input image": IMAGE, "reference plane": PLANE}
     output_port_types = {
         "output image": IMAGE,
         "binary mask": IMAGE,
-        "features": FEATURES,
+        "results": RESULTS,
     }
 
     def __init__(self, name="Height Blobs 3D"):
@@ -59,9 +59,9 @@ class HeightBlobs3D(BaseTool):
         self.outputs = {
             "output image": None,
             "binary mask": None,
+            "count": 0,
             "results": ToolResults(),
             "warnings": [],
-            "features": None,
         }
         self.params = {
             "rois": [],
@@ -81,7 +81,6 @@ class HeightBlobs3D(BaseTool):
             "tip_stat": "mean",
             "sort_mode": "u",
             "sort_descending": False,
-            "row_tolerance": 0.5,
             "show_overlays": True,
             "copy_overlays_to_input": True,
         }
@@ -122,9 +121,9 @@ class HeightBlobs3D(BaseTool):
     def run(self, advance=False) -> None:
         self.outputs["output image"] = None
         self.outputs["binary mask"] = None
+        self.outputs["count"] = 0
         self.outputs["results"] = ToolResults()
         self.outputs["warnings"] = []
-        self.outputs["features"] = None
 
         source = self.inputs.get("input image")
         if source is None:
@@ -138,17 +137,31 @@ class HeightBlobs3D(BaseTool):
             self.data_changed.emit()
             return
 
-        plane = self.inputs.get("reference plane")
-        if not isinstance(plane, PlaneModel):
-            self.set_error(
-                "Reference plane is missing; connect a Plane Fitter output."
-            )
-            self.data_changed.emit()
-            return
-
         depth = img.data
         depth_h, depth_w = depth.shape[:2]
         scale_x, scale_y, scale_z, offset_z = calib_from_vimg(img)
+
+        plane = self.inputs.get("reference plane")
+        if plane is None:
+            # Raw depth zero maps to world Z = offset_z.  Use that horizontal
+            # plane when no Plane Fitter is connected; heights then start at
+            # the capture zero and follow the +Z/up convention.
+            plane = PlaneModel(
+                normal=(0.0, 0.0, 1.0),
+                distance=float(offset_z),
+                center=(0.0, 0.0, float(offset_z)),
+                calib=(scale_x, scale_y, scale_z, offset_z),
+            )
+            self._set_warning(
+                "No reference plane connected; using capture zero plane "
+                f"(z={offset_z:.3f})."
+            )
+        elif not isinstance(plane, PlaneModel):
+            self.set_error(
+                "Reference plane must be a PlaneModel; connect a Plane Fitter output."
+            )
+            self.data_changed.emit()
+            return
         plane = plane.offset(float(self.params.get("plane_offset", 0.0)))
 
         entries = self._roi_entries(img)
@@ -377,9 +390,8 @@ class HeightBlobs3D(BaseTool):
             ))
 
         features = self._sort(features)
-        feature_set = FeatureSet(frame=frame, points=tuple(features))
 
-        self.outputs["features"] = feature_set
+        self.outputs["count"] = len(features)
         self.outputs["results"] = ToolResults(
             [HeightBlobResult(feature) for feature in features]
         )
@@ -398,11 +410,8 @@ class HeightBlobs3D(BaseTool):
         self.outputs["warnings"] = warnings
 
     def _publish_empty(self, img, plane) -> None:
+        self.outputs["count"] = 0
         self.outputs["results"] = ToolResults()
-        angle_hint = (1.0, 0.0, 0.0)
-        self.outputs["features"] = FeatureSet(
-            frame=plane.frame(angle_hint), points=()
-        )
         self.outputs["output image"] = self._draw_overlays(img, [], None)
         self.data_changed.emit()
 
@@ -466,20 +475,96 @@ class HeightBlobs3D(BaseTool):
         self._copy_overlays_to_input(out, img)
         return out
 
+    @staticmethod
+    def _grid_angle(features):
+        """Estimate the row/column axis of a blob matrix.
+
+        The nearest-neighbour vectors of a regular matrix are parallel to its
+        rows or columns.  Reducing their line orientation modulo 90 degrees
+        makes both directions equivalent, so small rotations are recovered
+        without knowing the number of rows or columns.
+        """
+        if len(features) < 3:
+            return 0.0
+        points = np.asarray(
+            [(f.u, f.v) for f in features], dtype=np.float64
+        )
+        delta = points[:, None, :] - points[None, :, :]
+        distance = np.hypot(delta[..., 0], delta[..., 1])
+        np.fill_diagonal(distance, np.inf)
+        nearest = np.argmin(distance, axis=1)
+        vectors = points[nearest] - points
+        valid = np.hypot(vectors[:, 0], vectors[:, 1]) > 1e-12
+        if not np.any(valid):
+            return 0.0
+        angles = np.degrees(np.arctan2(vectors[valid, 1], vectors[valid, 0]))
+        angles = (angles + 45.0) % 90.0 - 45.0
+        mean_vector = np.mean(np.exp(1j * np.radians(2.0 * angles)))
+        if abs(mean_vector) < 1e-12:
+            return 0.0
+        angle = math.degrees(math.atan2(mean_vector.imag, mean_vector.real)) / 2.0
+        return (angle + 45.0) % 90.0 - 45.0
+
+    def _grid_order(self, features):
+        """Order a matrix of blobs by rows and then by columns."""
+        if len(features) < 3:
+            return sorted(features, key=lambda f: (f.v, f.u, f.id))
+        angle = math.radians(self._grid_angle(features))
+        cosine = math.cos(angle)
+        sine = math.sin(angle)
+
+        def coordinates(feature):
+            # ``column`` runs along the matrix rows; ``row`` groups them.
+            column = cosine * feature.u + sine * feature.v
+            row = -sine * feature.u + cosine * feature.v
+            return row, column, feature
+
+        ordered = sorted(
+            ((row, column, feature.id, feature)
+             for row, column, feature in (coordinates(f) for f in features)),
+            key=lambda item: (item[0], item[1], item[2]),
+        )
+        row_values = [item[0] for item in ordered]
+        gaps = np.diff(row_values)
+        positive_gaps = gaps[gaps > 1e-12]
+        # The largest gap is the separation between two rows.  Splitting at
+        # half of it keeps together points whose row projection differs only
+        # by measurement noise, without a user-facing millimetre tolerance.
+        row_cut = (
+            float(np.max(positive_gaps)) * 0.5
+            if positive_gaps.size
+            else 0.0
+        )
+
+        rows = []
+        current = []
+        previous_row = None
+        for item in ordered:
+            row = item[0]
+            if previous_row is not None and row - previous_row > row_cut:
+                rows.append(current)
+                current = []
+            current.append(item)
+            previous_row = row
+        if current:
+            rows.append(current)
+
+        return [
+            feature
+            for row in rows
+            for _, _, _, feature in sorted(row, key=lambda item: (item[1], item[2]))
+        ]
+
     def _sort(self, features):
         mode = str(self.params.get("sort_mode", "u"))
         if mode not in SORT_MODES:
             mode = "u"
         descending = bool(self.params.get("sort_descending", False))
-        tolerance = max(1e-6, float(self.params.get("row_tolerance", 0.5)))
 
         if mode == "none":
             ordered = list(features)
         elif mode == "grid":
-            ordered = sorted(
-                features,
-                key=lambda f: (round(f.v / tolerance), f.u, f.id),
-            )
+            ordered = self._grid_order(features)
             if descending:
                 ordered.reverse()
         else:

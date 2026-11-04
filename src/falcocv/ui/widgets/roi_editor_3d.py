@@ -121,6 +121,7 @@ class RoiEditor3DWidget(QGroupBox):
                 spin.setRange(-100000, 100000)
                 spin.setDecimals(1)
             spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+            spin.setKeyboardTracking(False)
             spin.setMinimumWidth(50)
             spin.setMaximumWidth(65)
             spin.setAlignment(Qt.AlignmentFlag.AlignRight)
@@ -144,6 +145,7 @@ class RoiEditor3DWidget(QGroupBox):
         ):
             spin.setRange(-1e9, 1e9)
             spin.setDecimals(3)
+            spin.setKeyboardTracking(False)
             spin.setMinimumWidth(70)
             spin.setMaximumWidth(110)
             spin.setSizePolicy(
@@ -219,18 +221,22 @@ class RoiEditor3DWidget(QGroupBox):
         z_max = float(entry.get("z_max", 1.0))
 
         for label, spin in self._spins_2d.items():
+            if spin.hasFocus():
+                continue
             idx = {"X": 0, "Y": 1, "W": 2, "H": 3, "A": 4}.get(label, 0)
             val = float(roi_2d[idx]) if idx < len(roi_2d) else 0.0
             spin.blockSignals(True)
             spin.setValue(val)
             spin.blockSignals(False)
 
-        self.spin_z_min.blockSignals(True)
-        self.spin_z_min.setValue(z_min)
-        self.spin_z_min.blockSignals(False)
-        self.spin_z_max.blockSignals(True)
-        self.spin_z_max.setValue(z_max)
-        self.spin_z_max.blockSignals(False)
+        if not self.spin_z_min.hasFocus():
+            self.spin_z_min.blockSignals(True)
+            self.spin_z_min.setValue(z_min)
+            self.spin_z_min.blockSignals(False)
+        if not self.spin_z_max.hasFocus():
+            self.spin_z_max.blockSignals(True)
+            self.spin_z_max.setValue(z_max)
+            self.spin_z_max.blockSignals(False)
 
     def _update_viewer_3d_roi(self):
         if self.viewer_3d is None or self.tool is None:

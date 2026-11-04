@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
+    add_record_selector,
     make_record_selector,
     wrap_params_scroll,
     configure_params_splitter,
@@ -44,6 +45,9 @@ class PlaneFitterConfig(QWidget):
         # Fitting parameters
         self._build_fit_params(cl)
 
+        # Overlay controls
+        self._build_overlays(cl)
+
         # Results display
         self._build_results(cl)
 
@@ -67,8 +71,9 @@ class PlaneFitterConfig(QWidget):
         self.record_selector.addItem("output image", "output image")
         self.record_selector.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
         self.record_selector.currentIndexChanged.connect(self._on_record_changed)
-        vb.addWidget(self.record_selector)
-        vb.addSpacing(8)
+        add_record_selector(
+            vb, self.record_selector, left=8, right=8
+        )
         self.chk_show3d = QCheckBox("Show 3D")
         self.chk_show3d.setVisible(False)
         self.chk_show3d.toggled.connect(self._on_show3d_toggled)
@@ -178,6 +183,29 @@ class PlaneFitterConfig(QWidget):
 
         parent_layout.addWidget(grp)
 
+    def _build_overlays(self, parent_layout):
+        grp = QGroupBox("Overlays")
+        layout = QVBoxLayout(grp)
+
+        self.chk_draw_overlays = QCheckBox("Show overlays")
+        self.chk_draw_overlays.setChecked(
+            bool(self.tool.params.get("show_overlays", True))
+        )
+        self.chk_draw_overlays.toggled.connect(self._on_draw_overlays)
+        layout.addWidget(self.chk_draw_overlays)
+
+        self.chk_copy_overlays = QCheckBox("Copy overlays to input")
+        self.chk_copy_overlays.setToolTip(
+            "Copy the plane polygon, normal and ROI outlines to the input image"
+        )
+        self.chk_copy_overlays.setChecked(
+            bool(self.tool.params.get("copy_overlays_to_input", True))
+        )
+        self.chk_copy_overlays.toggled.connect(self._on_copy_overlays)
+        layout.addWidget(self.chk_copy_overlays)
+
+        parent_layout.addWidget(grp)
+
     def _build_results(self, parent_layout):
         grp = QGroupBox("Results")
         gl = QVBoxLayout(grp)
@@ -241,10 +269,27 @@ class PlaneFitterConfig(QWidget):
         if checked:
             self._update_3d_viewer(self._get_display_image())
 
+    def _set_overlay_checkboxes(self, checked):
+        for checkbox in (self.chk_overlays, self.chk_draw_overlays):
+            checkbox.blockSignals(True)
+            checkbox.setChecked(bool(checked))
+            checkbox.blockSignals(False)
+
     def _on_overlays_toggled(self, checked):
         self.tool.params["show_overlays"] = bool(checked)
+        self._set_overlay_checkboxes(checked)
         self.tool.mark_dirty()
         self.update_viewer()
+
+    def _on_draw_overlays(self, checked):
+        self.tool.params["show_overlays"] = bool(checked)
+        self._set_overlay_checkboxes(checked)
+        self.tool.mark_dirty()
+        self.update_viewer()
+
+    def _on_copy_overlays(self, checked):
+        self.tool.params["copy_overlays_to_input"] = bool(checked)
+        self.tool.mark_dirty()
 
     def _on_gl_state_changed(self, initialized, error):
         pass
@@ -386,10 +431,21 @@ class PlaneFitterConfig(QWidget):
         self.spin_min_pts.setValue(int(self.tool.params.get("min_points", 10)))
         self.spin_min_pts.blockSignals(False)
 
+        overlays_on = bool(self.tool.params.get("show_overlays", True))
         if hasattr(self, "chk_overlays"):
             self.chk_overlays.blockSignals(True)
-            self.chk_overlays.setChecked(bool(self.tool.params.get("show_overlays", True)))
+            self.chk_overlays.setChecked(overlays_on)
             self.chk_overlays.blockSignals(False)
+        if hasattr(self, "chk_draw_overlays"):
+            self.chk_draw_overlays.blockSignals(True)
+            self.chk_draw_overlays.setChecked(overlays_on)
+            self.chk_draw_overlays.blockSignals(False)
+        if hasattr(self, "chk_copy_overlays"):
+            self.chk_copy_overlays.blockSignals(True)
+            self.chk_copy_overlays.setChecked(
+                bool(self.tool.params.get("copy_overlays_to_input", True))
+            )
+            self.chk_copy_overlays.blockSignals(False)
 
         self.roi_editor._refresh()
 

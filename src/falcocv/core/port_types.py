@@ -1,8 +1,9 @@
 """Port kinds and connection compatibility for the workflow graph.
 
-Every tool declares the kind of its image and plane ports; anything else stays
-untyped (``ANY``).  The kind is never inferred from the port name: a tool that
-adds a new image or plane port must declare it, and the tests fail otherwise.
+Every tool declares the kind of its image, plane and structured-result ports;
+anything else stays untyped (``ANY``).  The kind is never inferred from the
+port name: a tool that adds a new typed port must declare it, and the tests
+fail otherwise.
 
 Rules:
 
@@ -16,12 +17,14 @@ from __future__ import annotations
 IMAGE = "image"
 PLANE = "plane"
 FEATURES = "features"
+RESULTS = "results"
 ANY = "any"
 
 PORT_LABELS = {
     IMAGE: "Image",
     PLANE: "Plane",
     FEATURES: "Features",
+    RESULTS: "Results",
     ANY: "Any",
 }
 LABEL_TO_PORT = {label: kind for kind, label in PORT_LABELS.items()}
@@ -34,6 +37,8 @@ _ALIASES = {
     "plane": PLANE,
     "features": FEATURES,
     "feature": FEATURES,
+    "results": RESULTS,
+    "result": RESULTS,
     "any": ANY,
     "number": ANY,
     "string": ANY,

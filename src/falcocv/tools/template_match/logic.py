@@ -4,7 +4,7 @@ import math
 import base64
 import threading
 from falcocv.core.tool_base import BaseTool, CallbackList
-from falcocv.core.port_types import IMAGE
+from falcocv.core.port_types import IMAGE, RESULTS
 from falcocv.core.tool_base import ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.roi_utils import extract_roi
@@ -139,7 +139,7 @@ class TemplateMatchResult(ToolResult):
 @register_tool(prefix="[TMPL]", default_name="Template Match", group="Vision Tools")
 class TemplateMatch(BaseTool):
     input_port_types = {"input image": IMAGE}
-    output_port_types = {"output image": IMAGE}
+    output_port_types = {"output image": IMAGE, "results": RESULTS}
     """
     Industrial Multi-Scale Template Match with User-Defined Origin.
     """

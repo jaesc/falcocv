@@ -395,7 +395,7 @@ def test_plane_model_is_published_and_points_to_the_camera():
     assert isinstance(plane, PlaneModel)
     normal = np.asarray(plane.normal)
     assert abs(float(np.linalg.norm(normal)) - 1.0) < 1e-6
-    assert normal[2] <= 0.0
+    assert normal[2] >= 0.0
     assert plane.edge_on is False
     assert plane.calib == (1.0, 1.0, 1.0, 0.0)
 
@@ -403,18 +403,18 @@ def test_plane_model_is_published_and_points_to_the_camera():
     assert np.allclose(np.asarray(result.get("normal")), normal)
 
 
-def test_plane_height_is_positive_on_the_camera_side():
+def test_plane_height_is_positive_above_the_plane():
     plane = PlaneModel(
-        normal=(0.0, 0.0, -1.0),
-        distance=-20.0,
+        normal=(0.0, 0.0, 1.0),
+        distance=20.0,
         center=(0.0, 0.0, 20.0),
     )
     points = np.array(
         [[0.0, 0.0, 18.0], [0.0, 0.0, 22.0]], dtype=np.float64
     )
     heights = plane_height(plane, points)
-    assert heights[0] == pytest.approx(2.0)
-    assert heights[1] == pytest.approx(-2.0)
+    assert heights[0] == pytest.approx(-2.0)
+    assert heights[1] == pytest.approx(2.0)
 
 
 def test_normalize_plane_fixes_the_sense_both_ways():
@@ -428,8 +428,8 @@ def test_normalize_plane_fixes_the_sense_both_ways():
 def test_normalize_plane_flags_edge_on_planes():
     normal, distance, edge_on = normalize_plane((1.0, 0.0, 1e-6), 5.0)
     assert edge_on is True
-    assert normal[0] < 0.0
-    assert distance == pytest.approx(-5.0)
+    assert normal[0] > 0.0
+    assert distance == pytest.approx(5.0)
 
 
 class _ImageSource(BaseTool):
