@@ -257,7 +257,11 @@ cpp/bin/       → local kernel build output (gitignored)
   responses from a disconnected worker are ignored by connection token.
   HMI widgets support `source="tag"` with a namespaced tag id; the designer
   lists tags from `comms_config`, and `/api/hmi/comms/widget-values` returns
-  evaluated value/quality/status.  This first phase is read-only.
+  evaluated value/quality/status.  This first phase is read-only.  The `omron`
+  driver implements the `omron-fast` strategy: one read per struct, snapshot
+  TTL, shadow writes and optional verification.  Its dictionary is session-only
+  and never loaded from or written to a persistent file; `aphyt` is imported
+  lazily when the driver starts.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -402,10 +406,13 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
-## Current handoff (2026-11-02)
+## Current handoff (2026-11-05)
 
 - `dev` has the ShapeMatch v3 work and the geometry validation; `main` is the
   1.0.2 release.  No release planned.
+- The `omron` driver is implemented with the `omron-fast` struct/snapshot
+  strategy and tested with a fake `aphyt` client; real hardware validation is
+  still pending.  `aphyt` is the optional `plc` extra.
 - ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
   `fe8a135`): model v3, training mask, Canny / `min_gradient` /
   `max_features` controls, manual feature editor with brush, spatial feature
@@ -428,9 +435,11 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `609 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `616 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: tag-bound widgets (read-only), then real driver implementations
-  (TCP/Modbus/PLC) behind the existing driver contract.  Resume on another
-  machine with `git pull origin dev`, `pip install -e ".[dev]"` and
+- Next work: validate the `omron` driver against real hardware, then add
+  Beckhoff ADS and Siemens S7 behind the existing driver contract.  The Omron
+  tests use a fake `aphyt` client; hardware validation is still pending.
+  Resume on another machine with `git pull origin dev`,
+  `pip install -e ".[dev]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

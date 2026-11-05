@@ -3,9 +3,9 @@
 FalcoCV has a generic communications layer for HMI projects. It is independent
 of Qt and of any specific PLC, Modbus or socket library.
 
-The current implementation ships the `dummy` driver, which is enough to build
-and test the HMI/job integration without hardware. Real drivers will be added
-without changing the project or script API.
+The current implementation ships the `dummy` driver for development and the
+`omron` driver for Omron NJ/NX controllers. Real drivers are added without
+changing the project or script API.
 
 ## Concepts
 
@@ -228,6 +228,36 @@ valid measurement. Tag widgets are read-only in this phase.
 The worker handles the snapshot by reading the tags through its existing
 `CommsManager` and returns tag definitions, values, quality and device status.
 Writes are executed by the deployed worker, not by the HMI Designer.
+
+## Omron driver
+
+The public driver name is `omron`. It implements the `omron-fast` strategy
+internally:
+
+- one network read per struct, shared by all requested members;
+- short-lived snapshot cache controlled by `snapshot_ttl_ms`;
+- shadow-copy writes;
+- optional read-back verification and retries.
+
+```json
+{
+  "host": "192.168.1.10",
+  "snapshot_ttl_ms": 50,
+  "verify_writes": true,
+  "write_retries": 2
+}
+```
+
+Tags use `Struct.Member` addresses. There is no dictionary file at all: the
+schema does not expose `dictionary_file`, unknown config keys are rejected, and
+the driver never calls aphyt's `load_dictionary_file` or
+`save_current_dictionary`. Aphyt builds its variable dictionary in memory for
+the current session; stopping the driver discards it.
+
+`aphyt` is loaded lazily when the driver starts, so the project can still be
+edited without the dependency installed; connecting will report a clear
+missing-package error. Install it with `pip install aphyt` or
+`pip install -e ".[plc]"`.
 
 ## Driver batching
 

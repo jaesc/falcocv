@@ -9,9 +9,11 @@ from .schema import DriverSchema
 def _driver_classes():
     # Imported lazily so future optional drivers do not become hard imports.
     from .dummy import DummyDriver
+    from .omron import OmronFastDriver
 
     return {
         DummyDriver.driver_name: DummyDriver,
+        OmronFastDriver.driver_name: OmronFastDriver,
     }
 
 
