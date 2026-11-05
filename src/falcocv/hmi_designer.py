@@ -89,6 +89,7 @@ def main():
         path = sys.argv[1]
         if os.path.isfile(path):
             project = HMIProject.load(path)
+            ConfigManager().add_recent_hmi_file(path)
 
     dialog = HMIDesignerDialog(project=project)
     if icon_path:

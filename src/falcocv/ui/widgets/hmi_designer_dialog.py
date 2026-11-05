@@ -23,6 +23,8 @@ from falcocv.core.hmi import HMIProject, HMISlot, WIDGET_TYPES, WIDGET_DEFAULT_S
 from falcocv.core.config import ConfigManager
 from falcocv.ui.widgets.hmi_scene import HMIWidgetScene, HMIWidgetView, GRID
 from falcocv.ui.widgets.hmi_preview import HMIPreviewWidget
+from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
 from falcocv.ui.widgets.script_editor import ScriptEditor, FindReplaceBar
 from falcocv.ui.widgets.debug_panels import DebugToolbar, VariableInspector, WatchPanel
 from falcocv.ui.style import SUCCESS, WARNING, INFO, DANGER
@@ -586,7 +588,11 @@ class HMIDesignerDialog(QDialog):
     def __init__(self, project: HMIProject | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("HMI Designer")
-        self.project = project
+        # Work on an isolated in-memory copy.  Only Save writes a .hmi file;
+        # discarding/closing leaves the caller's project object untouched.
+        self.project = (
+            HMIProject.from_dict(project.to_dict()) if project is not None else None
+        )
         self._current_path: str | None = None
         self._modified = False
         self._loading = False
@@ -604,9 +610,12 @@ class HMIDesignerDialog(QDialog):
         self._tab_path: list[str] = []
 
         self._tabs: QTabWidget | None = None
+        self.recent_hmi_menu: QMenu | None = None
         self._scene: HMIWidgetScene | None = None
         self._view: HMIWidgetView | None = None
         self._layout_splitter: QSplitter | None = None
+        self._comms_tab: HMICommsWidget | None = None
+        self._monitor_tab: HMICommsMonitorWidget | None = None
         self._script_splitter: QSplitter | None = None
         self._debug_splitter: QSplitter | None = None
         self.script_edit: ScriptEditor | None = None
@@ -632,6 +641,9 @@ class HMIDesignerDialog(QDialog):
         file_menu.addAction("New multi-file project", self._new_multi_project)
         file_menu.addSeparator()
         file_menu.addAction("Open HMI project...", self._open_project)
+        self.recent_hmi_menu = QMenu("Open Recent", self)
+        file_menu.addMenu(self.recent_hmi_menu)
+        self.update_recent_hmi_menu()
         file_menu.addAction("Close project", self._close_project_action)
         file_menu.addSeparator()
         file_menu.addAction("Save", self._save_project)
@@ -798,6 +810,10 @@ class HMIDesignerDialog(QDialog):
             self._mark_modified()
 
     def _update_footer(self):
+        # _build_from_project() can run from __init__ before the footer widgets
+        # are created when the dialog is opened with an existing project.
+        if not hasattr(self, "_footer_label"):
+            return
         host = self._server_host.text() or "localhost"
         port = self._server_port.text() or str(ConfigManager().get_web_port())
         rows = self.rows_spin.value()
@@ -820,6 +836,9 @@ class HMIDesignerDialog(QDialog):
 
     def _build_from_project(self):
         self._welcome_label.hide()
+        if self._monitor_tab is not None:
+            self._monitor_tab.shutdown()
+            self._monitor_tab = None
         if self._tabs:
             self._tabs.deleteLater()
 
@@ -856,6 +875,13 @@ class HMIDesignerDialog(QDialog):
 
         lt.addWidget(self._layout_splitter)
         self._tabs.addTab(layout_tab, "HMI Layout")
+
+        self._comms_tab = HMICommsWidget(self.project)
+        self._comms_tab.modified.connect(self._mark_modified)
+        self._tabs.addTab(self._comms_tab, "Communications")
+
+        self._monitor_tab = HMICommsMonitorWidget(self.project)
+        self._tabs.addTab(self._monitor_tab, "Signal Monitor")
 
         self._preview = HMIPreviewWidget(self.project)
         self._tabs.addTab(self._preview, "Preview")
@@ -1115,10 +1141,20 @@ class HMIDesignerDialog(QDialog):
 
     def _on_check(self):
         ok, msg = self._check_compile()
-        if ok:
-            QMessageBox.information(self, "Check", "No syntax errors found.")
-        else:
+        if not ok:
             self._show_compile_errors(msg)
+            return
+        if self._comms_tab is not None:
+            self._comms_tab.flush_to_project()
+            comms_ok, comms_msg = self._comms_tab.validate()
+            if not comms_ok:
+                QMessageBox.warning(
+                    self,
+                    "Communications configuration",
+                    comms_msg,
+                )
+                return
+        QMessageBox.information(self, "Check", "No syntax or configuration errors found.")
 
     def _stop_sync(self) -> bool:
         """Send stop request to server. Returns True if server acknowledged."""
@@ -1133,8 +1169,60 @@ class HMIDesignerDialog(QDialog):
         except Exception:
             return False
 
+    def _ask_deploy_unsaved(self) -> str:
+        """Ask what to do with unsaved changes before deploying."""
+
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved Changes")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setText(
+            "The project has unsaved changes.\n"
+            "Save them before deploying?"
+        )
+        save_btn = box.addButton(
+            "Save and Deploy", QMessageBox.ButtonRole.AcceptRole
+        )
+        deploy_btn = box.addButton(
+            "Deploy Without Saving", QMessageBox.ButtonRole.DestructiveRole
+        )
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(save_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is save_btn:
+            return "save"
+        if clicked is deploy_btn:
+            return "deploy"
+        return "cancel"
+
     def _on_deploy(self):
         self._flush_to_project()
+        if self._comms_tab is not None:
+            comms_ok, comms_msg = self._comms_tab.validate()
+            if not comms_ok:
+                QMessageBox.warning(
+                    self,
+                    "Communications configuration",
+                    comms_msg,
+                )
+                self._set_status("Comms config error", WARNING)
+                return
+
+        ok, errors = self._check_compile()
+        if not ok:
+            self._show_compile_errors(errors)
+            self._set_status("Compile error", WARNING)
+            return
+
+        if self._modified:
+            choice = self._ask_deploy_unsaved()
+            if choice == "cancel":
+                return
+            if choice == "save":
+                if not self._save_project():
+                    return
+        deployed_unsaved = self._modified
+
         if self.btn_stop.isEnabled():
             self._set_status("Stopping...", WARNING)
             self.btn_deploy.setEnabled(False)
@@ -1144,13 +1232,6 @@ class HMIDesignerDialog(QDialog):
         self._set_status("Deploying...", INFO)
         self.btn_deploy.setEnabled(False)
         self.btn_stop.setEnabled(False)
-
-        ok, errors = self._check_compile()
-        if not ok:
-            self._show_compile_errors(errors)
-            self.btn_deploy.setEnabled(True)
-            self._set_status("Compile error", WARNING)
-            return
 
         parent = self.parent()
         if parent and hasattr(parent, '_cleanup_workflow'):
@@ -1176,6 +1257,7 @@ class HMIDesignerDialog(QDialog):
                 {"name": s.name, "job_path": s.job_path}
                 for s in self.project.slots
             ],
+            "comms": self.project.comms_config,
         }
 
         if self.project.source_dir and os.path.isdir(self.project.source_dir):
@@ -1214,7 +1296,10 @@ class HMIDesignerDialog(QDialog):
 
         self.btn_deploy.setEnabled(True)
         self.btn_stop.setEnabled(True)
-        self._set_status("Deployed", SUCCESS)
+        if deployed_unsaved:
+            self._set_status("Deployed (unsaved changes)", WARNING)
+        else:
+            self._set_status("Deployed", SUCCESS)
 
     def _on_stop(self):
         self._set_status("Stopping...", WARNING)
@@ -1420,8 +1505,7 @@ class HMIDesignerDialog(QDialog):
             QMessageBox.StandardButton.Save,
         )
         if btn == QMessageBox.StandardButton.Save:
-            self._save_project()
-            return not self._modified
+            return self._save_project()
         elif btn == QMessageBox.StandardButton.Discard:
             return True
         return False
@@ -1448,13 +1532,18 @@ class HMIDesignerDialog(QDialog):
             if btn == QMessageBox.StandardButton.Cancel:
                 return False
             if btn == QMessageBox.StandardButton.Save:
-                self._save_project()
+                if not self._save_project():
+                    return False
 
         for attr in ('_sc_continue', '_sc_step_over', '_sc_step_into', '_sc_step_out', '_sc_f2'):
             sc = getattr(self, attr, None)
             if sc is not None:
                 sc.deleteLater()
                 setattr(self, attr, None)
+
+        if self._monitor_tab is not None:
+            self._monitor_tab.shutdown()
+            self._monitor_tab = None
 
         if self._tabs:
             self._tabs.deleteLater()
@@ -1505,44 +1594,108 @@ class HMIDesignerDialog(QDialog):
 
         self._build_from_project()
 
-    def _open_project(self):
-        if not self._close_project():
+    def update_recent_hmi_menu(self):
+        if self.recent_hmi_menu is None:
             return
+        self.recent_hmi_menu.clear()
+        recents = ConfigManager().get_recent_hmi_files()
+        if not recents:
+            self.recent_hmi_menu.addAction(
+                "No Recent HMI Projects"
+            ).setEnabled(False)
+            return
+        for path in recents:
+            action = QAction(path, self)
+            action.triggered.connect(
+                lambda checked=False, p=path: self._open_project_from_path(p)
+            )
+            self.recent_hmi_menu.addAction(action)
 
+    def _open_project_from_path(self, path: str) -> bool:
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            QMessageBox.warning(
+                self,
+                "Open HMI Project",
+                f"File not found:\n{path}",
+            )
+            return False
+
+        # Load before closing the current project so a malformed file does not
+        # discard the project that is already open.
+        try:
+            new_project = HMIProject.load(path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Open HMI Project",
+                f"Failed to load HMI project:\n{exc}",
+            )
+            return False
+
+        if not self._close_project():
+            return False
+
+        self.project = new_project
+        self._current_path = path
+        self._modified = False
+        self._build_from_project()
+        ConfigManager().add_recent_hmi_file(path)
+        self.update_recent_hmi_menu()
+        return True
+
+    def _open_project(self):
         path, _ = QFileDialog.getOpenFileName(self, "Open HMI Project", "",
                                               "HMI Files (*.hmi);;All Files (*)")
         if path:
-            self._show_loading("Loading project...")
-            try:
-                self.project = HMIProject.load(path)
-                self._current_path = path
-                self._modified = False
-                self._build_from_project()
-            finally:
-                self._hide_loading()
+            self._open_project_from_path(path)
 
-    def _save_project(self):
+    def _save_project(self) -> bool:
         if not self.project:
-            return
+            return False
         if self._current_path:
             self._flush_to_project()
-            self.project.save(self._current_path)
+            if self._comms_tab is not None:
+                ok, msg = self._comms_tab.validate()
+                if not ok:
+                    QMessageBox.warning(self, "Communications configuration", msg)
+                    return False
+            try:
+                self.project.save(self._current_path)
+            except Exception as exc:
+                self._show_error("Save Error", str(exc))
+                return False
             self._modified = False
             self.update_title()
-        else:
-            self._save_project_as()
+            ConfigManager().add_recent_hmi_file(self._current_path)
+            self.update_recent_hmi_menu()
+            return True
+        return self._save_project_as()
 
-    def _save_project_as(self):
+    def _save_project_as(self) -> bool:
         if not self.project:
-            return
+            return False
         path, _ = QFileDialog.getSaveFileName(self, "Save HMI Project As", "",
                                               "HMI Files (*.hmi);;All Files (*)")
-        if path:
-            self._flush_to_project()
+        if not path:
+            return False
+        self._flush_to_project()
+        if self._comms_tab is not None:
+            ok, msg = self._comms_tab.validate()
+            if not ok:
+                QMessageBox.warning(self, "Communications configuration", msg)
+                return False
+        try:
             self.project.save(path)
-            self._current_path = path
-            self._modified = False
-            self.update_title()
+        except Exception as exc:
+            self._show_error("Save Error", str(exc))
+            return False
+        self._current_path = path
+        self._modified = False
+        self.update_title()
+        ConfigManager().add_recent_hmi_file(path)
+        self.update_recent_hmi_menu()
+        return True
 
     def _full_reload(self):
         self._loading = True
@@ -1589,6 +1742,8 @@ class HMIDesignerDialog(QDialog):
         else:
             self.project.script = self._tab_to_spaces(self.script_edit.text())
         self._scene.sync_all()
+        if self._comms_tab is not None:
+            self._comms_tab.flush_to_project()
         self._saving = False
 
     def get_project(self) -> HMIProject:

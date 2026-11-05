@@ -30,6 +30,7 @@ class ConfigManager:
                 "block_output": "#1565C0"
             },
             "recent_files": [],
+            "recent_hmi_files": [],
             "gige_camera": {
                 "cti_path": ""
             },
@@ -75,6 +76,18 @@ class ConfigManager:
             recents.remove(path)
         recents.insert(0, path)
         self.data["recent_files"] = recents[:10]
+        self.save()
+
+    def get_recent_hmi_files(self):
+        return self.data.get("recent_hmi_files", [])
+
+    def add_recent_hmi_file(self, path):
+        path = os.path.abspath(path)
+        recents = self.get_recent_hmi_files()
+        if path in recents:
+            recents.remove(path)
+        recents.insert(0, path)
+        self.data["recent_hmi_files"] = recents[:10]
         self.save()
 
     def load(self):
