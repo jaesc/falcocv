@@ -217,9 +217,35 @@ cpp/bin/       → local kernel build output (gitignored)
   `workflow.engine_context`; `PythonScriptTool` passes it to
   `CustomTool.__init__(engine_context=...)`, recreating the instance when the
   context identity changes, and `Block` forwards it to nested workflows.  Use
-  this for live objects such as an already-connected scanner controller or PLC;
-  it is intentionally never serialized.  The defaults of both the HMI script and
-  the Python Script template document the handoff.
+  this for live objects such as an already-connected scanner controller or PLC,
+  and for callbacks such as `context['log'] = log`; it is intentionally never
+  serialized.  The defaults of both the HMI script and the Python Script
+  template document the handoff with the generic `log` callback.
+- **Communications runtime** -> `src/falcocv/comms/` owns generic devices, tags
+  and quality, independent of Qt.  The optional `comms` section of `.hmi` is
+  validated by `parse_comms_config`; `HMIProject.start_runtime()` creates the
+  `CommsManager`, injects `context['comms']`, and `stop_runtime()` disconnects
+  it.  The worker starts runtime before the HMI script and stops the script
+  before the devices.  The first driver is `dummy`; tag definitions live in
+  `.hmi` while runtime values and statuses stay runtime-only.  Future
+  TCP/Modbus/PLC drivers implement `DeviceDriver` and register in
+  `comms/drivers/__init__.py`; widgets must read `TagStore`, never a driver.
+  `DeviceDriver.read_many` / `write_many` are optional batching hooks: the
+  manager groups by device and the polling thread uses `read_many`, but protocol
+  details such as Omron structs, ADS symbols or S7 addresses stay inside the
+  corresponding driver.  Driver config fields are declared by
+  `DriverSchema`/`ConfigField` in the driver module and rendered by the HMI
+  Designer; unknown keys stay in the collapsed Advanced JSON editor.  The HMI
+  Designer has a local **Signal Monitor** tab backed by `CommsMonitorSession`;
+  it opens devices explicitly only while connected and is not a live view of a
+  deployed worker.  The designer edits an isolated working copy and only Save
+  writes the `.hmi`; Deploy with unsaved changes asks whether to save or deploy
+  the in-memory copy.  The Signal Monitor has a **Live worker** mode that reads
+  and writes the deployed worker's own `CommsManager` through
+  `/api/hmi/comms/snapshot` and `/api/hmi/comms/write`; it must not be confused
+  with the separate local test session.  Live errors use structured
+  `JSONResponse` 4xx/5xx bodies; the monitor shows an explicit connection badge
+  and only enables writes after a successful snapshot.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -390,8 +416,9 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `565 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `603 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: 3D tools (depth, point cloud, plane fitting).  Resume on another
+- Next work: tag-bound widgets (read-only), then real driver implementations
+  (TCP/Modbus/PLC) behind the existing driver contract.  Resume on another
   machine with `git pull origin dev`, `pip install -e ".[dev]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

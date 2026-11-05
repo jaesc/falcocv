@@ -41,6 +41,10 @@ operator dashboards.
   [`docs/HMI_CONTEXT.md`](docs/HMI_CONTEXT.md).
 - **HMI designer + web server** — design operator dashboards, deploy them to a
   FastAPI server and open them from any browser.
+- **Communications runtime** — generic devices and tags in the `.hmi` project,
+  editable from the HMI Designer, with local and live signal monitors, a dummy
+  driver with simulated signals and TCP/Modbus/PLC drivers planned. See
+  [`docs/COMMS.md`](docs/COMMS.md).
 - **Camera acquisition** — GigE Vision and USB3 Vision cameras through Harvesters
   and a vendor GenTL producer.
 
