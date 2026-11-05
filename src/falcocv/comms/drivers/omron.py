@@ -283,8 +283,9 @@ class OmronFastDriver(DeviceDriver):
                 for tag, value, member in entries:
                     self._write_member(shadow, member, value, tag)
                 self._client.write_variable(struct, shadow)
-                self._snap_t[struct] = time.perf_counter()
                 if not self._verify_writes:
+                    self._structs[struct] = shadow
+                    self._snap_t[struct] = time.perf_counter()
                     return
 
                 check = self._client.read_variable(struct)
@@ -301,6 +302,10 @@ class OmronFastDriver(DeviceDriver):
                 self._snap_t[struct] = time.perf_counter()
                 return
             except Exception as exc:
+                # A failed write may still have reached the controller.  Never
+                # serve the attempted shadow value from the snapshot cache.
+                self._structs.pop(struct, None)
+                self._snap_t.pop(struct, None)
                 last_error = str(exc)
                 if attempt + 1 < attempts:
                     time.sleep(0.05 * (attempt + 1))

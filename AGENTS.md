@@ -435,7 +435,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `616 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `617 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: validate the `omron` driver against real hardware, then add
   Beckhoff ADS and Siemens S7 behind the existing driver contract.  The Omron

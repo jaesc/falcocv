@@ -23,11 +23,12 @@ class _Item:
 
 
 class _FakeClient:
-    def __init__(self, values, fail_writes=0):
+    def __init__(self, values, fail_writes=0, reject_writes=0):
         self.values = values
         self.read_calls = 0
         self.write_calls = 0
         self.fail_writes = fail_writes
+        self.reject_writes = reject_writes
         self.dictionary_calls = []
         self.connected_cip_dispatcher = type(
             "Dispatcher", (), {"is_connected_explicit": True}
@@ -51,6 +52,9 @@ class _FakeClient:
         if self.fail_writes:
             self.fail_writes -= 1
             raise OSError("temporary write failure")
+        if self.reject_writes:
+            self.reject_writes -= 1
+            return
         self.values[name] = copy.deepcopy(data)
 
     def save_current_dictionary(self, *args, **kwargs):
@@ -175,6 +179,24 @@ def test_omron_retries_a_failed_write(monkeypatch):
     client = _FakeClient(
         {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}},
         fail_writes=1,
+    )
+    monkeypatch.setattr(omron_driver, "_create_client", lambda host: client)
+    device = parse_comms_config(_config(retries=1)).devices[0]
+    driver = omron_driver.OmronFastDriver(device)
+
+    driver.start()
+    try:
+        driver.write(device.tags[1], 11)
+        assert client.write_calls == 2
+        assert driver.read(device.tags[1]) == 11
+    finally:
+        driver.stop()
+
+
+def test_omron_verification_failure_retries_and_invalidates_cache(monkeypatch):
+    client = _FakeClient(
+        {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}},
+        reject_writes=1,
     )
     monkeypatch.setattr(omron_driver, "_create_client", lambda host: client)
     device = parse_comms_config(_config(retries=1)).devices[0]
