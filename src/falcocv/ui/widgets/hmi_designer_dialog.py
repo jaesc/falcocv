@@ -119,6 +119,22 @@ class _WidgetEditPopup(QDialog):
     def _slot_names(self):
         return [s.name for s in self.project.slots]
 
+    def _tag_ids(self):
+        tags = []
+        for device in self.project.comms_config.get("devices", []):
+            device_id = device.get("id", "")
+            for tag in device.get("tags", []):
+                name = tag.get("name", "")
+                if device_id and name:
+                    tags.append(f"{device_id}.{name}")
+        return tags
+
+    def _set_form_row_visible(self, form, widget, visible):
+        widget.setVisible(visible)
+        label = form.labelForField(widget)
+        if label:
+            label.setVisible(visible)
+
     def _get_outputs_for_slot(self, slot_name: str) -> list[str]:
         for s in self.project.slots:
             if s.name == slot_name and s.job_path and os.path.isfile(s.job_path):
@@ -195,8 +211,16 @@ class StatusIndicatorPopup(_WidgetEditPopup):
     def _build(self):
         self.setWindowTitle("StatusIndicator Properties")
         layout = QFormLayout(self)
+        self._form = layout
         self._si_colors = {}
 
+        self._source_cb = QComboBox()
+        self._source_cb.addItems(["job", "tag"])
+        self._source_cb.currentTextChanged.connect(self._on_source_changed)
+        layout.addRow("Source:", self._source_cb)
+        self._tag_cb = QComboBox()
+        self._tag_cb.addItems(self._tag_ids())
+        layout.addRow("Tag:", self._tag_cb)
         self._slot_cb = QComboBox()
         self._slot_cb.addItems(self._slot_names())
         layout.addRow("Slot:", self._slot_cb)
@@ -235,7 +259,16 @@ class StatusIndicatorPopup(_WidgetEditPopup):
             swatch = getattr(self, f"_si_swatch_{key}")
             swatch.setStyleSheet(f"background-color: {c.name()}; border: 1px solid #888; border-radius: 2px;")
 
+    def _on_source_changed(self, source: str):
+        is_tag = source == "tag"
+        self._set_form_row_visible(self._form, self._tag_cb, is_tag)
+        self._set_form_row_visible(self._form, self._slot_cb, not is_tag)
+
     def _load(self):
+        source = self.data.get("source", "job")
+        self._source_cb.setCurrentText(source)
+        self._tag_cb.setCurrentText(self.data.get("tag", ""))
+        self._on_source_changed(source)
         s = self.data.get("slot", "")
         idx = self._slot_cb.findText(s)
         if idx >= 0:
@@ -250,6 +283,8 @@ class StatusIndicatorPopup(_WidgetEditPopup):
             swatch.setStyleSheet(f"background-color: {hex_val}; border: 1px solid #888; border-radius: 2px;")
 
     def _save_and_accept(self):
+        self.data["source"] = self._source_cb.currentText()
+        self.data["tag"] = self._tag_cb.currentText()
         self.data["slot"] = self._slot_cb.currentText()
         self.data["label"] = self._label_edit.text()
         for key, hex_val in self._si_colors.items():
@@ -265,6 +300,13 @@ class MeasureLabelPopup(_WidgetEditPopup):
         # ── Data origin ──
         g1 = QGroupBox("Data origin")
         f1 = QFormLayout(g1)
+        self._source_cb = QComboBox()
+        self._source_cb.addItems(["job", "tag"])
+        self._source_cb.currentTextChanged.connect(self._on_source_changed)
+        f1.addRow("Source:", self._source_cb)
+        self._tag_cb = QComboBox()
+        self._tag_cb.addItems(self._tag_ids())
+        f1.addRow("Tag:", self._tag_cb)
         self._slot_cb = QComboBox()
         self._slot_cb.addItems(self._slot_names())
         self._slot_cb.currentTextChanged.connect(self._on_slot_changed)
@@ -273,6 +315,7 @@ class MeasureLabelPopup(_WidgetEditPopup):
         f1.addRow("Output:", self._output_cb)
         self._field_edit = QLineEdit("[0].value")
         f1.addRow("Field:", self._field_edit)
+        self._data_form = f1
         layout.addWidget(g1)
 
         # ── Visual configuration ──
@@ -328,6 +371,18 @@ class MeasureLabelPopup(_WidgetEditPopup):
             if lbl:
                 lbl.setVisible(visible)
 
+    def _set_data_row_visible(self, widget, visible):
+        widget.setVisible(visible)
+        lbl = self._data_form.labelForField(widget)
+        if lbl:
+            lbl.setVisible(visible)
+
+    def _on_source_changed(self, source: str):
+        is_tag = source == "tag"
+        self._set_data_row_visible(self._tag_cb, is_tag)
+        for widget in (self._slot_cb, self._output_cb, self._field_edit):
+            self._set_data_row_visible(widget, not is_tag)
+
     def _on_value_type_changed(self, vt: str):
         self._cond_cb.blockSignals(True)
         self._cond_cb.clear()
@@ -352,6 +407,10 @@ class MeasureLabelPopup(_WidgetEditPopup):
     def _load(self):
         self._vt_cb.blockSignals(True)
         self._cond_cb.blockSignals(True)
+        source = self.data.get("source", "job")
+        self._source_cb.setCurrentText(source)
+        self._tag_cb.setCurrentText(self.data.get("tag", ""))
+        self._on_source_changed(source)
         s = self.data.get("slot", "")
         idx = self._slot_cb.findText(s)
         if idx >= 0:
@@ -389,6 +448,8 @@ class MeasureLabelPopup(_WidgetEditPopup):
         self._output_cb.addItems(self._get_outputs_for_slot(name))
 
     def _save_and_accept(self):
+        self.data["source"] = self._source_cb.currentText()
+        self.data["tag"] = self._tag_cb.currentText()
         self.data["slot"] = self._slot_cb.currentText()
         self.data["output"] = self._output_cb.currentText()
         self.data["field"] = self._field_edit.text()
@@ -409,8 +470,16 @@ class LedIndicatorPopup(_WidgetEditPopup):
     def _build(self):
         self.setWindowTitle("LedIndicator Properties")
         layout = QFormLayout(self)
+        self._form = layout
         self._led_colors = {}
 
+        self._source_cb = QComboBox()
+        self._source_cb.addItems(["job", "tag"])
+        self._source_cb.currentTextChanged.connect(self._on_source_changed)
+        layout.addRow("Source:", self._source_cb)
+        self._tag_cb = QComboBox()
+        self._tag_cb.addItems(self._tag_ids())
+        layout.addRow("Tag:", self._tag_cb)
         self._slot_cb = QComboBox()
         self._slot_cb.addItems(self._slot_names())
         layout.addRow("Slot:", self._slot_cb)
@@ -449,7 +518,16 @@ class LedIndicatorPopup(_WidgetEditPopup):
             swatch = getattr(self, f"_swatch_{key}")
             swatch.setStyleSheet(f"background-color: {c.name()}; border: 1px solid #888; border-radius: 2px;")
 
+    def _on_source_changed(self, source: str):
+        is_tag = source == "tag"
+        self._set_form_row_visible(self._form, self._tag_cb, is_tag)
+        self._set_form_row_visible(self._form, self._slot_cb, not is_tag)
+
     def _load(self):
+        source = self.data.get("source", "job")
+        self._source_cb.setCurrentText(source)
+        self._tag_cb.setCurrentText(self.data.get("tag", ""))
+        self._on_source_changed(source)
         s = self.data.get("slot", "")
         idx = self._slot_cb.findText(s)
         if idx >= 0:
@@ -464,6 +542,8 @@ class LedIndicatorPopup(_WidgetEditPopup):
             swatch.setStyleSheet(f"background-color: {hex_val}; border: 1px solid #888; border-radius: 2px;")
 
     def _save_and_accept(self):
+        self.data["source"] = self._source_cb.currentText()
+        self.data["tag"] = self._tag_cb.currentText()
         self.data["slot"] = self._slot_cb.currentText()
         self.data["label"] = self._label_edit.text()
         for key, hex_val in self._led_colors.items():

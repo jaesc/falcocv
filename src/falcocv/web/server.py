@@ -323,6 +323,9 @@ class HMIWorkerManager:
     async def request_comms_values(self, timeout: float = 5.0):
         return await self._request({"cmd": "comms_values"}, timeout)
 
+    async def request_comms_widget_values(self, timeout: float = 5.0):
+        return await self._request({"cmd": "comms_widget_values"}, timeout)
+
     async def request_comms_write(self, tag: str, value, timeout: float = 5.0):
         return await self._request(
             {"cmd": "comms_write", "tag": tag, "value": value},
@@ -513,6 +516,26 @@ class CommsWriteRequest(BaseModel):
     project_id: str = "default"
     tag: str
     value: Any
+
+
+@app.get("/api/hmi/comms/widget-values")
+async def hmi_comms_widget_values(project_id: str = "default"):
+    worker = _workers.get(project_id)
+    if not worker or not worker.alive:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": f"Project '{project_id}' is not deployed or is stopped",
+                "project_id": project_id,
+            },
+        )
+    data = await worker.request_comms_widget_values()
+    if data is None:
+        return JSONResponse(
+            status_code=504,
+            content={"error": "Widget values timed out"},
+        )
+    return data
 
 
 @app.post("/api/hmi/comms/write")

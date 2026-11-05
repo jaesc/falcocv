@@ -144,6 +144,61 @@ def _comms_values() -> dict:
     }
 
 
+def _comms_widget_values() -> dict:
+    """Return evaluated values for layout widgets bound to tags."""
+
+    from falcocv.comms import CommsError
+
+    out = {}
+    if _proj is None:
+        return {"widgets": out}
+    tag_widgets = [
+        widget
+        for widget in _proj.layout.get("widgets", [])
+        if widget.get("source") == "tag" and widget.get("tag")
+    ]
+    if not tag_widgets:
+        return {"widgets": out}
+
+    manager = _proj.comms
+    if manager is None:
+        for widget in tag_widgets:
+            out[widget["id"]] = {
+                "value": None,
+                "quality": "bad",
+                "status": "idle",
+            }
+        return {"widgets": out}
+
+    tag_ids = sorted({widget["tag"] for widget in tag_widgets})
+    try:
+        manager.read_many(tag_ids)
+    except CommsError:
+        pass
+    for widget in tag_widgets:
+        tag_value = manager.tag(widget["tag"])
+        if tag_value is None:
+            out[widget["id"]] = {
+                "value": None,
+                "quality": "bad",
+                "status": "idle",
+            }
+            continue
+        quality = tag_value.quality
+        if quality != "good":
+            status = "idle"
+        elif widget.get("type") in ("StatusIndicator", "LedIndicator"):
+            status = "pass" if bool(tag_value.value) else "fail"
+        else:
+            status = _proj._evaluate_condition(tag_value.value, widget)
+        out[widget["id"]] = {
+            "value": tag_value.value,
+            "quality": quality,
+            "status": status,
+        }
+    return {"widgets": out}
+
+
 def _get_site_packages():
     global _site_packages
     if _site_packages is None:
@@ -377,6 +432,14 @@ def handle_cmd(cmd: dict):
             data = _comms_values()
         except Exception as exc:
             data = {"error": str(exc), "values": {}, "statuses": []}
+        write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
+
+    elif c == "comms_widget_values":
+        req_id = cmd["_req_id"]
+        try:
+            data = _comms_widget_values()
+        except Exception as exc:
+            data = {"error": str(exc), "widgets": {}}
         write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
 
     elif c == "comms_write":

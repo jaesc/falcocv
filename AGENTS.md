@@ -255,6 +255,9 @@ cpp/bin/       → local kernel build output (gitignored)
   Deploy/Stop.  Live defaults to `127.0.0.1`, not
   `localhost`; `localhost` can add ~2 s per connection on Windows.  Stale
   responses from a disconnected worker are ignored by connection token.
+  HMI widgets support `source="tag"` with a namespaced tag id; the designer
+  lists tags from `comms_config`, and `/api/hmi/comms/widget-values` returns
+  evaluated value/quality/status.  This first phase is read-only.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -425,7 +428,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `608 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `609 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: tag-bound widgets (read-only), then real driver implementations
   (TCP/Modbus/PLC) behind the existing driver contract.  Resume on another

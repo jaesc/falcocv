@@ -9,6 +9,7 @@ let logSince = 0;
 let logCellIds = [];
 let slotWidgetMap = {};
 let _slotFetchControllers = {};
+let tagPollTimer = null;
 
 function getGridTrack(count, ratios) {
   if (ratios && ratios.length === count) {
@@ -72,6 +73,7 @@ function renderGrid(layout) {
 
   flushLogCells();
   updateAllViewers();
+  fetchTagWidgets();
 }
 
 function renderWidgetCell(container, wt, w, slotStatusMap, slotName) {
@@ -204,6 +206,9 @@ async function init() {
   await loadHMI();
   await fetchLogs();
   connectWS();
+  if (tagPollTimer === null) {
+    tagPollTimer = setInterval(fetchTagWidgets, 500);
+  }
 }
 
 async function loadHMI() {
@@ -307,10 +312,66 @@ function updateFooter(slots) {
 
 function updateAllViewers() {
   for (const w of (hmiData.layout?.widgets || [])) {
+    if (w.source === 'tag') continue;
     if (w.slot && w.output && w.type === 'ImageViewer') {
       fetchOutput(w.slot, w.output);
     } else if (w.slot && w.output && w.type === 'MeasureLabel') {
       fetchOutput(w.slot, w.output, null, w.field, w.id);
+    }
+  }
+}
+
+async function fetchTagWidgets() {
+  if (!hmiData || !hmiData.layout) return;
+  const widgets = hmiData.layout.widgets || [];
+  if (!widgets.some(w => w.source === 'tag' && w.tag)) return;
+  try {
+    const res = await fetch(
+      `${BASE}/api/hmi/comms/widget-values?project_id=${PROJECT_ID}`
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    const values = data.widgets || {};
+    for (const w of widgets) {
+      if (w.source === 'tag' && w.tag && values[w.id]) {
+        updateTagWidget(w, values[w.id]);
+      }
+    }
+  } catch (e) { /* ignore */ }
+}
+
+function updateTagWidget(w, item) {
+  const good = item.quality === 'good';
+  if (w.type === 'MeasureLabel') {
+    const el = document.getElementById(`mv-${w.id}`);
+    if (!el) return;
+    el.textContent = good ? String(item.value) : '\u2014';
+    el.style.opacity = good ? '1' : '0.45';
+    el.classList.remove('pass', 'fail');
+    if (good && item.status === 'pass') el.classList.add('pass');
+    else if (good && item.status === 'fail') el.classList.add('fail');
+    return;
+  }
+  if (w.type === 'StatusIndicator' || w.type === 'LedIndicator') {
+    const id = w.type === 'StatusIndicator'
+      ? `indicator-${w.id}` : `led-${w.id}`;
+    const el = document.getElementById(id);
+    if (!el) return;
+    const status = good ? item.status : 'idle';
+    const colors = {
+      pass: w.color_pass || '#2e7d32',
+      fail: w.color_fail || '#c62828',
+      pending: w.color_pending || '#c1c100',
+      idle: w.color_idle || '#888'
+    };
+    el.style.backgroundColor = colors[status] || colors.idle;
+    el.classList.toggle('pending', status === 'pending');
+    if (w.type === 'StatusIndicator') {
+      const label = el.querySelector('.indicator-label');
+      el.textContent = status === 'pass' ? 'PASS'
+        : status === 'fail' ? 'FAIL'
+        : status === 'pending' ? 'PENDING' : 'IDLE';
+      if (label) el.appendChild(label);
     }
   }
 }
@@ -586,6 +647,7 @@ function onSlotFinished(msg) {
   _slotFetchControllers[msg.slot] = new AbortController();
   const signal = _slotFetchControllers[msg.slot].signal;
   for (const w of (hmiData.layout?.widgets || [])) {
+    if (w.source === 'tag') continue;
     if (w.slot === msg.slot && w.output && w.type === 'ImageViewer') {
       fetchOutput(w.slot, w.output, signal);
     } else if (w.slot === msg.slot && w.output && w.type === 'MeasureLabel') {
@@ -597,6 +659,7 @@ function onSlotFinished(msg) {
 async function refreshHMI() {
   await loadHMI();
   updateAllViewers();
+  fetchTagWidgets();
 }
 
 function createPromptOverlay() {

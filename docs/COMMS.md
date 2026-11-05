@@ -195,6 +195,36 @@ The monitor shows an explicit `DISCONNECTED` / `CONNECTING` / `CONNECTED` /
 successful snapshot. If the project is not deployed or is stopped, the server
 returns a structured 404 and the monitor leaves `Connect` enabled for a retry.
 
+## Tag-bound widgets
+
+HMI widgets can display configured tags read-only. `source` defaults to `job`;
+when it is `tag`, the widget reads the namespaced tag id:
+
+```json
+{
+  "type": "MeasureLabel",
+  "source": "tag",
+  "tag": "dummy.manual_value",
+  "condition": "between",
+  "min": 0,
+  "max": 100
+}
+```
+
+`StatusIndicator` and `LedIndicator` use the boolean value of the tag. The
+designer populates the tag selector from `project.comms_config`; devices do not
+need to be connected while editing.
+
+The dashboard uses:
+
+```text
+GET /api/hmi/comms/widget-values?project_id=...
+```
+
+The worker evaluates widget conditions and returns `value`, `quality` and
+`status`. A tag with quality other than `good` is shown as `—`/idle, never as a
+valid measurement. Tag widgets are read-only in this phase.
+
 The worker handles the snapshot by reading the tags through its existing
 `CommsManager` and returns tag definitions, values, quality and device status.
 Writes are executed by the deployed worker, not by the HMI Designer.

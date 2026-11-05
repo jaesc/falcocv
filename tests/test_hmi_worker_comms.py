@@ -42,6 +42,69 @@ def test_worker_comms_snapshot_returns_definitions_and_values():
         project.stop_runtime()
 
 
+def test_worker_evaluates_tag_widgets():
+    import falcocv.web.hmi_worker as worker
+    from falcocv.core.hmi import HMIProject
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "dummy",
+                "driver": "dummy",
+                "tags": [
+                    {
+                        "name": "manual_flag",
+                        "type": "bool",
+                        "access": "rw",
+                        "default": False,
+                    },
+                    {
+                        "name": "manual_value",
+                        "type": "int",
+                        "access": "rw",
+                        "default": 3,
+                    },
+                ],
+            }
+        ],
+    }
+    project.layout = {
+        "rows": 10,
+        "cols": 10,
+        "widgets": [
+            {
+                "id": "w_measure",
+                "type": "MeasureLabel",
+                "source": "tag",
+                "tag": "dummy.manual_value",
+                "condition": "between",
+                "min": 0,
+                "max": 10,
+            },
+            {
+                "id": "w_status",
+                "type": "StatusIndicator",
+                "source": "tag",
+                "tag": "dummy.manual_flag",
+            },
+        ],
+    }
+    project.start_runtime()
+    old_proj = worker._proj
+    worker._proj = project
+    try:
+        data = worker._comms_widget_values()
+        assert data["widgets"]["w_measure"]["value"] == 3
+        assert data["widgets"]["w_measure"]["status"] == "pass"
+        assert data["widgets"]["w_status"]["value"] is False
+        assert data["widgets"]["w_status"]["status"] == "fail"
+    finally:
+        worker._proj = old_proj
+        project.stop_runtime()
+
+
 def test_hmi_worker_starts_comms_before_script_and_stops_after():
     import falcocv.web.hmi_worker as worker
 
