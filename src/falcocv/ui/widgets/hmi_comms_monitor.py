@@ -10,10 +10,12 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
-from PyQt6.QtCore import QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QObject, QThread, QTimer, Qt, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -81,6 +83,7 @@ class _LiveMonitorWorker(QObject):
         super().__init__()
         self.base_url = base_url.rstrip("/")
         self.project_id = project_id
+        self._tags_loaded = False
 
     def _http_error(self, exc: urllib.error.HTTPError) -> str:
         message = f"HTTP {exc.code}: {exc.reason}"
@@ -95,12 +98,12 @@ class _LiveMonitorWorker(QObject):
             pass
         return f"{message} (project '{self.project_id}')"
 
-    def _get(self, path: str) -> dict:
+    def _get(self, path: str, timeout: float = 5.0) -> dict:
         url = f"{self.base_url}/{path.lstrip('/')}"
         sep = "&" if "?" in url else "?"
         url = f"{url}{sep}project_id={self.project_id}"
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             raise RuntimeError(self._http_error(exc)) from exc
@@ -119,7 +122,12 @@ class _LiveMonitorWorker(QObject):
     @pyqtSlot()
     def refresh(self):
         try:
-            self.refreshed.emit(self._get("/api/hmi/comms/snapshot"))
+            if self._tags_loaded:
+                payload = self._get("/api/hmi/comms/values", timeout=2.0)
+            else:
+                payload = self._get("/api/hmi/comms/snapshot", timeout=5.0)
+                self._tags_loaded = True
+            self.refreshed.emit(payload)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -179,13 +187,21 @@ class HMICommsMonitorWidget(QWidget):
         self._write_inflight = False
         self._connected = False
         self._connection_state = "disconnected"
+        self._connection_token = object()
         self._live_base = ""
         self._editor_dirty = False
+        self._visible_tag_ids: list[str] = []
 
         self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
         self._timer.timeout.connect(self._request_refresh)
 
         self._build()
+        self._enter_shortcut = QShortcut(QKeySequence("Return"), self)
+        self._enter_shortcut.setContext(
+            Qt.ShortcutContext.WidgetWithChildrenShortcut
+        )
+        self._enter_shortcut.activated.connect(self._write_selected)
         self._set_connection_state("disconnected")
         self._set_status("Not connected.")
 
@@ -215,6 +231,9 @@ class HMICommsMonitorWidget(QWidget):
         self.disconnect_btn.setEnabled(False)
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.setEnabled(False)
+        for button in (self.connect_btn, self.disconnect_btn, self.refresh_btn):
+            button.setAutoDefault(False)
+            button.setDefault(False)
         self.connect_btn.clicked.connect(self.connect_monitor)
         self.disconnect_btn.clicked.connect(self.disconnect_monitor)
         self.refresh_btn.clicked.connect(self._request_refresh)
@@ -241,7 +260,9 @@ class HMICommsMonitorWidget(QWidget):
         top.addWidget(self.auto_check)
 
         self.live_url_edit = QLineEdit()
-        host = ConfigManager().data.get("web_host") or "localhost"
+        host = ConfigManager().data.get("web_host") or "127.0.0.1"
+        if host == "localhost":
+            host = "127.0.0.1"
         port = ConfigManager().get_web_port()
         self.live_url_edit.setText(f"http://{host}:{port}")
         self.live_url_edit.setPlaceholderText("http://server:8000")
@@ -269,22 +290,37 @@ class HMICommsMonitorWidget(QWidget):
         edit_layout.addRow("Tag:", self.selected_label)
 
         value_row = QHBoxLayout()
-        self.bool_combo = QComboBox()
-        self.bool_combo.addItems(["False", "True"])
-        self.bool_combo.activated.connect(self._mark_editor_dirty)
-        self.bool_combo.hide()
+        self.bool_true_btn = QPushButton("Set True")
+        self.bool_false_btn = QPushButton("Set False")
+        self.bool_true_btn.hide()
+        self.bool_false_btn.hide()
+        for button in (self.bool_true_btn, self.bool_false_btn):
+            button.setAutoDefault(False)
+            button.setDefault(False)
+            button.setFixedWidth(100)
+        self.bool_true_btn.clicked.connect(lambda: self._set_bool(True))
+        self.bool_false_btn.clicked.connect(lambda: self._set_bool(False))
+        value_row.addWidget(self.bool_true_btn)
+        value_row.addWidget(self.bool_false_btn)
+
         self.value_edit = QLineEdit()
         self.value_edit.setPlaceholderText("value")
         self.value_edit.textEdited.connect(self._mark_editor_dirty)
-        value_row.addWidget(self.bool_combo)
+        self.value_edit.returnPressed.connect(self._write_selected)
+        self.value_edit.installEventFilter(self)
         value_row.addWidget(self.value_edit, 1)
         self.write_btn = QPushButton("Write")
         self.write_btn.setEnabled(False)
+        self.write_btn.setAutoDefault(False)
+        self.write_btn.setDefault(False)
         self.write_btn.clicked.connect(self._write_selected)
         value_row.addWidget(self.write_btn)
         self.toggle_btn = QPushButton("Toggle")
         self.toggle_btn.setEnabled(False)
         self.toggle_btn.hide()
+        self.toggle_btn.setAutoDefault(False)
+        self.toggle_btn.setDefault(False)
+        self.toggle_btn.setFixedWidth(100)
         self.toggle_btn.clicked.connect(self._toggle_selected)
         value_row.addWidget(self.toggle_btn)
         edit_layout.addRow("New value:", value_row)
@@ -310,6 +346,20 @@ class HMICommsMonitorWidget(QWidget):
         layout.addWidget(self.status_label)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def eventFilter(self, obj, event):
+        if obj is self.value_edit:
+            if event.type() == QEvent.Type.FocusIn:
+                self._editor_dirty = True
+                QTimer.singleShot(0, self.value_edit.selectAll)
+            elif (
+                event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+            ):
+                # Consume Enter here so it cannot activate a dialog button.
+                self._write_selected()
+                return True
+        return super().eventFilter(obj, event)
 
     def _on_mode_changed(self, _index: int):
         self.live_url_edit.setVisible(
@@ -374,14 +424,26 @@ class HMICommsMonitorWidget(QWidget):
         self._set_status("Local monitor connected.")
         self._request_refresh()
 
+    @staticmethod
+    def _normalise_live_url(url: str) -> str:
+        parts = urllib.parse.urlsplit(url)
+        if parts.hostname in ("localhost", "::1"):
+            host = "127.0.0.1"
+            port = f":{parts.port}" if parts.port else ""
+            parts = parts._replace(netloc=f"{host}{port}")
+        return urllib.parse.urlunsplit(parts)
+
     def _connect_live(self):
         self._mode = "live"
-        base_url = self.live_url_edit.text().strip().rstrip("/")
+        base_url = self._normalise_live_url(
+            self.live_url_edit.text().strip().rstrip("/")
+        )
         if not base_url.startswith(("http://", "https://")):
             message = "Live server URL must start with http:// or https://"
             self._set_connection_state("error", message)
             self._set_status(message, error=True)
             return
+        self.live_url_edit.setText(base_url)
 
         self._live_base = base_url
         self._set_connection_state(
@@ -390,6 +452,8 @@ class HMICommsMonitorWidget(QWidget):
         )
         self._tags = {}
         self._snapshot = {}
+        self._connection_token = object()
+        token = self._connection_token
         self._thread = QThread(self)
         self._worker = _LiveMonitorWorker(base_url, self.project.project_id)
         self._worker.moveToThread(self._thread)
@@ -401,9 +465,17 @@ class HMICommsMonitorWidget(QWidget):
             self._worker.write,
             Qt.ConnectionType.QueuedConnection,
         )
-        self._worker.refreshed.connect(self._on_live_refreshed)
-        self._worker.failed.connect(self._on_refresh_failed)
-        self._worker.write_done.connect(self._on_write_done)
+        self._worker.refreshed.connect(
+            lambda payload, t=token: self._on_live_refreshed(payload, t)
+        )
+        self._worker.failed.connect(
+            lambda message, t=token: self._on_refresh_failed(message, t)
+        )
+        self._worker.write_done.connect(
+            lambda tag, ok, message, t=token: self._on_write_done(
+                tag, ok, message, t
+            )
+        )
         self._thread.start()
 
         # The transport is up, but the worker is not considered connected
@@ -419,9 +491,11 @@ class HMICommsMonitorWidget(QWidget):
     def disconnect_monitor(self):
         self._timer.stop()
         self._connected = False
+        self._connection_token = object()
         self._refresh_inflight = False
         self._write_inflight = False
         self._editor_dirty = False
+        self._set_connection_state("disconnected")
 
         if self._thread is not None:
             self._thread.quit()
@@ -432,10 +506,10 @@ class HMICommsMonitorWidget(QWidget):
             self._session.stop()
             self._session = None
 
-        self._set_connection_state("disconnected")
         self.write_btn.setEnabled(False)
         self.toggle_btn.setEnabled(False)
         self._snapshot = {}
+        self._visible_tag_ids = []
         self._populate_table()
         self._set_status("Not connected.")
 
@@ -447,19 +521,22 @@ class HMICommsMonitorWidget(QWidget):
         super().closeEvent(event)
 
     def _update_timer(self):
-        if not self._connected:
-            self._timer.stop()
+        self._timer.stop()
+        self._schedule_next_refresh()
+
+    def _schedule_next_refresh(self):
+        if not self._connected or self._refresh_inflight:
             return
-        if self.auto_check.isChecked():
-            self._timer.start(int(self.interval_combo.currentData()))
-        else:
-            self._timer.stop()
+        if not self.auto_check.isChecked():
+            return
+        self._timer.start(int(self.interval_combo.currentData()))
 
     # ── reads ─────────────────────────────────────────────────────────────
 
     def _request_refresh(self):
         if not self._connected or self._refresh_inflight or self._worker is None:
             return
+        self._timer.stop()
         self._refresh_inflight = True
         self.refresh_requested.emit()
 
@@ -476,28 +553,33 @@ class HMICommsMonitorWidget(QWidget):
             f"Local monitor: {len(snapshot)} tag(s), "
             f"{connected}/{len(statuses)} device(s) connected."
         )
+        self._schedule_next_refresh()
 
-    def _on_live_refreshed(self, payload: dict):
+    def _on_live_refreshed(self, payload: dict, token=None):
+        if token is not None and token is not self._connection_token:
+            return
         self._refresh_inflight = False
         if payload.get("error"):
             self._on_refresh_failed(str(payload["error"]))
             return
-        tags = {}
-        for item in payload.get("tags", []):
-            try:
-                tag = TagDef(
-                    device=item["device"],
-                    name=item["name"],
-                    address=item.get("address", item["name"]),
-                    type=item.get("type", "bool"),
-                    access=item.get("access", "rw"),
-                    poll_ms=int(item.get("poll_ms", 0)),
-                    default=item.get("default"),
-                    description=item.get("description", ""),
-                )
-            except Exception:
-                continue
-            tags[tag.id] = tag
+        if "tags" in payload:
+            tags = {}
+            for item in payload.get("tags", []):
+                try:
+                    tag = TagDef(
+                        device=item["device"],
+                        name=item["name"],
+                        address=item.get("address", item["name"]),
+                        type=item.get("type", "bool"),
+                        access=item.get("access", "rw"),
+                        poll_ms=int(item.get("poll_ms", 0)),
+                        default=item.get("default"),
+                        description=item.get("description", ""),
+                    )
+                except Exception:
+                    continue
+                tags[tag.id] = tag
+            self._tags = tags
         values = {}
         for tag_id, item in payload.get("values", {}).items():
             values[tag_id] = TagValue(
@@ -506,7 +588,6 @@ class HMICommsMonitorWidget(QWidget):
                 timestamp=float(item.get("timestamp", 0.0) or 0.0),
                 error=item.get("error", ""),
             )
-        self._tags = tags
         self._snapshot = values
         self._populate_table()
         if not self._editor_dirty:
@@ -522,8 +603,11 @@ class HMICommsMonitorWidget(QWidget):
         if warning:
             message += f" {warning}"
         self._set_status(message, error=bool(warning))
+        self._schedule_next_refresh()
 
-    def _on_refresh_failed(self, message: str):
+    def _on_refresh_failed(self, message: str, token=None):
+        if token is not None and token is not self._connection_token:
+            return
         self._refresh_inflight = False
         self._connected = False
         self._timer.stop()
@@ -542,32 +626,42 @@ class HMICommsMonitorWidget(QWidget):
             if text in tag.id.lower() or text in tag.device.lower()
         ]
 
+    def _cell_texts(self, tag):
+        value = self._snapshot.get(tag.id)
+        value_text = "—"
+        quality = "—"
+        updated = "—"
+        if value is not None:
+            value_text = self._format_value(value.value)
+            quality = value.quality
+            updated = time.strftime(
+                "%H:%M:%S", time.localtime(value.timestamp)
+            )
+        return (
+            tag.id,
+            value_text,
+            quality,
+            updated,
+            tag.access,
+            tag.device,
+        )
+
     def _populate_table(self):
         tags = self._filtered_tags()
+        tag_ids = [tag.id for tag in tags]
+        if tag_ids != self._visible_tag_ids:
+            self._rebuild_table(tags)
+            self._visible_tag_ids = tag_ids
+            return
+        self._update_table_rows(tags)
+
+    def _rebuild_table(self, tags):
         current = self._selected_tag_id
         self.table.blockSignals(True)
         try:
             self.table.setRowCount(len(tags))
             for row, tag in enumerate(tags):
-                value = self._snapshot.get(tag.id)
-                value_text = "—"
-                quality = "—"
-                updated = "—"
-                if value is not None:
-                    value_text = self._format_value(value.value)
-                    quality = value.quality
-                    updated = time.strftime(
-                        "%H:%M:%S", time.localtime(value.timestamp)
-                    )
-                cells = (
-                    tag.id,
-                    value_text,
-                    quality,
-                    updated,
-                    tag.access,
-                    tag.device,
-                )
-                for col, text in enumerate(cells):
+                for col, text in enumerate(self._cell_texts(tag)):
                     item = QTableWidgetItem(text)
                     item.setData(Qt.ItemDataRole.UserRole, tag.id)
                     self.table.setItem(row, col, item)
@@ -582,6 +676,21 @@ class HMICommsMonitorWidget(QWidget):
                     self.table.selectRow(row)
                     break
 
+    def _update_table_rows(self, tags):
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row, tag in enumerate(tags):
+                for col, text in enumerate(self._cell_texts(tag)):
+                    item = self.table.item(row, col)
+                    if item is None:
+                        item = QTableWidgetItem()
+                        item.setData(Qt.ItemDataRole.UserRole, tag.id)
+                        self.table.setItem(row, col, item)
+                    if item.text() != text:
+                        item.setText(text)
+        finally:
+            self.table.setUpdatesEnabled(True)
+
     def _on_selection_changed(self):
         row = self.table.currentRow()
         if row < 0:
@@ -589,6 +698,8 @@ class HMICommsMonitorWidget(QWidget):
             self.selected_label.setText("—")
             self.write_btn.setEnabled(False)
             self.toggle_btn.setEnabled(False)
+            self.bool_true_btn.setEnabled(False)
+            self.bool_false_btn.setEnabled(False)
             return
         item = self.table.item(row, 0)
         if item is None:
@@ -606,9 +717,16 @@ class HMICommsMonitorWidget(QWidget):
         writable = (
             self._connection_state == "connected" and tag.access != "r"
         )
-        self.write_btn.setEnabled(writable)
-        self.toggle_btn.setVisible(tag.type == "bool")
-        self.toggle_btn.setEnabled(writable and tag.type == "bool")
+        is_bool = tag.type == "bool"
+        self.write_btn.setVisible(not is_bool)
+        self.write_btn.setEnabled(writable and not is_bool)
+        self.bool_true_btn.setVisible(is_bool)
+        self.bool_false_btn.setVisible(is_bool)
+        self.bool_true_btn.setEnabled(writable and is_bool)
+        self.bool_false_btn.setEnabled(writable and is_bool)
+        self.toggle_btn.setVisible(is_bool)
+        self.toggle_btn.setEnabled(writable and is_bool)
+        self.value_edit.setVisible(not is_bool)
 
     def _mark_editor_dirty(self, *_args):
         self._editor_dirty = True
@@ -621,15 +739,7 @@ class HMICommsMonitorWidget(QWidget):
         self.quality_label.setText(
             "—" if tag_value is None else tag_value.quality
         )
-        if tag.type == "bool":
-            self.bool_combo.show()
-            self.value_edit.hide()
-            self.bool_combo.setCurrentIndex(
-                1 if tag_value is not None and bool(tag_value.value) else 0
-            )
-        else:
-            self.bool_combo.hide()
-            self.value_edit.show()
+        if tag.type != "bool":
             self.value_edit.setText(
                 "" if tag_value is None else self._format_value(tag_value.value)
             )
@@ -638,7 +748,13 @@ class HMICommsMonitorWidget(QWidget):
 
     def _write_selected(self):
         tag = self._tags.get(self._selected_tag_id)
-        if tag is None or self._worker is None:
+        if (
+            tag is None
+            or tag.type == "bool"
+            or self._worker is None
+            or self._connection_state != "connected"
+            or self._write_inflight
+        ):
             return
         try:
             value = self._read_editor_value(tag.type)
@@ -647,9 +763,27 @@ class HMICommsMonitorWidget(QWidget):
             return
         self._send_write(tag, value)
 
+    def _set_bool(self, value: bool):
+        tag = self._tags.get(self._selected_tag_id)
+        if (
+            tag is None
+            or tag.type != "bool"
+            or self._worker is None
+            or self._connection_state != "connected"
+            or self._write_inflight
+        ):
+            return
+        self._send_write(tag, bool(value))
+
     def _toggle_selected(self):
         tag = self._tags.get(self._selected_tag_id)
-        if tag is None or tag.type != "bool" or self._worker is None:
+        if (
+            tag is None
+            or tag.type != "bool"
+            or self._worker is None
+            or self._connection_state != "connected"
+            or self._write_inflight
+        ):
             return
         tag_value = self._snapshot.get(tag.id)
         current = bool(tag_value.value) if tag_value is not None else False
@@ -658,11 +792,15 @@ class HMICommsMonitorWidget(QWidget):
     def _send_write(self, tag, value):
         self._write_inflight = True
         self.write_btn.setEnabled(False)
+        self.bool_true_btn.setEnabled(False)
+        self.bool_false_btn.setEnabled(False)
         self.toggle_btn.setEnabled(False)
         self._set_status(f"Writing {tag.id}...")
         self.write_requested.emit(tag.id, value)
 
-    def _on_write_done(self, tag_id: str, ok: bool, message: str):
+    def _on_write_done(self, tag_id: str, ok: bool, message: str, token=None):
+        if token is not None and token is not self._connection_token:
+            return
         self._write_inflight = False
         self._editor_dirty = False
         tag = self._tags.get(tag_id)
@@ -671,8 +809,11 @@ class HMICommsMonitorWidget(QWidget):
             and tag is not None
             and tag.access != "r"
         )
-        self.write_btn.setEnabled(writable)
-        self.toggle_btn.setEnabled(writable and tag is not None and tag.type == "bool")
+        is_bool = tag is not None and tag.type == "bool"
+        self.write_btn.setEnabled(writable and not is_bool)
+        self.bool_true_btn.setEnabled(writable and is_bool)
+        self.bool_false_btn.setEnabled(writable and is_bool)
+        self.toggle_btn.setEnabled(writable and is_bool)
         if ok:
             self._set_status(f"Wrote {tag_id}.")
             self._request_refresh()
@@ -680,8 +821,6 @@ class HMICommsMonitorWidget(QWidget):
             self._set_status(message, error=True)
 
     def _read_editor_value(self, tag_type: str):
-        if tag_type == "bool":
-            return self.bool_combo.currentIndex() == 1
         text = self.value_edit.text()
         try:
             if tag_type == "int":
@@ -724,6 +863,8 @@ class HMICommsMonitorWidget(QWidget):
         self.refresh_btn.setEnabled(state == "connected")
         if state != "connected":
             self.write_btn.setEnabled(False)
+            self.bool_true_btn.setEnabled(False)
+            self.bool_false_btn.setEnabled(False)
             self.toggle_btn.setEnabled(False)
 
     def _set_status(self, message: str, error: bool = False):

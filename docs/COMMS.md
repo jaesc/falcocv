@@ -165,16 +165,30 @@ The **Signal Monitor** tab has two modes:
 
 Both modes show tag values, quality and timestamps and let you read, toggle or
 write a selected tag. The selected-tag editor sits above the table; bool tags use
-an explicit False/True selector plus a Toggle button. While you are editing a
-value, auto-refresh updates the table but does not overwrite your draft. Reads
-and writes run in a worker thread so a slow PLC does not freeze the designer.
+explicit **Set True** / **Set False** and **Toggle** buttons. Pressing Enter in
+the value field writes the selected tag; the monitor consumes the Enter key and
+its buttons are not dialog default buttons, so Enter cannot trigger Deploy or
+Stop. While you are editing a value,
+auto-refresh updates the table but does not overwrite your draft; focusing the
+textbox selects its content and pauses value replacement. Table rows are updated
+in place, preserving selection and scroll; the next refresh is scheduled after
+the previous one completes instead of queuing fixed timer ticks. Reads and writes
+run in a worker thread so a slow PLC does not freeze the designer.
 
 Live mode uses:
 
 ```text
 GET  /api/hmi/comms/snapshot?project_id=...
+GET  /api/hmi/comms/values?project_id=...
 POST /api/hmi/comms/write
 ```
+
+Live mode fetches full tag definitions once, then uses the lightweight values
+endpoint for subsequent refreshes. The default local URL uses `127.0.0.1`
+rather than `localhost`; the monitor normalizes `localhost`/`::1` to the IPv4
+loopback because on some Windows setups `localhost` adds ~2 seconds per HTTP
+connection. A stale response from an old connection is ignored after
+`Disconnect`.
 
 The monitor shows an explicit `DISCONNECTED` / `CONNECTING` / `CONNECTED` /
 `ERROR` badge. In Live mode it only becomes `CONNECTED` after the first

@@ -904,6 +904,9 @@ class HMIDesignerDialog(QDialog):
         self.btn_check = QPushButton("Check")
         self.btn_check.clicked.connect(self._on_check)
         self.btn_check.setStyleSheet("color: #569cd6;")
+        for button in (self.btn_check, self.btn_deploy, self.btn_stop):
+            button.setAutoDefault(False)
+            button.setDefault(False)
 
         corner = QWidget()
         cl = QHBoxLayout(corner)

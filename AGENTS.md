@@ -245,7 +245,16 @@ cpp/bin/       → local kernel build output (gitignored)
   `/api/hmi/comms/snapshot` and `/api/hmi/comms/write`; it must not be confused
   with the separate local test session.  Live errors use structured
   `JSONResponse` 4xx/5xx bodies; the monitor shows an explicit connection badge
-  and only enables writes after a successful snapshot.
+  and only enables writes after a successful snapshot.  The monitor updates
+  table rows in place and chains single-shot refreshes after completion; Live
+  uses `/api/hmi/comms/values` after the initial snapshot, and Enter in the value
+  field writes the selected tag.  Boolean tags use explicit Set True / Set False
+  buttons; focusing the value textbox selects all and marks it dirty so refresh
+  cannot prefix a stale value.  Enter is consumed by the monitor and the monitor
+  and HMI Designer top buttons are not auto-default, so Enter cannot trigger
+  Deploy/Stop.  Live defaults to `127.0.0.1`, not
+  `localhost`; `localhost` can add ~2 s per connection on Windows.  Stale
+  responses from a disconnected worker are ignored by connection token.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -416,7 +425,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `603 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `608 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: tag-bound widgets (read-only), then real driver implementations
   (TCP/Modbus/PLC) behind the existing driver contract.  Resume on another
