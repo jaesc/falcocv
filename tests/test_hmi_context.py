@@ -72,6 +72,7 @@ def test_default_python_script_template_compiles_and_exposes_log():
 def test_hmi_project_round_trips_comms_config(tmp_path):
     project = HMIProject()
     project.comms_config = _dummy_comms_config()
+    project.layout["tag_refresh_ms"] = 2000
     path = tmp_path / "project.hmi"
 
     project.save(path)
@@ -79,6 +80,16 @@ def test_hmi_project_round_trips_comms_config(tmp_path):
 
     assert restored.comms_config["devices"][0]["id"] == "dummy"
     assert restored.comms is None
+    assert restored.layout["tag_refresh_ms"] == 2000
+
+
+def test_hmi_project_normalizes_invalid_tag_refresh_interval():
+    project = HMIProject()
+    project.layout["tag_refresh_ms"] = 123
+
+    restored = HMIProject.from_dict(project.to_dict())
+
+    assert restored.layout["tag_refresh_ms"] == 500
 
 
 def test_hmi_project_start_runtime_injects_comms_into_context():

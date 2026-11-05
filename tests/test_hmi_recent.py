@@ -32,6 +32,33 @@ def test_config_manager_tracks_recent_hmi_files(tmp_path):
         config.save()
 
 
+def test_hmi_designer_dashboard_refresh_menu():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_designer_dialog import HMIDesignerDialog
+
+    project = HMIProject()
+    project.layout["tag_refresh_ms"] = 1000
+    dialog = HMIDesignerDialog(project)
+    try:
+        actions = {
+            action.data(): action
+            for action in dialog.dashboard_refresh_menu.actions()
+        }
+        assert set(actions) == {250, 500, 1000, 2000}
+        assert actions[1000].isChecked()
+
+        actions[2000].trigger()
+
+        assert dialog.project.layout["tag_refresh_ms"] == 2000
+        assert actions[2000].isChecked()
+        assert dialog._modified is True
+    finally:
+        dialog._modified = False
+        dialog.close()
+
+
 def test_hmi_designer_open_recent_loads_project(tmp_path):
     app = _app()
     assert app is not None

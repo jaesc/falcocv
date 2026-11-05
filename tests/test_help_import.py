@@ -26,6 +26,7 @@ def test_help_dialog_imports_from_clean_cwd(tmp_path):
         "from falcocv.ui.tool_help import TOOL_HELP, TYPE_TO_HELP_KEY; "
         "from falcocv.ui.widgets.help_dialog import ToolHelpDialog; "
         "assert 'Image Loader' in TOOL_HELP; "
+        "assert 'HMI Communications' in TOOL_HELP; "
         "assert TYPE_TO_HELP_KEY['ImageLoader'] == 'Image Loader'; "
         "print('ok')"
     )

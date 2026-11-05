@@ -43,8 +43,8 @@ operator dashboards.
   FastAPI server and open them from any browser.
 - **Communications runtime** — generic devices and tags in the `.hmi` project,
   editable from the HMI Designer, with local and live signal monitors, a dummy
-  driver with simulated signals and TCP/Modbus/PLC drivers planned. See
-  [`docs/COMMS.md`](docs/COMMS.md).
+  driver with simulated signals and Omron, Beckhoff ADS and Siemens S7 drivers.
+  See [`docs/COMMS.md`](docs/COMMS.md).
 - **Camera acquisition** — GigE Vision and USB3 Vision cameras through Harvesters
   and a vendor GenTL producer.
 
@@ -76,6 +76,26 @@ git clone https://github.com/jaesc/falcocv.git
 cd falcocv
 python -m pip install ".[dev]"
 ```
+
+### PLC communications
+
+The optional PLC extra installs the Omron, Beckhoff and Siemens libraries:
+
+```bash
+python -m pip install "falcocv[plc]"
+# from source:
+python -m pip install -e ".[plc]"
+```
+
+It includes `aphyt` (Omron), `pyads` (Beckhoff ADS) and `python-snap7`
+(Siemens S7). Driver imports are lazy, so the rest of FalcoCV can be used
+without these dependencies. Hardware-specific prerequisites:
+
+- Omron: reachable NJ/NX controller; no persistent dictionary file is used.
+- Beckhoff: TwinCAT ADS route configured in the router. The optional
+  `ip_address` is only needed for Linux or routed/NAT networks.
+- Siemens: PUT/GET enabled on S7-1200/1500 and non-optimized DBs for absolute
+  addressing. S7-300/400 use absolute addressing normally.
 
 ### Models
 

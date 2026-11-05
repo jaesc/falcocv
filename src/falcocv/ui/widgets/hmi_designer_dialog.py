@@ -7,7 +7,7 @@ import zipfile
 from urllib.parse import urljoin
 
 from PyQt6.QtCore import Qt, QRectF, QTimer, pyqtSignal, QObject, QFileInfo
-from PyQt6.QtGui import QKeySequence, QShortcut, QAction
+from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QSplitter, QWidget,
     QLabel, QSpinBox, QPushButton, QComboBox, QGroupBox,
@@ -19,7 +19,15 @@ from PyQt6.QtWidgets import (
     QColorDialog, QFrame,
 )
 
-from falcocv.core.hmi import HMIProject, HMISlot, WIDGET_TYPES, WIDGET_DEFAULT_SIZES
+from falcocv.core.hmi import (
+    DEFAULT_TAG_REFRESH_MS,
+    HMIProject,
+    HMISlot,
+    TAG_REFRESH_OPTIONS,
+    WIDGET_DEFAULT_SIZES,
+    WIDGET_TYPES,
+    normalize_tag_refresh_ms,
+)
 from falcocv.core.config import ConfigManager
 from falcocv.ui.widgets.hmi_scene import HMIWidgetScene, HMIWidgetView, GRID
 from falcocv.ui.widgets.hmi_preview import HMIPreviewWidget
@@ -733,6 +741,23 @@ class HMIDesignerDialog(QDialog):
 
         settings_menu = menu_bar.addMenu("Settings")
         settings_menu.addAction("Project ID...", self._on_project_id_settings)
+        self.dashboard_refresh_menu = settings_menu.addMenu(
+            "Dashboard tag refresh"
+        )
+        self._dashboard_refresh_group = QActionGroup(self)
+        self._dashboard_refresh_group.setExclusive(True)
+        for ms in TAG_REFRESH_OPTIONS:
+            label = f"{ms} ms" if ms < 1000 else f"{ms // 1000} s"
+            action = QAction(label, self, checkable=True)
+            action.setData(ms)
+            action.triggered.connect(
+                lambda checked=False, value=ms: (
+                    self._on_dashboard_refresh_selected(value)
+                )
+            )
+            self._dashboard_refresh_group.addAction(action)
+            self.dashboard_refresh_menu.addAction(action)
+        self._update_dashboard_refresh_menu()
         settings_menu.addSeparator()
         settings_menu.addAction("Grid size...", self._on_grid_settings)
         self._show_grid_action = QAction("Show grid", self, checkable=True)
@@ -743,6 +768,7 @@ class HMIDesignerDialog(QDialog):
 
         help_menu = menu_bar.addMenu("Help")
         help_menu.addAction("HMI Reference...", self._on_hmi_help)
+        help_menu.addAction("HMI Communications...", self._on_hmi_comms_help)
         help_menu.addAction("HMI Scripting...", self._on_hmi_scripting_help)
 
         main_layout.addWidget(menu_bar)
@@ -828,6 +854,32 @@ class HMIDesignerDialog(QDialog):
         self._close_project()
         self._welcome_label.show()
 
+    def _update_dashboard_refresh_menu(self):
+        menu = getattr(self, "dashboard_refresh_menu", None)
+        if menu is None:
+            return
+        enabled = self.project is not None
+        if enabled:
+            current = normalize_tag_refresh_ms(
+                self.project.layout.get(
+                    "tag_refresh_ms", DEFAULT_TAG_REFRESH_MS
+                )
+            )
+        else:
+            current = DEFAULT_TAG_REFRESH_MS
+        for action in menu.actions():
+            action.setEnabled(enabled)
+            action.setChecked(action.data() == current)
+
+    def _on_dashboard_refresh_selected(self, value):
+        if self.project is None:
+            return
+        self.project.layout["tag_refresh_ms"] = normalize_tag_refresh_ms(
+            value
+        )
+        self._update_dashboard_refresh_menu()
+        self._mark_modified()
+
     def _on_grid_settings(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Grid Settings")
@@ -852,6 +904,12 @@ class HMIDesignerDialog(QDialog):
     def _on_hmi_help(self):
         from falcocv.ui.widgets.help_dialog import ToolHelpDialog
         ToolHelpDialog(parent=self, preselected_key="HMI Project").exec()
+
+    def _on_hmi_comms_help(self):
+        from falcocv.ui.widgets.help_dialog import ToolHelpDialog
+        ToolHelpDialog(
+            parent=self, preselected_key="HMI Communications"
+        ).exec()
 
     def _on_hmi_scripting_help(self):
         from falcocv.ui.widgets.help_dialog import ToolHelpDialog
@@ -961,6 +1019,9 @@ class HMIDesignerDialog(QDialog):
         self._tabs.addTab(self._comms_tab, "Communications")
 
         self._monitor_tab = HMICommsMonitorWidget(self.project)
+        self._monitor_tab.set_before_connect(
+            self._comms_tab.flush_to_project
+        )
         self._tabs.addTab(self._monitor_tab, "Signal Monitor")
 
         self._preview = HMIPreviewWidget(self.project)
@@ -1011,6 +1072,7 @@ class HMIDesignerDialog(QDialog):
         self.update_title()
         QTimer.singleShot(100, self._start_ws)
         self._update_footer()
+        self._update_dashboard_refresh_menu()
 
     def _build_left_panel(self):
         panel = QWidget()
@@ -1656,6 +1718,7 @@ class HMIDesignerDialog(QDialog):
         self._current_path = None
         self._modified = False
         self._loading = False
+        self._update_dashboard_refresh_menu()
 
         self.setWindowTitle("HMI Designer")
         return True
@@ -1814,6 +1877,7 @@ class HMIDesignerDialog(QDialog):
         self._scene.rebuild_from_project()
         self._view.fitInView(srect, Qt.AspectRatioMode.KeepAspectRatio)
         self._loading = False
+        self._update_dashboard_refresh_menu()
         self.update_title()
 
     def _flush_to_project(self):

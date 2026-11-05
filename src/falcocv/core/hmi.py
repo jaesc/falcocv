@@ -63,11 +63,25 @@ WIDGET_DEFAULT_SIZES = {
     "LogPanel": (8, 6),
 }
 
+TAG_REFRESH_OPTIONS = (250, 500, 1000, 2000)
+DEFAULT_TAG_REFRESH_MS = 500
+
 DEFAULT_LAYOUT: dict[str, Any] = {
     "rows": 56,
     "cols": 100,
     "widgets": [],
+    "tag_refresh_ms": DEFAULT_TAG_REFRESH_MS,
 }
+
+
+def normalize_tag_refresh_ms(value: Any) -> int:
+    """Return a supported dashboard tag-widget refresh interval."""
+
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TAG_REFRESH_MS
+    return value if value in TAG_REFRESH_OPTIONS else DEFAULT_TAG_REFRESH_MS
 
 
 class HMIProject:
@@ -262,6 +276,9 @@ class HMIProject:
         layout.update(loaded_layout)
         for key in ("rows", "cols", "widgets"):
             layout[key] = loaded_layout.get(key, DEFAULT_LAYOUT[key])
+        layout["tag_refresh_ms"] = normalize_tag_refresh_ms(
+            loaded_layout.get("tag_refresh_ms", DEFAULT_TAG_REFRESH_MS)
+        )
         proj.layout = layout
         # Migrate old widgets: assign auto-name if missing
         seen = set()

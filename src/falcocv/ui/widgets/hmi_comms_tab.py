@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
@@ -39,7 +40,26 @@ from falcocv.comms.drivers import available_drivers, get_driver_schema
 from falcocv.comms.drivers.schema import DriverSchema, field_keys
 from falcocv.core.hmi import HMIProject
 
-_TAG_COLUMNS = ("Name", "Address", "Type", "Access", "Poll ms", "Default", "Description")
+_TAG_COLUMNS = (
+    "Name",
+    "Address",
+    "Type",
+    "Access",
+    "Poll ms",
+    "Default",
+    "Description",
+    "Length",
+)
+_TAG_TYPES = ("bool", "int", "float", "str")
+_TAG_ACCESS = ("r", "rw")
+_TAG_COLUMN_WIDTHS = (130, 180, 80, 70, 70, 100, 200, 60)
+_TYPE_DEFAULT_TEXT = {
+    "bool": "false",
+    "int": "0",
+    "float": "0.0",
+    "str": "",
+}
+_AUTO_DEFAULT_TEXTS = {"", "false", "true", "0", "0.0"}
 
 
 def _bool_text(value) -> str:
@@ -155,17 +175,48 @@ class HMICommsWidget(QWidget):
         device_form.addRow(self.advanced_check)
         device_form.addRow(self.advanced_edit)
 
-        self.device_id.textChanged.connect(self._mark_dirty)
+        self.device_id.textChanged.connect(self._on_device_id_changed)
         self.enabled_check.toggled.connect(self._mark_dirty)
-        vertical.addWidget(device_group)
+
+        self.vertical_splitter = vertical
+        self.device_group = device_group
+        self.device_scroll = QScrollArea()
+        self.device_scroll.setObjectName("comms_device_scroll")
+        self.device_scroll.setWidgetResizable(True)
+        self.device_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.device_scroll.setMinimumHeight(0)
+        self.device_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.device_scroll.setWidget(device_group)
+        vertical.addWidget(self.device_scroll)
 
         tags_group = QGroupBox("Tags")
+        self.tags_group = tags_group
         tags_layout = QVBoxLayout(tags_group)
         self.tags_table = QTableWidget(0, len(_TAG_COLUMNS))
         self.tags_table.setHorizontalHeaderLabels(_TAG_COLUMNS)
-        self.tags_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
+        self.tags_table.horizontalHeaderItem(1).setToolTip(
+            "Driver-specific address: Struct.Member (Omron), symbolic name "
+            "(Beckhoff) or DB1.DBW2 / M0.0 (Siemens)."
         )
+        self.tags_table.horizontalHeaderItem(2).setToolTip(
+            "Tag data type: bool, int, float or str."
+        )
+        self.tags_table.horizontalHeaderItem(3).setToolTip(
+            "Access: r = read-only, rw = read/write."
+        )
+        self.tags_table.horizontalHeaderItem(4).setToolTip(
+            "0 = read on demand; >0 = background polling interval in ms."
+        )
+        self.tags_table.horizontalHeaderItem(7).setToolTip(
+            "Maximum string length. Required for Siemens S7 string tags."
+        )
+        tag_header = self.tags_table.horizontalHeader()
+        tag_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        tag_header.setStretchLastSection(False)
+        for column, width in enumerate(_TAG_COLUMN_WIDTHS):
+            self.tags_table.setColumnWidth(column, width)
         self.tags_table.setSelectionBehavior(
             QTableWidget.SelectionBehavior.SelectRows
         )
@@ -181,16 +232,19 @@ class HMICommsWidget(QWidget):
         tag_buttons.addWidget(remove_tag)
         tag_buttons.addStretch()
         tags_layout.addLayout(tag_buttons)
+        self.tag_help = QLabel(
+            "Poll ms: 0 reads on demand; >0 polls in the background. "
+            "Address format depends on the selected driver."
+        )
+        self.tag_help.setWordWrap(True)
+        self.tag_help.setStyleSheet("color: #888;")
+        tags_layout.addWidget(self.tag_help)
         vertical.addWidget(tags_group)
+        vertical.setStretchFactor(0, 0)
+        vertical.setStretchFactor(1, 1)
         vertical.setSizes([330, 470])
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        scroll.setWidget(right)
-        horizontal.addWidget(scroll)
+        horizontal.addWidget(right)
         horizontal.setSizes([220, 700])
 
         self.status = QLabel("")
@@ -210,6 +264,26 @@ class HMICommsWidget(QWidget):
     def _mark_dirty(self, *_args):
         if not self._loading:
             self.modified.emit()
+
+    def _device_label(self, device_id: str, driver: str) -> str:
+        return f"{device_id.strip() or '?'}  [{driver}]"
+
+    def _refresh_current_device_label(self):
+        row = self._current_row
+        if 0 <= row < self.device_list.count():
+            item = self.device_list.item(row)
+            if item is not None:
+                item.setText(
+                    self._device_label(
+                        self.device_id.text(),
+                        self.driver_combo.currentText(),
+                    )
+                )
+
+    def _on_device_id_changed(self, _text: str):
+        if not self._loading:
+            self._refresh_current_device_label()
+            self._mark_dirty()
 
     def _load_devices(self, select: int = 0):
         self._loading = True
@@ -236,6 +310,7 @@ class HMICommsWidget(QWidget):
         self.advanced_check.setChecked(False)
         self.advanced_edit.hide()
         self.tags_table.setRowCount(0)
+        self._reset_device_scroll()
 
     def _load_device(self, row: int):
         devices = self._devices()
@@ -267,8 +342,46 @@ class HMICommsWidget(QWidget):
             self.advanced_check.setChecked(bool(extra))
             self.advanced_edit.setVisible(bool(extra))
             self._load_tags(device)
+            self._reset_device_scroll()
         finally:
             self._loading = False
+
+    def _make_tag_choice(
+        self, values, current, row: int | None = None, col: int | None = None
+    ) -> QComboBox:
+        combo = QComboBox()
+        combo.addItems(values)
+        text = None if current is None else str(current)
+        index = combo.findText(text) if text is not None else -1
+        if index < 0 and text:
+            combo.addItem(text)
+            index = combo.count() - 1
+        if index >= 0:
+            combo.setCurrentIndex(index)
+        if row is not None and col == 2:
+            combo.currentTextChanged.connect(
+                lambda value, r=row: self._on_tag_type_changed(r, value)
+            )
+        else:
+            combo.currentTextChanged.connect(self._on_cell_changed)
+        return combo
+
+    def _on_tag_type_changed(self, row: int, tag_type: str):
+        if self._loading:
+            return
+        default_item = self.tags_table.item(row, 5)
+        if default_item is not None:
+            current = default_item.text()
+            replacement = _TYPE_DEFAULT_TEXT.get(tag_type, "")
+            if current.strip().lower() in _AUTO_DEFAULT_TEXTS:
+                if current != replacement:
+                    default_item.setText(replacement)
+            else:
+                try:
+                    _parse_default(current, tag_type)
+                except ValueError:
+                    default_item.setText(replacement)
+        self._on_cell_changed()
 
     def _load_tags(self, device: dict):
         tags = device.get("tags", [])
@@ -286,9 +399,29 @@ class HMICommsWidget(QWidget):
                     str(tag.get("poll_ms", 0)),
                     "" if tag.get("default") is None else str(tag.get("default")),
                     tag.get("description", ""),
+                    "" if tag.get("length") is None else str(tag.get("length")),
                 ]
                 for col, value in enumerate(values):
-                    self.tags_table.setItem(row, col, QTableWidgetItem(str(value)))
+                    if col == 2:
+                        self.tags_table.setCellWidget(
+                            row,
+                            col,
+                            self._make_tag_choice(
+                                _TAG_TYPES, value, row=row, col=col
+                            ),
+                        )
+                    elif col == 3:
+                        self.tags_table.setCellWidget(
+                            row,
+                            col,
+                            self._make_tag_choice(
+                                _TAG_ACCESS, value, row=row, col=col
+                            ),
+                        )
+                    else:
+                        self.tags_table.setItem(
+                            row, col, QTableWidgetItem(str(value))
+                        )
         finally:
             self._loading = False
 
@@ -310,11 +443,70 @@ class HMICommsWidget(QWidget):
             self._loading = False
 
     def _capture_current(self) -> bool:
-        """Copy the current form and tag table into the in-memory draft."""
+        """Copy the current form and tag table into the in-memory draft.
+
+        Apply the device before the tags so a driver change can rebuild a
+        valid config (for example, the required Omron host) before tag
+        validation.  Restore the draft if either step fails, keeping the
+        capture atomic.
+        """
 
         if self._current_row < 0:
             return True
-        return self._apply_tags(reload=False) and self._apply_device(reload=False)
+        row = self._current_row
+        if row >= len(self._devices()):
+            return False
+        old_device_id = str(self._devices()[row].get("id", "")).strip()
+        backup = copy.deepcopy(self._draft_config)
+        if not self._apply_device(reload=False):
+            self._draft_config = backup
+            return False
+        if not self._apply_tags(reload=False):
+            self._draft_config = backup
+            return False
+        new_device_id = str(
+            self._draft_config["devices"][row].get("id", "")
+        ).strip()
+        if old_device_id != new_device_id:
+            self._migrate_device_references(old_device_id, new_device_id)
+        return True
+
+    def _migrate_device_references(self, old_id: str, new_id: str):
+        if not old_id or not new_id or old_id == new_id:
+            return
+        old_prefix = f"{old_id}."
+        new_prefix = f"{new_id}."
+        changed = 0
+        layout = getattr(self.project, "layout", None)
+        if isinstance(layout, dict):
+            widgets = layout.get("widgets", ())
+            if isinstance(widgets, list):
+                for widget in widgets:
+                    if not isinstance(widget, dict):
+                        continue
+                    if widget.get("source") != "tag":
+                        continue
+                    tag = widget.get("tag")
+                    if isinstance(tag, str) and tag.startswith(old_prefix):
+                        widget["tag"] = new_prefix + tag[len(old_prefix):]
+                        changed += 1
+
+        script = str(getattr(self.project, "script", "") or "")
+        script_reference = old_prefix in script
+        messages = []
+        if changed:
+            messages.append(
+                f"Updated {changed} tag-bound widget reference(s)."
+            )
+        if script_reference:
+            messages.append(
+                f"The HMI script still references '{old_id}'; "
+                "update it manually."
+            )
+        if messages:
+            self.status.setText(" ".join(messages))
+            self.status.setStyleSheet("color: #d19a00;")
+            self.modified.emit()
 
     # ── driver configuration form ────────────────────────────────────────
 
@@ -406,20 +598,79 @@ class HMICommsWidget(QWidget):
     def _on_driver_changed(self, driver: str):
         if self._loading:
             return
-        old_config = {}
-        try:
-            old_config = self._collect_config()
-        except Exception:
-            pass
+        old_driver = self._driver_schema.name
+        if driver == old_driver:
+            return
+
+        if self._has_pending_driver_data():
+            answer = QMessageBox.warning(
+                self,
+                "Change communications driver",
+                f"Changing the driver from '{old_driver}' to '{driver}' will "
+                "clear the current driver configuration, advanced JSON and all "
+                "tags for this device.\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                self._restore_driver(old_driver)
+                return
+
         self._loading = True
         try:
-            self._rebuild_config_fields(get_driver_schema(driver), old_config)
-            has_advanced = bool(self.advanced_edit.toPlainText().strip())
-            self.advanced_check.setChecked(has_advanced)
-            self.advanced_edit.setVisible(has_advanced)
+            row = self._current_row
+            if 0 <= row < len(self._devices()):
+                device = copy.deepcopy(self._devices()[row])
+                device["driver"] = driver
+                device["enabled"] = self.enabled_check.isChecked()
+                device["config"] = {}
+                device["tags"] = []
+                self._devices()[row] = device
+                self._refresh_current_device_label()
+
+            self._rebuild_config_fields(get_driver_schema(driver), {})
+            self.advanced_edit.clear()
+            self.advanced_check.setChecked(False)
+            self.advanced_edit.hide()
+            self.tags_table.setRowCount(0)
+            self._reset_device_scroll()
+            self.status.setText("")
         finally:
             self._loading = False
-        self._mark_dirty()
+        self.modified.emit()
+
+    def _has_pending_driver_data(self) -> bool:
+        if self.advanced_edit.toPlainText().strip():
+            return True
+        if self.tags_table.rowCount():
+            return True
+        for field in self._driver_schema.fields:
+            widget = self._config_widgets.get(field.key)
+            if widget is None:
+                continue
+            value = self._config_value(field, widget)
+            if (
+                field.required
+                and isinstance(value, str)
+                and not value.strip()
+            ):
+                continue
+            if value != field.default:
+                return True
+        return False
+
+    def _restore_driver(self, driver: str):
+        self._loading = True
+        try:
+            index = self.driver_combo.findText(driver)
+            if index >= 0:
+                self.driver_combo.setCurrentIndex(index)
+        finally:
+            self._loading = False
+
+    def _reset_device_scroll(self):
+        if hasattr(self, "device_scroll"):
+            self.device_scroll.verticalScrollBar().setValue(0)
 
     def _collect_config(self) -> dict:
         schema = self._driver_schema
@@ -485,11 +736,39 @@ class HMICommsWidget(QWidget):
         row = self.tags_table.rowCount()
         self.tags_table.insertRow(row)
         name = f"tag{row + 1}"
-        values = [name, name, "bool", "rw", "0", "false", ""]
+        values = [
+            name,
+            name,
+            "bool",
+            "rw",
+            "0",
+            _TYPE_DEFAULT_TEXT["bool"],
+            "",
+            "",
+        ]
         self._loading = True
         try:
             for col, value in enumerate(values):
-                self.tags_table.setItem(row, col, QTableWidgetItem(value))
+                if col == 2:
+                    self.tags_table.setCellWidget(
+                        row,
+                        col,
+                        self._make_tag_choice(
+                            _TAG_TYPES, value, row=row, col=col
+                        ),
+                    )
+                elif col == 3:
+                    self.tags_table.setCellWidget(
+                        row,
+                        col,
+                        self._make_tag_choice(
+                            _TAG_ACCESS, value, row=row, col=col
+                        ),
+                    )
+                else:
+                    self.tags_table.setItem(
+                        row, col, QTableWidgetItem(value)
+                    )
         finally:
             self._loading = False
         self.tags_table.setCurrentCell(row, 0)
@@ -501,15 +780,30 @@ class HMICommsWidget(QWidget):
             self.tags_table.removeRow(row)
             self.modified.emit()
 
+    def _tag_cell_text(self, row: int, col: int) -> str:
+        widget = self.tags_table.cellWidget(row, col)
+        if isinstance(widget, QComboBox):
+            return widget.currentText()
+        item = self.tags_table.item(row, col)
+        return item.text() if item is not None else ""
+
     def _tags_from_table(self) -> list[dict]:
         tags = []
         for row in range(self.tags_table.rowCount()):
             cells = [
-                self.tags_table.item(row, col).text()
-                if self.tags_table.item(row, col) else ""
+                self._tag_cell_text(row, col)
                 for col in range(len(_TAG_COLUMNS))
             ]
-            name, address, tag_type, access, poll_text, default_text, desc = cells
+            (
+                name,
+                address,
+                tag_type,
+                access,
+                poll_text,
+                default_text,
+                desc,
+                length_text,
+            ) = cells
             poll_text = poll_text.strip() or "0"
             try:
                 poll_ms = int(poll_text, 10)
@@ -521,6 +815,18 @@ class HMICommsWidget(QWidget):
                 default = _parse_default(default_text, tag_type)
             except ValueError as exc:
                 raise ValueError(f"Row {row + 1}: {exc}") from exc
+            length = None
+            if length_text.strip():
+                try:
+                    length = int(length_text, 10)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Row {row + 1}: length must be an integer"
+                    ) from exc
+                if length < 0:
+                    raise ValueError(
+                        f"Row {row + 1}: length cannot be negative"
+                    )
             tag = {
                 "name": name.strip(),
                 "address": address.strip() or name.strip(),
@@ -531,6 +837,8 @@ class HMICommsWidget(QWidget):
             }
             if default is not None:
                 tag["default"] = default
+            if length is not None:
+                tag["length"] = length
             tags.append(tag)
         return tags
 

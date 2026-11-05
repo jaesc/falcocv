@@ -261,7 +261,13 @@ cpp/bin/       → local kernel build output (gitignored)
   driver implements the `omron-fast` strategy: one read per struct, snapshot
   TTL, shadow writes and optional verification.  Its dictionary is session-only
   and never loaded from or written to a persistent file; `aphyt` is imported
-  lazily when the driver starts.
+  lazily when the driver starts.  The `beckhoff` driver uses symbolic names and
+  one `read_list_by_name`/`write_list_by_name` batch; its optional IP is only for
+  Linux/routed ADS routes.  The `siemens` driver uses standard absolute S7
+  addresses and groups DB/area byte ranges.  All PLC drivers default
+  `verify_writes` to false and never retry writes; when enabled they read each
+  written batch back once.  The optional `plc` extra installs `aphyt`, `pyads`
+  and `python-snap7`.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -410,9 +416,11 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 
 - `dev` has the ShapeMatch v3 work and the geometry validation; `main` is the
   1.0.2 release.  No release planned.
-- The `omron` driver is implemented with the `omron-fast` struct/snapshot
-  strategy and tested with a fake `aphyt` client; real hardware validation is
-  still pending.  `aphyt` is the optional `plc` extra.
+- The `omron`, `beckhoff` and `siemens` drivers are implemented.  Omron has
+  been validated against real hardware; Beckhoff and Siemens still use fake
+  clients pending hardware validation.  The optional `plc` extra installs
+  `aphyt`, `pyads` and `python-snap7`.  Write verification is opt-in for all
+  three; writes are never retried.
 - ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
   `fe8a135`): model v3, training mask, Canny / `min_gradient` /
   `max_features` controls, manual feature editor with brush, spatial feature
@@ -435,11 +443,10 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `617 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `654 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: validate the `omron` driver against real hardware, then add
-  Beckhoff ADS and Siemens S7 behind the existing driver contract.  The Omron
-  tests use a fake `aphyt` client; hardware validation is still pending.
-  Resume on another machine with `git pull origin dev`,
+- Next work: validate Beckhoff ADS and Siemens S7 against real hardware.
+  Omron hardware validation is complete; its automated tests still use a fake
+  `aphyt` client.  Resume on another machine with `git pull origin dev`,
   `pip install -e ".[dev]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

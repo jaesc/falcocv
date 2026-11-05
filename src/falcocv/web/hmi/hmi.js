@@ -10,6 +10,45 @@ let logCellIds = [];
 let slotWidgetMap = {};
 let _slotFetchControllers = {};
 let tagPollTimer = null;
+let tagPollInFlight = false;
+let tagRefreshMs = 500;
+const TAG_REFRESH_OPTIONS = [250, 500, 1000, 2000];
+const DEFAULT_TAG_REFRESH_MS = 500;
+
+function normalizeTagRefreshMs(value) {
+  const ms = Number(value);
+  return TAG_REFRESH_OPTIONS.includes(ms) ? ms : DEFAULT_TAG_REFRESH_MS;
+}
+
+function scheduleTagPoll(delay = tagRefreshMs) {
+  if (tagPollTimer !== null) {
+    clearTimeout(tagPollTimer);
+    tagPollTimer = null;
+  }
+  if (document.hidden) return;
+  tagPollTimer = setTimeout(runTagPoll, Math.max(0, delay));
+}
+
+async function runTagPoll() {
+  tagPollTimer = null;
+  if (document.hidden) return;
+  try {
+    await fetchTagWidgets();
+  } finally {
+    scheduleTagPoll();
+  }
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (tagPollTimer !== null) {
+      clearTimeout(tagPollTimer);
+      tagPollTimer = null;
+    }
+  } else {
+    scheduleTagPoll(0);
+  }
+});
 
 function getGridTrack(count, ratios) {
   if (ratios && ratios.length === count) {
@@ -206,21 +245,21 @@ async function init() {
   await loadHMI();
   await fetchLogs();
   connectWS();
-  if (tagPollTimer === null) {
-    tagPollTimer = setInterval(fetchTagWidgets, 500);
-  }
+  scheduleTagPoll();
 }
 
 async function loadHMI() {
   try {
     const res = await fetch(`${BASE}/api/hmi?project_id=${PROJECT_ID}`);
     hmiData = await res.json();
+    tagRefreshMs = normalizeTagRefreshMs(hmiData.layout?.tag_refresh_ms);
     const hasLayout = (hmiData.layout?.rows || 0) > 0;
     document.getElementById('splash').classList.toggle('hidden', hasLayout);
     if (hasLayout) {
       renderGrid(hmiData.layout);
       updateFooter(hmiData.slots);
     }
+    scheduleTagPoll();
   } catch (e) {
     document.getElementById('grid').innerHTML = '<div style="padding:40px;text-align:center;color:#555;font:14px sans-serif;">Failed to load HMI. Upload a .hmi file.</div>';
   }
@@ -322,9 +361,11 @@ function updateAllViewers() {
 }
 
 async function fetchTagWidgets() {
-  if (!hmiData || !hmiData.layout) return;
+  if (document.hidden || !hmiData || !hmiData.layout) return;
   const widgets = hmiData.layout.widgets || [];
   if (!widgets.some(w => w.source === 'tag' && w.tag)) return;
+  if (tagPollInFlight) return;
+  tagPollInFlight = true;
   try {
     const res = await fetch(
       `${BASE}/api/hmi/comms/widget-values?project_id=${PROJECT_ID}`
@@ -338,6 +379,9 @@ async function fetchTagWidgets() {
       }
     }
   } catch (e) { /* ignore */ }
+  finally {
+    tagPollInFlight = false;
+  }
 }
 
 function updateTagWidget(w, item) {
@@ -659,7 +703,6 @@ function onSlotFinished(msg) {
 async function refreshHMI() {
   await loadHMI();
   updateAllViewers();
-  fetchTagWidgets();
 }
 
 function createPromptOverlay() {

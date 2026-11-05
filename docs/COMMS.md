@@ -4,8 +4,8 @@ FalcoCV has a generic communications layer for HMI projects. It is independent
 of Qt and of any specific PLC, Modbus or socket library.
 
 The current implementation ships the `dummy` driver for development and the
-`omron` driver for Omron NJ/NX controllers. Real drivers are added without
-changing the project or script API.
+`omron`, `beckhoff` and `siemens` drivers for real controllers. Real drivers are
+added without changing the project or script API.
 
 ## Concepts
 
@@ -137,13 +137,53 @@ The HMI Designer has a **Communications** tab. It edits only the serialisable
 - use the **Advanced config (JSON)** checkbox for driver-specific keys not
   covered by the schema (for example dummy `simulate`); when such keys exist
   the checkbox is already checked and the editor open when the device loads;
-- add/remove tags and edit name, address, type, access, poll interval, default
-  and description.
+- add/remove tags and edit name, address, type, access, poll interval, default,
+  description and string length.
 
 Driver schemas live with the driver (`ConfigField` / `DriverSchema`); adding a
 real driver also adds its UI fields without hard-coding them in the HMI
-Designer. The right-hand configuration pane is scrollable so the Tags table
-remains reachable when the advanced JSON editor is open.
+Designer.
+
+Changing the driver of a device with configuration or tags asks for
+confirmation. Accepting clears the driver-specific configuration, the advanced
+JSON and all tags while keeping the device ID and enabled flag; the fields are
+rebuilt with the new driver's defaults. This prevents stale dummy fields or tag
+addresses from surviving a driver change.
+
+The device ID is updated in the Devices list while typing. Because it is part
+of every tag id (`device.tag`), changing it also rewrites tag-bound widget
+references from the old prefix to the new one. HMI script references are not
+rewritten automatically; the tab shows a warning when the script still contains
+the old id.
+
+In the Tags table, **Address** is free text because its format belongs to the
+driver (`trigger` for dummy, `Vision.Trigger` for Omron, `MAIN.bTrigger` for
+Beckhoff and `DB1.DBW2` for Siemens). **Type** is a selector
+limited to `bool`, `int`, `float` and `str`; **Access** is a selector limited to
+`r` (read-only) and `rw` (read/write).
+
+`Poll ms` controls the manager's optional background polling, not whether the
+tag can be read:
+
+- `0` means on-demand reads only (HMI widgets, Signal Monitor, scripts,
+  `comms.read()` or `wait_for()`);
+- `N > 0` reads tags every `N` ms in the background and updates the tag store,
+  quality and `on_change` callbacks.
+
+The dashboard already requests tag-widget values periodically, so `poll_ms` does
+not change that refresh rate; it is mainly useful for cached values, scripts and
+change callbacks.
+
+The Device configuration is in the upper scrollable pane of a vertical
+splitter. It can be compressed so the Tags table gets more room; when the
+configuration does not fit, only that upper pane scrolls. The tags pane expands
+to fill the remaining height. Both the Tags table and the Signal Monitor table
+use interactive column widths, so they can be resized by dragging the headers.
+
+New tags get a type-appropriate default: `false` for `bool`, `0` for `int`,
+`0.0` for `float` and empty (no default) for `str`. Changing the Type updates an
+automatic default, but preserves a custom value when it is valid for the new
+type.
 
 The tab validates the configuration on save, Check and Deploy. The worker is the
 only place where devices are actually opened.
@@ -155,9 +195,11 @@ save first.
 
 The **Signal Monitor** tab has two modes:
 
-- **Local test**: creates a temporary `CommsMonitorSession` from the project
-  configuration and starts it explicitly with **Connect**. It must not be used
-  while another process owns the same hardware.
+- **Local test**: creates a temporary `CommsMonitorSession` from the current
+  Communications working copy and starts it explicitly with **Connect**. It
+  applies the draft automatically, so saving is not required before testing.
+  It must not be used while another process owns the same hardware. A device
+  that fails to start is shown as an error, not as connected.
 - **Live worker**: talks to the deployed worker over HTTP, so it reads and writes
   the same `CommsManager` instance as the running HMI. It does not open a second
   PLC connection. The target is the server URL plus the designer project's
@@ -225,6 +267,17 @@ The worker evaluates widget conditions and returns `value`, `quality` and
 `status`. A tag with quality other than `good` is shown as `—`/idle, never as a
 valid measurement. Tag widgets are read-only in this phase.
 
+The HMI Designer's **Settings > Dashboard tag refresh** menu stores the
+dashboard refresh interval in the project layout as `tag_refresh_ms`. The
+available values are `250 ms`, `500 ms` (the default), `1 s` and `2 s`. This
+setting only controls tag-bound dashboard widgets: HMI scripts,
+`comms.read()`, `wait_for()` and the Signal Monitor are not limited by it.
+
+The dashboard makes a single in-flight request at a time, schedules the next
+request after the previous one finishes, and pauses tag-widget refreshes while
+the browser tab is hidden. If there are no tag-bound widgets, it performs no
+tag-value requests.
+
 The worker handles the snapshot by reading the tags through its existing
 `CommsManager` and returns tag definitions, values, quality and device status.
 Writes are executed by the deployed worker, not by the HMI Designer.
@@ -237,14 +290,13 @@ internally:
 - one network read per struct, shared by all requested members;
 - short-lived snapshot cache controlled by `snapshot_ttl_ms`;
 - shadow-copy writes;
-- optional read-back verification and retries.
+- optional one-shot read-back verification, disabled by default.
 
 ```json
 {
   "host": "192.168.1.10",
   "snapshot_ttl_ms": 50,
-  "verify_writes": true,
-  "write_retries": 2
+  "verify_writes": false
 }
 ```
 
@@ -256,8 +308,84 @@ the current session; stopping the driver discards it.
 
 `aphyt` is loaded lazily when the driver starts, so the project can still be
 edited without the dependency installed; connecting will report a clear
-missing-package error. Install it with `pip install aphyt` or
-`pip install -e ".[plc]"`.
+missing-package error.
+
+## Beckhoff ADS driver
+
+The public driver name is `beckhoff`.
+
+```json
+{
+  "ams_net_id": "192.168.1.10.1.1",
+  "ams_port": 851,
+  "ip_address": "",
+  "verify_writes": false
+}
+```
+
+- `ams_net_id` is mandatory.
+- `ip_address` is optional. On Windows with a TwinCAT ADS route it is not used;
+  it is needed on Linux or routed/NAT networks where pyads must create a route.
+- Tags use symbolic names, for example `MAIN.bTrigger`.
+- `read_many` uses `read_list_by_name`; `write_many` uses
+  `write_list_by_name`.
+- `verify_writes=true` reads the written symbols back once. There are no write
+  retries.
+
+The ADS route must be configured in TwinCAT before deploying.
+
+## Siemens S7 driver
+
+The public driver name is `siemens`.
+
+```json
+{
+  "host": "192.168.1.20",
+  "rack": 0,
+  "slot": 1,
+  "port": 102,
+  "verify_writes": false
+}
+```
+
+Supported absolute addresses:
+
+```text
+I0.0 / Q0.0 / M0.0
+IB0 / IW0 / ID0
+QB0 / QW0 / QD0
+MB0 / MW0 / MD0
+DB1.DBX0.0
+DB1.DBB0
+DB1.DBW0
+DB1.DBD0
+```
+
+- `X` is a bit and requires `bool`.
+- `B` is a byte (8-bit integer).
+- `W` is a 16-bit word (`int`).
+- `D` is a 32-bit value (`int` or `float`/REAL).
+- S7 `str` tags require a DB byte address and the tag **Length** field, and use
+  the standard `STRING[n]` layout with its two-byte header.
+- Multi-byte values are big-endian.
+- Reads and writes are grouped by area/DB and byte range; writes use
+  read-modify-write to preserve neighbouring bytes.
+- `verify_writes=true` reads each written range back once. There are no write
+  retries.
+
+S7-1200/1500 controllers require PUT/GET enabled and non-optimized DBs for
+absolute addressing. S7-300/400 use absolute addressing normally.
+
+## Driver dependencies
+
+Install all PLC libraries with:
+
+```bash
+pip install -e ".[plc]"
+```
+
+The extra installs `aphyt`, `pyads` and `python-snap7`. Driver imports are lazy,
+so FalcoCV still starts when one of them is missing.
 
 ## Driver batching
 
@@ -286,9 +414,9 @@ This is where protocol-specific optimizations belong:
 The core only knows `read_many(tags)` and `write_many(items)`. It does not know
 what a struct, CIP session or S7 address is.
 
-Write verification and protocol-specific retries stay inside the driver. If a
-batch write fails, the driver raises `CommsError` and the manager marks the
-affected tags as `bad`.
+Write verification stays inside the driver and is a single optional read-back;
+writes are never retried automatically. If a batch write fails, the driver
+raises `CommsError` and the manager marks the affected tags as `bad`.
 
 ## Lifecycle
 
@@ -313,7 +441,7 @@ The tag model is the seam for future drivers:
 
 - raw TCP / framed sockets;
 - Modbus TCP;
-- Beckhoff ADS, Siemens S7 and other PLCs;
+- other PLCs;
 - future MQTT/OPC UA adapters.
 
 Future HMI widgets will read the same `TagStore`:

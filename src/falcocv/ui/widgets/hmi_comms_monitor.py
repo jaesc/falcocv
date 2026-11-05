@@ -44,6 +44,7 @@ from falcocv.core.config import ConfigManager
 from falcocv.core.hmi import HMIProject
 
 _COLUMNS = ("Tag", "Value", "Quality", "Updated", "Access", "Device")
+_COLUMN_WIDTHS = (220, 140, 80, 90, 70, 100)
 
 
 class _MonitorWorker(QObject):
@@ -191,6 +192,7 @@ class HMICommsMonitorWidget(QWidget):
         self._live_base = ""
         self._editor_dirty = False
         self._visible_tag_ids: list[str] = []
+        self._before_connect = None
 
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
@@ -331,9 +333,11 @@ class HMICommsMonitorWidget(QWidget):
 
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
-        self.table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
+        table_header = self.table.horizontalHeader()
+        table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        table_header.setStretchLastSection(False)
+        for column, width in enumerate(_COLUMN_WIDTHS):
+            self.table.setColumnWidth(column, width)
         self.table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows
         )
@@ -346,6 +350,11 @@ class HMICommsMonitorWidget(QWidget):
         layout.addWidget(self.status_label)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
+
+    def set_before_connect(self, callback):
+        """Set a callback that materialises the current comms draft."""
+
+        self._before_connect = callback
 
     def eventFilter(self, obj, event):
         if obj is self.value_edit:
@@ -378,6 +387,19 @@ class HMICommsMonitorWidget(QWidget):
     def _connect_local(self):
         self._mode = "local"
         self._set_connection_state("connecting", "Starting local monitor...")
+        if self._before_connect is not None:
+            try:
+                prepared = self._before_connect()
+            except Exception as exc:
+                message = f"Could not prepare communications: {exc}"
+                self._set_connection_state("error", message)
+                self._set_status(message, error=True)
+                return
+            if not prepared:
+                message = "Fix the Communications configuration before connecting."
+                self._set_connection_state("error", message)
+                self._set_status(message, error=True)
+                return
         try:
             config = parse_comms_config(self.project.comms_config)
         except CommsConfigError as exc:
@@ -395,6 +417,23 @@ class HMICommsMonitorWidget(QWidget):
             session.start()
         except Exception as exc:
             message = f"Could not start monitor: {exc}"
+            self._set_connection_state("error", message)
+            self._set_status(message, error=True)
+            return
+
+        statuses = session.statuses()
+        connected_devices = [status for status in statuses if status.connected]
+        if not connected_devices:
+            reason = next(
+                (
+                    status.last_error
+                    for status in statuses
+                    if status.last_error
+                ),
+                "No device connected.",
+            )
+            session.stop()
+            message = f"No device connected: {reason}"
             self._set_connection_state("error", message)
             self._set_status(message, error=True)
             return
@@ -421,7 +460,10 @@ class HMICommsMonitorWidget(QWidget):
         self._set_connection_state("connected", "Local monitor")
         self._populate_table()
         self._update_timer()
-        self._set_status("Local monitor connected.")
+        self._set_status(
+            f"Local monitor connected: "
+            f"{len(connected_devices)}/{len(statuses)} device(s)."
+        )
         self._request_refresh()
 
     @staticmethod
@@ -548,11 +590,38 @@ class HMICommsMonitorWidget(QWidget):
             self._update_selected_value()
         statuses = self._session.statuses() if self._session else []
         connected = sum(1 for status in statuses if status.connected)
+        if self._session is not None and not connected:
+            self._connected = False
+            self._timer.stop()
+            self._set_connection_state("error", "No device connected.")
+            self._set_status(
+                "Local monitor: no device is connected.",
+                error=True,
+            )
+            return
+        if (
+            self._session is not None
+            and snapshot
+            and not any(
+                value.quality == "good" for value in snapshot.values()
+            )
+        ):
+            self._connected = False
+            self._timer.stop()
+            self._set_connection_state(
+                "error", "All tag reads failed."
+            )
+            self._set_status(
+                "Local monitor: connected, but all tag reads failed.",
+                error=True,
+            )
+            return
         self._set_connection_state("connected", "Local monitor")
-        self._set_status(
+        status_text = (
             f"Local monitor: {len(snapshot)} tag(s), "
             f"{connected}/{len(statuses)} device(s) connected."
         )
+        self._set_status(status_text)
         self._schedule_next_refresh()
 
     def _on_live_refreshed(self, payload: dict, token=None):
@@ -835,6 +904,8 @@ class HMICommsMonitorWidget(QWidget):
 
     @staticmethod
     def _format_value(value) -> str:
+        if value is None:
+            return "—"
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)

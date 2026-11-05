@@ -1395,6 +1395,7 @@ TOOL_HELP["HMI Project"] = {
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties."},
         {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['log'] = log</code> to expose the HMI log callback."},
+        {"name": "comms", "default": "—", "description": "The communications manager when the project has devices. Read/write tags: <code>comms.read('plc.tag')</code>, <code>comms.write('plc.tag', value)</code>, <code>comms.read_many([...])</code>, <code>comms.wait_for(...)</code>."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly: <code>proj.widgets['My counter']['min'] = 0</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of all configured job slots. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code>, <code>.run()</code>."},
         {"name": "proj.layout", "default": "—", "description": "Raw layout dict with keys <code>rows</code>, <code>cols</code>, <code>widgets</code>."},
@@ -1432,6 +1433,79 @@ TOOL_HELP["HMI Project"] = {
     "see_also": ["ImageViewer", "MeasureLabel", "StatusIndicator", "TextLabel", "LogPanel"],
 }
 
+# ── HMI Communications ─────────────────────────────────────────────────────
+
+TOOL_HELP["HMI Communications"] = {
+    "name": "HMI Communications",
+    "category": "HMI",
+    "purpose": (
+        "The Communications tab configures devices and tags in the .hmi project "
+        "and exposes them to the HMI script and job Python Script tools through "
+        "the <code>comms</code> runtime object. The Signal Monitor tests the "
+        "configuration locally or inspects a deployed worker."
+    ),
+    "inputs": [],
+    "outputs": [],
+    "params": [
+        {"name": "Device ID", "default": "—", "description": "Unique device identifier. It prefixes every tag id: <code>device.tag</code>. Changing it migrates tag-bound widget references and warns about HMI script references."},
+        {"name": "Driver", "default": "dummy", "description": "Available drivers: <code>dummy</code> (simulation), <code>omron</code> (NJ/NX), <code>beckhoff</code> (TwinCAT ADS) and <code>siemens</code> (S7)."},
+        {"name": "Address", "default": "—", "description": "Driver-specific: <code>Struct.Member</code> for Omron, a symbolic name such as <code>MAIN.bTrigger</code> for Beckhoff, or standard S7 addresses such as <code>DB1.DBW2</code>, <code>M0.0</code>, <code>I0.0</code> and <code>Q0.0</code>."},
+        {"name": "Type", "default": "bool", "description": "Tag data type: <code>bool</code>, <code>int</code>, <code>float</code> or <code>str</code>. New tags receive a type-appropriate default: false, 0, 0.0 or empty."},
+        {"name": "Access", "default": "rw", "description": "<code>r</code> is read-only; <code>rw</code> allows reads and writes. Write-only tags are not supported."},
+        {"name": "Poll ms", "default": "0", "description": "0 reads on demand; N &gt; 0 polls the tag in the background every N ms and updates the tag store and on_change callbacks. It does not change the dashboard refresh rate."},
+        {"name": "Length", "default": "—", "description": "Maximum string length. Required for Siemens S7 <code>STRING[n]</code> tags using a <code>DB1.DBB...</code> address."},
+        {"name": "Verify writes", "default": "false", "description": "When enabled, each written batch is read back once and compared. There are no automatic write retries. Disable it for command bits that the PLC resets immediately."},
+        {"name": "comms.read(tag_id)", "default": "—", "description": "Read one tag immediately and return its value."},
+        {"name": "comms.write(tag_id, value)", "default": "—", "description": "Write one tag. The manager checks access and value type."},
+        {"name": "comms.read_many(tag_ids)", "default": "—", "description": "Read several tags; drivers batch the device I/O where possible."},
+        {"name": "comms.write_many(values)", "default": "—", "description": "Write several tags in one manager call; drivers batch when possible."},
+        {"name": "comms.wait_for(tag_id, value_or_predicate, timeout=...)", "default": "—", "description": "Poll until the tag matches, returning a TagValue. Raises TimeoutError or CommsError."},
+        {"name": "comms.tag(tag_id)", "default": "—", "description": "Return the cached TagValue, or None. Use <code>comms.read()</code> when a fresh value is required."},
+        {"name": "comms.snapshot()", "default": "—", "description": "Return all cached tag values."},
+        {"name": "comms.on_change(tag_id, callback)", "default": "—", "description": "Subscribe to tag-store changes. A background poll is required for changes that happen without reads/writes."},
+    ],
+    "notes": (
+        "<h3>Drivers</h3>"
+        "<p><b>dummy</b> keeps values in memory and can simulate counters, toggles "
+        "and sine waves. <b>omron</b> uses NJ/NX struct snapshots and the session-only "
+        "aphyt dictionary. <b>beckhoff</b> uses symbolic ADS names and a single "
+        "read_list_by_name/write_list_by_name batch; its optional IP is only needed "
+        "for Linux or routed/NAT ADS routes. <b>siemens</b> uses standard absolute "
+        "S7 addresses, groups DB/area byte ranges, and supports S7 STRING[n] tags "
+        "with the Length field.</p>"
+        "<h3>Dependencies</h3>"
+        "<p>Install all PLC libraries with <code>pip install \"falcocv[plc]\"</code> "
+        "(or <code>pip install -e \".[plc]\"</code> from source). This installs "
+        "<code>aphyt</code>, <code>pyads</code> and <code>python-snap7</code>. "
+        "Imports are lazy, so the project can be edited without them.</p>"
+        "<h3>Signal Monitor</h3>"
+        "<p><b>Local test</b> uses the current Communications working copy, so "
+        "saving is not required before Connect. It reports an error when no device "
+        "is connected or when every tag read fails. <b>Live worker</b> reads and "
+        "writes the deployed worker through HTTP and never opens a second PLC "
+        "connection.</p>"
+        "<h3>Dashboard</h3>"
+        "<p><b>Settings &gt; Dashboard tag refresh</b> controls tag-bound widget "
+        "refreshes: 250 ms, 500 ms (default), 1 s or 2 s. It does not limit HMI "
+        "scripts or the Signal Monitor. The dashboard keeps one request in flight, "
+        "pauses while the browser tab is hidden, and makes no tag requests when "
+        "there are no tag widgets.</p>"
+        "<h3>HMI script example</h3>"
+        "<pre>"
+        "value = comms.read('plc.count')\n"
+        "comms.write('plc.count', value + 1)\n"
+        "comms.wait_for('plc.ready', True, timeout=10)\n"
+        "</pre>"
+    ),
+    "see_also": [
+        "HMI Project",
+        "HMI Scripting",
+        "MeasureLabel",
+        "StatusIndicator",
+        "LedIndicator",
+    ],
+}
+
 # ── HMI Scripting ──────────────────────────────────────────────────────────
 
 TOOL_HELP["HMI Scripting"] = {
@@ -1454,6 +1528,7 @@ TOOL_HELP["HMI Scripting"] = {
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties. Read/write widget configs: <code>proj.widgets['name']['min'] = 0</code>."},
         {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['log'] = log</code> to expose the HMI log callback."},
+        {"name": "comms", "default": "—", "description": "The communications manager when the project has devices. Use <code>comms.read()</code>, <code>comms.write()</code>, <code>comms.read_many()</code>, <code>comms.write_many()</code>, <code>comms.wait_for()</code>, <code>comms.tag()</code>, <code>comms.snapshot()</code> and <code>comms.on_change()</code>."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly."},
         {"name": "proj.get_widget_value(name)", "default": "—", "description": "Evaluate a widget's field + condition. Returns <code>{'value': ..., 'status': 'pass'|'fail'|'error'}</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of <code>HMISlot</code>. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code> (the <code>WorkflowController</code>), and <code>.run()</code>."},

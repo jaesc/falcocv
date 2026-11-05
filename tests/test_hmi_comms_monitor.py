@@ -304,6 +304,110 @@ def test_monitor_live_payload_populates_table_and_values():
     assert tab.status_label.text().startswith("Live:")
 
 
+def test_monitor_columns_are_resizable_and_none_is_empty():
+    app = _app()
+    assert app is not None
+    from PyQt6.QtWidgets import QHeaderView
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+
+    tab = HMICommsMonitorWidget(HMIProject())
+    header = tab.table.horizontalHeader()
+    assert (
+        header.sectionResizeMode(0)
+        == QHeaderView.ResizeMode.Interactive
+    )
+    tab.table.setColumnWidth(0, 240)
+    assert tab.table.columnWidth(0) == 240
+    assert tab._format_value(None) == "—"
+
+
+def test_monitor_str_tag_uses_text_editor_and_keeps_string_default():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "dummy",
+                "driver": "dummy",
+                "tags": [
+                    {
+                        "name": "message",
+                        "type": "str",
+                        "access": "rw",
+                        "default": "false",
+                    }
+                ],
+            }
+        ],
+    }
+    tab = HMICommsMonitorWidget(project)
+    tag = parse_comms_config(project.comms_config).devices[0].tags[0]
+    tab._tags = {tag.id: tag}
+    tab._snapshot = {tag.id: TagValue("false", "good", 1.0)}
+    tab._set_connection_state("connected")
+    tab._visible_tag_ids = []
+    tab._populate_table()
+    tab.table.selectRow(0)
+    tab._on_selection_changed()
+
+    assert not tab.value_edit.isHidden()
+    assert tab.value_edit.text() == "false"
+    assert tab.bool_true_btn.isHidden()
+    assert tab.bool_false_btn.isHidden()
+    assert tab.toggle_btn.isHidden()
+
+
+def test_monitor_before_connect_can_block_local_connection():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+
+    tab = HMICommsMonitorWidget(HMIProject())
+    called = []
+    tab.set_before_connect(lambda: called.append(True) or False)
+    tab.connect_monitor()
+
+    assert called
+    assert tab._connection_state == "error"
+    assert tab._connected is False
+
+
+def test_monitor_does_not_report_connected_without_a_connected_device():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "dummy",
+                "driver": "dummy",
+                "enabled": False,
+                "tags": [
+                    {"name": "count", "type": "int", "access": "rw", "default": 0}
+                ],
+            }
+        ],
+    }
+    tab = HMICommsMonitorWidget(project)
+    tab.connect_monitor()
+
+    assert tab._connection_state == "error"
+    assert tab._connected is False
+    assert "No device connected" in tab.status_label.text()
+
+
 def test_monitor_does_not_overwrite_dirty_editor_on_refresh():
     app = _app()
     assert app is not None
