@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import tempfile
+from dataclasses import asdict
 
 if not getattr(sys, 'frozen', False):
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -45,6 +46,72 @@ _finished = threading.Event()
 _site_packages: str | None = None
 
 
+def _tag_dict(tag) -> dict:
+    return {
+        "id": tag.id,
+        "device": tag.device,
+        "name": tag.name,
+        "address": tag.address,
+        "type": tag.type,
+        "access": tag.access,
+        "poll_ms": tag.poll_ms,
+        "default": tag.default,
+        "description": tag.description,
+    }
+
+
+def _comms_snapshot() -> dict:
+    """Read the deployed project's communications state for the Live monitor."""
+
+    from falcocv.comms import CommsError, parse_comms_config
+
+    if _proj is None:
+        return {"error": "No HMI project loaded", "tags": [], "values": {}}
+
+    manager = _proj.comms
+    statuses = []
+    values = {}
+    tags = []
+    warning = ""
+    if manager is not None:
+        tags = [_tag_dict(tag) for tag in manager.tags]
+        readable = [
+            tag.id for tag in manager.tags if tag.access in ("r", "rw")
+        ]
+        if readable:
+            try:
+                manager.read_many(readable)
+            except CommsError as exc:
+                warning = str(exc)
+        values = {
+            tag_id: {
+                "value": value.value,
+                "quality": value.quality,
+                "timestamp": value.timestamp,
+                "error": value.error,
+            }
+            for tag_id, value in manager.snapshot().items()
+        }
+        statuses = [asdict(status) for status in manager.statuses()]
+    else:
+        try:
+            config = parse_comms_config(_proj.comms_config)
+            tags = [_tag_dict(tag) for device in config.devices for tag in device.tags]
+        except Exception as exc:
+            return {
+                "error": str(exc),
+                "tags": [],
+                "values": {},
+                "statuses": [],
+            }
+    return {
+        "tags": tags,
+        "values": values,
+        "statuses": statuses,
+        "warning": warning,
+    }
+
+
 def _get_site_packages():
     global _site_packages
     if _site_packages is None:
@@ -82,8 +149,11 @@ def handle_cmd(cmd: dict):
 
         if _proj:
             _proj.stop_script()
+            _proj.stop_runtime()
 
         proj = HMIProject()
+        if data.get("comms"):
+            proj.comms_config = data["comms"]
 
         if files:
             tmpdir = tempfile.mkdtemp(prefix="hmi_src_")
@@ -133,6 +203,10 @@ def handle_cmd(cmd: dict):
             )
 
         _finished.clear()
+        try:
+            proj.start_runtime()
+        except Exception as exc:
+            proj.log(f"Communications start failed: {exc}", level="error")
         proj.start_script()
         this_proj = proj
         _proj = proj
@@ -140,6 +214,7 @@ def handle_cmd(cmd: dict):
         def _watch():
             if this_proj._script_thread:
                 this_proj._script_thread.join()
+            this_proj.stop_runtime()
             if _proj is this_proj and not _finished.is_set():
                 _finished.set()
                 write_event({"type": "finished"})
@@ -153,6 +228,7 @@ def handle_cmd(cmd: dict):
             _finished.set()
             if _proj:
                 _proj.stop_script()
+                _proj.stop_runtime()
                 _proj = None
                 write_event({"type": "finished"})
 
@@ -255,6 +331,26 @@ def handle_cmd(cmd: dict):
             sys.stderr.flush()
         write_event({"type": "cmd_response", "_req_id": req_id, "data": result})
 
+    elif c == "comms_snapshot":
+        req_id = cmd["_req_id"]
+        try:
+            data = _comms_snapshot()
+        except Exception as exc:
+            data = {"error": str(exc), "tags": [], "values": {}}
+        write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
+
+    elif c == "comms_write":
+        req_id = cmd["_req_id"]
+        tag_id = cmd.get("tag", "")
+        try:
+            if _proj is None or _proj.comms is None:
+                raise RuntimeError("Communications runtime is not running")
+            _proj.comms.write(tag_id, cmd.get("value"))
+            data = {"ok": True, "tag": tag_id}
+        except Exception as exc:
+            data = {"ok": False, "tag": tag_id, "error": str(exc)}
+        write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
+
     elif c == "prompt_response":
         if _proj:
             _proj._resolve_prompt(cmd["req_id"], cmd.get("value"))
@@ -262,6 +358,7 @@ def handle_cmd(cmd: dict):
     elif c == "exit":
         if _proj:
             _proj.stop_script()
+            _proj.stop_runtime()
             _proj = None
         raise SystemExit(0)
 

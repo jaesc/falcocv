@@ -89,6 +89,7 @@ def main():
         "script": hmi_data.get("script", ""),
         "layout": hmi_data.get("layout", {}),
         "slots": hmi_data.get("slots", []),
+        "comms": hmi_data.get("comms", {}),
         "project_id": _resolve_project_id(hmi_data, args.project_id),
     }
     sd = hmi_data.get("source_dir")

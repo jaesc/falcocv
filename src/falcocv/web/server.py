@@ -15,9 +15,9 @@ warnings.filterwarnings("ignore", message="remove second argument of ws_handler"
 from typing import Any
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 _ws_clients: dict[str, list[WebSocket]] = {}
@@ -127,7 +127,7 @@ class HMIWorkerManager:
 
     def start(self, script: str, bps: set[int] | dict[str, list[int]], layout: dict,
               slots_raw: list[dict], files: dict[str, str] | None = None,
-              entry_point: str = "main.py"):
+              entry_point: str = "main.py", comms: dict | None = None):
         self.stop()
         self.layout = dict(layout)
         self.slots = [
@@ -168,7 +168,12 @@ class HMIWorkerManager:
 
         cmd: dict = {
             "cmd": "start",
-            "project": {"script": script, "layout": layout, "slots": slots_raw},
+            "project": {
+                "script": script,
+                "layout": layout,
+                "slots": slots_raw,
+                "comms": comms or {},
+            },
             "bps": bps,
         }
         if files:
@@ -183,14 +188,22 @@ class HMIWorkerManager:
             "slots": slots_raw,
             "files": files,
             "entry_point": entry_point,
+            "comms": comms or {},
         }
 
     def reload(self) -> bool:
         if not self._last_payload:
             return False
         p = self._last_payload
-        self.start(p["script"], p["bps"], p["layout"], p["slots"],
-                   files=p["files"], entry_point=p["entry_point"])
+        self.start(
+            p["script"],
+            p["bps"],
+            p["layout"],
+            p["slots"],
+            files=p["files"],
+            entry_point=p["entry_point"],
+            comms=p.get("comms", {}),
+        )
         return True
 
     def stop(self):
@@ -289,6 +302,30 @@ class HMIWorkerManager:
         data = {"type": mapped, **{k: v for k, v in event.items() if k != "type"}}
         broadcast(self.project_id, data)
 
+    async def _request(self, cmd: dict, timeout: float = 5.0):
+        req_id = str(uuid.uuid4())
+        ev = asyncio.Event()
+        self._pending[req_id] = ev
+        cmd = {**cmd, "_req_id": req_id}
+        self.send(cmd)
+        try:
+            await asyncio.wait_for(ev.wait(), timeout)
+        except asyncio.TimeoutError:
+            self._pending.pop(req_id, None)
+            return None
+        result = self._pending_results.pop(req_id, None)
+        self._pending.pop(req_id, None)
+        return result
+
+    async def request_comms_snapshot(self, timeout: float = 5.0):
+        return await self._request({"cmd": "comms_snapshot"}, timeout)
+
+    async def request_comms_write(self, tag: str, value, timeout: float = 5.0):
+        return await self._request(
+            {"cmd": "comms_write", "tag": tag, "value": value},
+            timeout,
+        )
+
     async def request_output(self, slot_name: str, output_name: str, quality: int = 85, field: str = "", widget_id: str = "", timeout=15):
         req_id = str(uuid.uuid4())
         ev = asyncio.Event()
@@ -327,11 +364,20 @@ class HmiLoadRequest(BaseModel):
     entry_point: str = "main.py"
     bp_by_file: dict[str, list[int]] = {}
     project_id: str = ""
+    comms: dict = {}
 
 
 @app.post("/api/hmi/load")
 def hmi_load(req: HmiLoadRequest):
+    from falcocv.comms import CommsConfigError, parse_comms_config
     from falcocv.core.script_debugger import TraceDebugger
+
+    if req.comms:
+        try:
+            parse_comms_config(req.comms)
+        except CommsConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     bps: dict[str, list[int]] = {}
     pid = req.project_id or str(uuid.uuid4())[:8]
 
@@ -356,7 +402,7 @@ def hmi_load(req: HmiLoadRequest):
     worker.set_loop(_main_loop)
     worker.start(
         req.script, bps, req.layout, req.slots,
-        files=req.files, entry_point=req.entry_point,
+        files=req.files, entry_point=req.entry_point, comms=req.comms,
     )
     _workers[pid] = worker
     return {"ok": True, "slots": len(req.slots), "project_id": pid}
@@ -418,6 +464,53 @@ def hmi_logs(since: int = 0, project_id: str = "default"):
         return {"logs": [], "count": 0}
     logs = worker.logs[since:]
     return {"logs": logs, "count": len(worker.logs)}
+
+
+@app.get("/api/hmi/comms/snapshot")
+async def hmi_comms_snapshot(project_id: str = "default"):
+    worker = _workers.get(project_id)
+    if not worker or not worker.alive:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": f"Project '{project_id}' is not deployed or is stopped",
+                "project_id": project_id,
+            },
+        )
+    data = await worker.request_comms_snapshot()
+    if data is None:
+        return JSONResponse(
+            status_code=504,
+            content={"error": "Communications snapshot timed out"},
+        )
+    return data
+
+
+class CommsWriteRequest(BaseModel):
+    project_id: str = "default"
+    tag: str
+    value: Any
+
+
+@app.post("/api/hmi/comms/write")
+async def hmi_comms_write(req: CommsWriteRequest):
+    worker = _workers.get(req.project_id)
+    if not worker or not worker.alive:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "ok": False,
+                "error": f"Project '{req.project_id}' is not deployed or is stopped",
+                "project_id": req.project_id,
+            },
+        )
+    data = await worker.request_comms_write(req.tag, req.value)
+    if data is None:
+        return JSONResponse(
+            status_code=504,
+            content={"ok": False, "error": "Communications write timed out"},
+        )
+    return data
 
 
 @app.get("/api/hmi/slot/{slot_name}/output/{output_name}")

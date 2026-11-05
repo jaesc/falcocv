@@ -1,3 +1,4 @@
+import copy
 import datetime
 import json
 import os
@@ -7,6 +8,11 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from falcocv.comms import (
+    CommsManager,
+    default_comms_config,
+    parse_comms_config,
+)
 from falcocv.core.workflow import Workflow
 from falcocv.core.workflow_controller import WorkflowController
 from falcocv.core.job_manager import JobManager
@@ -84,10 +90,14 @@ class HMIProject:
             "#   c = proj.confirm('msg',['A','B']) — custom options (blocking)\n"
             "#   proj.input('msg', width='400px', height='200px', font_size='18px') — styled\n"
             "#\n"
-            "# Pass connected objects to job Python Script tools:\n"
-            "#   context['mecheye'] = mecheye_ctl\n"
+            "# Share the HMI log and other runtime objects with job Python Script tools:\n"
+            "#   context['log'] = log\n"
             "#   context['plc'] = plc\n"
-            "# In a job Python Script: self.engine.get('mecheye'), self.engine.get('plc')\n"
+            "# In a job Python Script: self.engine.get('log'), self.engine.get('plc')\n"
+            "#\n"
+            "# Communications configured in the project:\n"
+            "#   comms.read('dummy.trigger')\n"
+            "#   comms.write('dummy.count', 1)\n"
             "#\n"
             "# Widget config examples:\n"
             "#   w = proj.widgets['My counter']\n"
@@ -115,6 +125,9 @@ class HMIProject:
         self.source_dir: str | None = None
         self.entry_point: str = "main.py"
         self.project_id: str = str(uuid.uuid4())[:8]
+        self.comms_config: dict[str, Any] = default_comms_config()
+        self.comms: CommsManager | None = None
+        self._runtime_lock = threading.RLock()
         self._script_thread: threading.Thread | None = None
         self._script_stop = threading.Event()
         self._logs: list[dict] = []
@@ -208,7 +221,13 @@ class HMIProject:
                     files[rel] = content
         return files
 
-    def save(self, path: str):
+    def to_dict(self) -> dict:
+        """Return the serialisable project state.
+
+        Runtime services, logs, listeners and locks are intentionally excluded;
+        the result is suitable for a working-copy snapshot in the HMI Designer.
+        """
+
         version = "2.0" if self.source_dir else "1.0"
         data: dict = {
             "version": version,
@@ -219,17 +238,18 @@ class HMIProject:
             ],
             "layout": self.layout,
             "script": self.script,
+            "comms": self.comms_config,
         }
         if self.source_dir:
             data["source_dir"] = self.source_dir
             data["entry_point"] = self.entry_point
-        with open(path, "w") as f:
-            json.dump(data, f, indent=2)
+        return data
 
     @classmethod
-    def load(cls, path: str) -> "HMIProject":
-        with open(path, "r") as f:
-            data = json.load(f)
+    def from_dict(cls, data: dict) -> "HMIProject":
+        """Build a project from :meth:`to_dict` output or a loaded ``.hmi``."""
+
+        data = copy.deepcopy(data)
         proj = cls()
         proj.project_id = data.get("project_id") or str(uuid.uuid4())[:8]
         if data.get("source_dir"):
@@ -256,7 +276,46 @@ class HMIProject:
                 w["name"] = name
             seen.add(w["name"])
         proj.script = data.get("script", proj.script)
+        proj.comms_config = data.get("comms") or default_comms_config()
         return proj
+
+    def save(self, path: str):
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+    @classmethod
+    def load(cls, path: str) -> "HMIProject":
+        with open(path, "r") as f:
+            data = json.load(f)
+        return cls.from_dict(data)
+
+    def start_runtime(self):
+        """Start runtime services (communications) for this project.
+
+        The HMI Designer can load/save a project without opening devices; the
+        worker calls this before starting the HMI script.
+        """
+
+        with self._runtime_lock:
+            if self.comms is not None:
+                return
+            config = parse_comms_config(self.comms_config)
+            if not config.devices:
+                return
+            manager = CommsManager(config, log=self.log)
+            manager.start()
+            self.comms = manager
+            self.context["comms"] = manager
+
+    def stop_runtime(self):
+        """Stop runtime services.  Idempotent and safe after a failed start."""
+
+        with self._runtime_lock:
+            manager = self.comms
+            self.comms = None
+            self.context.pop("comms", None)
+        if manager is not None:
+            manager.stop()
 
     def run_slot(self, slot_name: str, advance: bool = True):
         for slot in self.slots:
@@ -506,7 +565,8 @@ class HMIProject:
         self.log("")
         self.log("Objects:")
         self.log("  proj                  — the HMIProject")
-        self.log("  context               — live objects passed to job scripts")
+        self.log("  comms                 — configured communications manager (or None)")
+        self.log("  context               — runtime objects and callbacks passed to job scripts")
         self.log("  proj.context          — same context dict")
         self.log("  proj.widgets[name]    — access any widget")
         self.log("  proj.get_widget_value(name) — evaluate field+condition")
@@ -566,6 +626,7 @@ class HMIProject:
             "_stop": self._script_stop,
             "context": self.context,
             "proj": self,
+            "comms": self.comms,
         }
 
         code = compile(self.script, "<hmi_script>", "exec")
@@ -604,6 +665,7 @@ class HMIProject:
             "_stop": self._script_stop,
             "context": self.context,
             "proj": self,
+            "comms": self.comms,
         }
 
         source_dir = os.path.abspath(self.source_dir)

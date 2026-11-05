@@ -34,6 +34,31 @@ def test_hmi_status_and_logs_without_project():
         assert logs.json()["logs"] == []
 
 
+def test_comms_endpoints_missing_project_return_structured_404():
+    from fastapi.testclient import TestClient
+    from falcocv.web.server import app
+
+    with TestClient(app) as client:
+        snapshot = client.get(
+            "/api/hmi/comms/snapshot",
+            params={"project_id": "missing"},
+        )
+        assert snapshot.status_code == 404
+        body = snapshot.json()
+        assert isinstance(body, dict)
+        assert "not deployed" in body["error"]
+
+        write = client.post(
+            "/api/hmi/comms/write",
+            json={"project_id": "missing", "tag": "dummy.count", "value": 1},
+        )
+        assert write.status_code == 404
+        body = write.json()
+        assert isinstance(body, dict)
+        assert body["ok"] is False
+        assert "not deployed" in body["error"]
+
+
 def test_websocket_ping():
     from fastapi.testclient import TestClient
     from falcocv.web.server import app
