@@ -33,6 +33,10 @@ def test_worker_comms_snapshot_returns_definitions_and_values():
         assert data["tags"][0]["id"] == "dummy.count"
         assert data["values"]["dummy.count"]["value"] == 0
         assert data["statuses"][0]["connected"] is True
+
+        values = worker._comms_values()
+        assert values["values"]["dummy.count"]["value"] == 0
+        assert values["statuses"][0]["connected"] is True
     finally:
         worker._proj = old_proj
         project.stop_runtime()

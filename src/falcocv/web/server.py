@@ -320,6 +320,9 @@ class HMIWorkerManager:
     async def request_comms_snapshot(self, timeout: float = 5.0):
         return await self._request({"cmd": "comms_snapshot"}, timeout)
 
+    async def request_comms_values(self, timeout: float = 5.0):
+        return await self._request({"cmd": "comms_values"}, timeout)
+
     async def request_comms_write(self, tag: str, value, timeout: float = 5.0):
         return await self._request(
             {"cmd": "comms_write", "tag": tag, "value": value},
@@ -482,6 +485,26 @@ async def hmi_comms_snapshot(project_id: str = "default"):
         return JSONResponse(
             status_code=504,
             content={"error": "Communications snapshot timed out"},
+        )
+    return data
+
+
+@app.get("/api/hmi/comms/values")
+async def hmi_comms_values(project_id: str = "default"):
+    worker = _workers.get(project_id)
+    if not worker or not worker.alive:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": f"Project '{project_id}' is not deployed or is stopped",
+                "project_id": project_id,
+            },
+        )
+    data = await worker.request_comms_values()
+    if data is None:
+        return JSONResponse(
+            status_code=504,
+            content={"error": "Communications values timed out"},
         )
     return data
 

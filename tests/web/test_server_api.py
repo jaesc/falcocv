@@ -48,6 +48,14 @@ def test_comms_endpoints_missing_project_return_structured_404():
         assert isinstance(body, dict)
         assert "not deployed" in body["error"]
 
+        values = client.get(
+            "/api/hmi/comms/values",
+            params={"project_id": "missing"},
+        )
+        assert values.status_code == 404
+        assert isinstance(values.json(), dict)
+        assert "not deployed" in values.json()["error"]
+
         write = client.post(
             "/api/hmi/comms/write",
             json={"project_id": "missing", "tag": "dummy.count", "value": 1},

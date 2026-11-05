@@ -60,6 +60,18 @@ def _tag_dict(tag) -> dict:
     }
 
 
+def _serialise_tag_values(manager) -> dict:
+    return {
+        tag_id: {
+            "value": value.value,
+            "quality": value.quality,
+            "timestamp": value.timestamp,
+            "error": value.error,
+        }
+        for tag_id, value in manager.snapshot().items()
+    }
+
+
 def _comms_snapshot() -> dict:
     """Read the deployed project's communications state for the Live monitor."""
 
@@ -83,15 +95,7 @@ def _comms_snapshot() -> dict:
                 manager.read_many(readable)
             except CommsError as exc:
                 warning = str(exc)
-        values = {
-            tag_id: {
-                "value": value.value,
-                "quality": value.quality,
-                "timestamp": value.timestamp,
-                "error": value.error,
-            }
-            for tag_id, value in manager.snapshot().items()
-        }
+        values = _serialise_tag_values(manager)
         statuses = [asdict(status) for status in manager.statuses()]
     else:
         try:
@@ -108,6 +112,34 @@ def _comms_snapshot() -> dict:
         "tags": tags,
         "values": values,
         "statuses": statuses,
+        "warning": warning,
+    }
+
+
+def _comms_values() -> dict:
+    """Lightweight values-only refresh used after the first Live snapshot."""
+
+    from falcocv.comms import CommsError
+
+    if _proj is None or _proj.comms is None:
+        return {
+            "error": "Communications runtime is not running",
+            "values": {},
+            "statuses": [],
+        }
+    manager = _proj.comms
+    warning = ""
+    readable = [
+        tag.id for tag in manager.tags if tag.access in ("r", "rw")
+    ]
+    if readable:
+        try:
+            manager.read_many(readable)
+        except CommsError as exc:
+            warning = str(exc)
+    return {
+        "values": _serialise_tag_values(manager),
+        "statuses": [asdict(status) for status in manager.statuses()],
         "warning": warning,
     }
 
@@ -337,6 +369,14 @@ def handle_cmd(cmd: dict):
             data = _comms_snapshot()
         except Exception as exc:
             data = {"error": str(exc), "tags": [], "values": {}}
+        write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
+
+    elif c == "comms_values":
+        req_id = cmd["_req_id"]
+        try:
+            data = _comms_values()
+        except Exception as exc:
+            data = {"error": str(exc), "values": {}, "statuses": []}
         write_event({"type": "cmd_response", "_req_id": req_id, "data": data})
 
     elif c == "comms_write":
