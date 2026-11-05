@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 TAG_TYPES = frozenset({"bool", "int", "float", "str"})
-TAG_ACCESS = frozenset({"r", "w", "rw"})
+TAG_ACCESS = frozenset({"r", "rw"})
 TAG_QUALITY = frozenset({"good", "stale", "bad", "disabled"})
 
 

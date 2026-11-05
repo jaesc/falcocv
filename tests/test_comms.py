@@ -149,20 +149,25 @@ def test_dummy_read_failure_marks_tag_bad_then_recovers():
         manager.stop()
 
 
-def test_read_only_and_write_only_access():
+def test_read_only_access_blocks_writes():
     config = _config(
         {"name": "readonly", "type": "int", "access": "r", "default": 1},
-        {"name": "writeonly", "type": "int", "access": "w", "default": 2},
     )
     manager = CommsManager(parse_comms_config(config))
     manager.start()
     try:
         with pytest.raises(CommsError, match="read-only"):
             manager.write("dummy.readonly", 5)
-        with pytest.raises(CommsError, match="write-only"):
-            manager.read("dummy.writeonly")
     finally:
         manager.stop()
+
+
+def test_write_only_access_is_rejected():
+    config = _config(
+        {"name": "writeonly", "type": "int", "access": "w", "default": 2},
+    )
+    with pytest.raises(CommsConfigError, match="access must be one of"):
+        parse_comms_config(config)
 
 
 def test_wait_for_value_and_timeout():

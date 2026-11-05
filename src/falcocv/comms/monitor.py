@@ -24,8 +24,7 @@ class CommsMonitorSession:
         )
         self._read_groups: dict[str, list[str]] = {}
         for tag in self.tags:
-            if tag.access in ("r", "rw"):
-                self._read_groups.setdefault(tag.device, []).append(tag.id)
+            self._read_groups.setdefault(tag.device, []).append(tag.id)
 
     def start(self) -> None:
         self.manager.start()

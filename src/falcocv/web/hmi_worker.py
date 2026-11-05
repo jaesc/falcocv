@@ -87,9 +87,7 @@ def _comms_snapshot() -> dict:
     warning = ""
     if manager is not None:
         tags = [_tag_dict(tag) for tag in manager.tags]
-        readable = [
-            tag.id for tag in manager.tags if tag.access in ("r", "rw")
-        ]
+        readable = [tag.id for tag in manager.tags]
         if readable:
             try:
                 manager.read_many(readable)
@@ -129,9 +127,7 @@ def _comms_values() -> dict:
         }
     manager = _proj.comms
     warning = ""
-    readable = [
-        tag.id for tag in manager.tags if tag.access in ("r", "rw")
-    ]
+    readable = [tag.id for tag in manager.tags]
     if readable:
         try:
             manager.read_many(readable)

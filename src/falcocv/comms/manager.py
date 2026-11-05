@@ -174,7 +174,7 @@ class CommsManager:
         tags = [
             tag
             for tag in self._tags.values()
-            if tag.poll_ms > 0 and tag.access in ("r", "rw")
+            if tag.poll_ms > 0
         ]
         if not tags:
             return
@@ -242,12 +242,6 @@ class CommsManager:
         seen: set[str] = set()
         for tag_id in tag_ids:
             tag = self._get_tag(tag_id)
-            if tag.access == "w":
-                raise CommsError(
-                    "tag is write-only",
-                    device=tag.device,
-                    tag=tag.id,
-                )
             if tag.id not in seen:
                 tags.append(tag)
                 seen.add(tag.id)
@@ -377,13 +371,6 @@ class CommsManager:
         first = tags[0]
         if any(tag.device != first.device for tag in tags):
             raise ValueError("all tags in a batch must belong to one device")
-        for tag in tags:
-            if tag.access == "w":
-                raise CommsError(
-                    "tag is write-only",
-                    device=tag.device,
-                    tag=tag.id,
-                )
         runtime = self._devices.get(first.device)
         if runtime is None:
             raise CommsError(
