@@ -66,6 +66,8 @@ dev = [
 ]
 plc = [
     "aphyt>=0.1.18",
+    "pyads>=3.5.0",
+    "python-snap7>=3.3.1",
 ]
 
 [project.scripts]

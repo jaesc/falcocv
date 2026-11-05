@@ -8,12 +8,16 @@ from .schema import DriverSchema
 
 def _driver_classes():
     # Imported lazily so future optional drivers do not become hard imports.
+    from .beckhoff import BeckhoffAdsDriver
     from .dummy import DummyDriver
     from .omron import OmronFastDriver
+    from .siemens import SiemensS7Driver
 
     return {
+        BeckhoffAdsDriver.driver_name: BeckhoffAdsDriver,
         DummyDriver.driver_name: DummyDriver,
         OmronFastDriver.driver_name: OmronFastDriver,
+        SiemensS7Driver.driver_name: SiemensS7Driver,
     }
 
 
