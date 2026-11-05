@@ -929,8 +929,8 @@ TOOL_HELP["Python Script"] = {
     "notes": (
         "The script must define a CustomTool subclass with __init__() and process(inputs) methods. "
         "Access inputs by name via the inputs dict. Set outputs with self.set_output(name, value). "
-        "Live objects passed by the HMI are available as self.engine['name'] "
-        "(for example self.engine['mecheye'] or self.engine['plc']). "
+        "Live objects and callbacks passed by the HMI are available as self.engine['name'] "
+        "(for example self.engine['log'] for the HMI log callback or self.engine['plc']). "
         "Draw overlays with self.draw_*() methods. "
         "Port kinds filter the connection menu, exactly like a Block: an Image input only accepts "
         "Image outputs from earlier tools. "
@@ -1394,7 +1394,7 @@ TOOL_HELP["HMI Project"] = {
         {"name": "sleep(seconds)", "default": "—", "description": "Interruptible sleep — checks <code>_stop</code> every 0.1 s and returns early if stop is requested."},
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties."},
-        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['mecheye'] = mecheye_ctl</code>."},
+        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['log'] = log</code> to expose the HMI log callback."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly: <code>proj.widgets['My counter']['min'] = 0</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of all configured job slots. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code>, <code>.run()</code>."},
         {"name": "proj.layout", "default": "—", "description": "Raw layout dict with keys <code>rows</code>, <code>cols</code>, <code>widgets</code>."},
@@ -1453,7 +1453,7 @@ TOOL_HELP["HMI Scripting"] = {
         {"name": "sleep(seconds)", "default": "—", "description": "Interruptible sleep — checks <code>_stop</code> every 0.1 s and returns early if stop is requested."},
         {"name": "help()", "default": "—", "description": "Print this API reference to the log panel."},
         {"name": "proj", "default": "—", "description": "The <code>HMIProject</code> instance. Access slots, layout, and all widget properties. Read/write widget configs: <code>proj.widgets['name']['min'] = 0</code>."},
-        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['mecheye'] = mecheye_ctl</code>."},
+        {"name": "context", "default": "—", "description": "Runtime dict shared with job Python Script tools through <code>engine_context</code>. Example: <code>context['log'] = log</code> to expose the HMI log callback."},
         {"name": "proj.widgets[name]", "default": "—", "description": "Dict-like access to any widget by its unique name. Returns the widget dict. Mutate properties directly."},
         {"name": "proj.get_widget_value(name)", "default": "—", "description": "Evaluate a widget's field + condition. Returns <code>{'value': ..., 'status': 'pass'|'fail'|'error'}</code>."},
         {"name": "proj.slots", "default": "—", "description": "List of <code>HMISlot</code>. Each slot has <code>.name</code>, <code>.job_path</code>, <code>.controller</code> (the <code>WorkflowController</code>), and <code>.run()</code>."},
@@ -1467,15 +1467,17 @@ TOOL_HELP["HMI Scripting"] = {
         "The namespace includes all functions listed above plus the <code>proj</code> object. "
         "Standard Python modules are available. The <code>_stop</code> event is set when "
         "the user presses Stop — long-running loops must check it.</p>"
-        "<h3>Passing Live Objects to Job Scripts</h3>"
+        "<h3>Passing Runtime Objects to Job Scripts</h3>"
         "<p>The <code>context</code> dict is runtime-only and is injected into every "
         "job Python Script tool as <code>engine_context</code>:</p>"
         "<pre>"
-        "context['mecheye'] = mecheye_ctl\n"
+        "context['log'] = log\n"
         "context['plc'] = plc\n\n"
         "# Inside a job Python Script:\n"
-        "mecheye = self.engine.get('mecheye')\n"
+        "log = self.engine.get('log')\n"
         "plc = self.engine.get('plc')\n"
+        "if callable(log):\n"
+        "    log('message', 'info')\n"
         "</pre>"
         "<h3>Interacting with Job Tools</h3>"
         "<p>Each slot has a <code>WorkflowController</code> that holds the loaded job. "

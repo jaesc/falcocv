@@ -20,7 +20,7 @@ DEFAULT_TEMPLATE = '''# FalcoCV Custom Tool Template
 # Input & Output ports are defined in the "Terminals" tab.
 # All image ports receive / return VisionImage objects (never raw numpy arrays).
 #
-# Python {} embedded runtime -- modules must match this version.
+# Python {py_version} embedded runtime -- modules must match this version.
 #
 # __init__() runs ONCE when the script is loaded/reloaded.
 # process()  runs every time the workflow executes this tool.
@@ -34,9 +34,13 @@ class CustomTool:
     # Called once when the tool is loaded or the script is recompiled.
     def __init__(self, engine_context):
         self.engine = engine_context or {}
-        # Live objects can be passed from the HMI script through engine_context:
-        #   mecheye = self.engine.get("mecheye")
-        #   plc = self.engine.get("plc")
+        # The HMI can expose its log callback through engine_context:
+        #   context["log"] = log
+        self.log = self.engine.get("log")
+        # if callable(self.log):
+        #     self.log("message", "info")
+        # Other live objects can be shared the same way:
+        #   self.plc = self.engine.get("plc")
 
     # Called on every workflow execution.
     # Args:
@@ -102,7 +106,7 @@ class CustomTool:
         return {
             "output image": out,
         }
-'''.replace("{}", _PY_VER)
+'''.replace("{py_version}", _PY_VER)
 
 
 # ==============================================================================
