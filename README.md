@@ -43,7 +43,8 @@ operator dashboards.
   FastAPI server and open them from any browser.
 - **Communications runtime** — generic devices and tags in the `.hmi` project,
   editable from the HMI Designer, with local and live signal monitors, a dummy
-  driver with simulated signals and Omron, Beckhoff ADS and Siemens S7 drivers.
+  driver with simulated signals, Omron, Beckhoff ADS, Siemens S7 and ADLINK
+  DASK I/O drivers, plus Modbus TCP and OPC UA clients and server runtimes.
   Drafts can be saved with missing fields; Deploy and Signal Monitor require a
   complete configuration. See [`docs/COMMS.md`](docs/COMMS.md).
 - **Persistent workspace** — window geometry, dock placement, splitter sizes
@@ -102,9 +103,29 @@ Hardware-specific prerequisites:
 
 - Omron: reachable NJ/NX controller; no persistent dictionary file is used.
 - Beckhoff: TwinCAT ADS route configured in the router. The optional
-  `ip_address` is only needed for Linux or routed/NAT networks.
+  `ip_address` is only needed for Linux or routed/NAT networks. `TcAdsDll.dll`
+  comes from TwinCAT or `%APPDATA%/FalcoCV/native/beckhoff/`.
 - Siemens: PUT/GET enabled on S7-1200/1500 and non-optimized DBs for absolute
-  addressing. S7-300/400 use absolute addressing normally.
+  addressing. S7-300/400 use absolute addressing normally. The `python-snap7`
+  3.x package is pure Python and needs no DLL.
+- ADLINK: install the DASK SDK for the card model on Windows x64. FalcoCV
+  detects the runtime automatically; if it is not on the system path, use the
+  Driver setup actions to select the SDK folder or place the DLLs in
+  `%APPDATA%/FalcoCV/native/adlink/`. `Test card` confirms that the card can be
+  registered. Digital and analog DASK tags are supported.
+- Beckhoff: the Driver setup panel checks `pyads` and `TcAdsDll.dll` and always
+  reminds you to configure the ADS route. `Test connection` verifies the route
+  and target AMS Net ID before deploying.
+
+For Modbus TCP and OPC UA clients/servers install the protocol extra:
+
+```bash
+python -m pip install "falcocv[protocols]"
+```
+
+The **Servers** tab exposes existing tags through explicit Modbus TCP or OPC UA
+mappings. Modbus has no authentication; OPC UA server security is anonymous in
+this first release, so keep both on trusted networks.
 
 ### Models
 

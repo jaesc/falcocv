@@ -309,6 +309,7 @@ class ToolHelpDialog(QDialog):
 
         # ── Right panel: QTextBrowser with Markdown ─────────────────--
         self.browser = QTextBrowser()
+        self.browser.setOpenExternalLinks(True)
         self.browser.setStyleSheet(
             f"QTextBrowser {{ background-color: {DARK_BG}; color: {TEXT}; border: none; "
             f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; padding: 12px; }}"

@@ -269,16 +269,42 @@ cpp/bin/       → local kernel build output (gitignored)
   lazily when the driver starts.  The `beckhoff` driver uses symbolic names and
   one `read_list_by_name`/`write_list_by_name` batch; its optional IP is only for
   Linux/routed ADS routes.  The `siemens` driver uses standard absolute S7
-  addresses and groups DB/area byte ranges.  Changing a device driver offers
+  addresses and groups DB/area byte ranges.  The `adlink` driver uses the DASK
+  DLL through `ctypes` on Windows x64: its model selector comes from a single
+  registry of DASK card types, addresses are `DI0.3`, `DO0.3`, `AI0` and `AO0`,
+  digital ports are batched, AI uses the device `ai_range`, and AO reads return
+  the last value written by FalcoCV because DASK has no analog-output readback.
+  `verify_writes` waits `verify_delay_ms` (default 20 ms) before readback
+  because USB-7250 relays need settling time.  The verified USB-7250
+  capability entry limits the model to port 0 with 8 DI and 8 DO; common DASK
+  errors such as -302/-31/-32 are translated.  The optional `protocols` extra
+  installs `pymodbus` and `asyncua`; `modbus_tcp` and `opcua` are client
+  drivers, while `comms/servers/` owns `ServerManager`, Modbus TCP server and
+  OPC UA server runtimes.  Server mappings are explicit; Modbus/OPC UA server
+  writes go through `CommsManager`, and HMI `.hmi` serialization/deploy/worker
+  payloads carry a top-level `servers` section.  The HMI Designer has a
+  **Servers** tab.  Modbus has no auth; OPC UA server security is
+  anonymous/no-security in this first release.  Changing a device driver offers
   Keep tags / Delete tags / Cancel; Keep preserves tag metadata and clears only
   the driver-specific addresses and configuration.  All PLC drivers default
   `verify_writes` to false.  Without verification they trust the library and
   never read back or retry.  With verification they read each written batch
   back; `write_retries` (default 0) controls extra write+verify attempts after
   a value mismatch only, not transport errors.  The optional `plc` extra
-  installs `aphyt`, `pyads` and `python-snap7`.  Window geometry, dock state,
+  installs `aphyt`, `pyads` and `python-snap7`.  Vendor native libraries are
+  resolved by `core/native_deps.py`: explicit `dll_path`, `FALCOCV_NATIVE_DIR`,
+  `%APPDATA%/FalcoCV/native/<driver>` and then the system search path.  ADLINK
+  DASK DLLs go in `native/adlink`; Beckhoff `TcAdsDll.dll` can be in
+  `native/beckhoff`; `python-snap7` 3.x is pure Python and needs no DLL.
+  `falcocv native-deps` reports the resolved locations.  Driver classes expose
+  `check_dependencies()` and optional `probe()`; the Communications tab shows
+  a setup panel only for ADLINK/Beckhoff, hides the DLL path when the runtime
+  is detected, offers Recheck/Help/Test connection, and reports missing
+  dependencies to Check/Deploy.  Beckhoff always shows the ADS route as
+  `PENDING` until `Test connection` succeeds.  Window geometry, dock state,
   splitter sizes and table column widths persist through
-  `ConfigManager.data["views"]` using Qt geometry/state blobs; main and HMI
+  `ConfigManager.data["views"]` using Qt geometry/state blobs; this includes
+  both Servers splitters and the Servers mapping columns.  Main and HMI
   Designer `View > Reset all views` clear and reapply defaults.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
@@ -440,9 +466,22 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   incomplete runtime configs.  `HMIProject.save` rejects structural errors but
   preserves incomplete drafts.  Driver changes offer Keep tags / Delete tags /
   Cancel.
+- The `adlink` DASK driver is implemented with the full model registry,
+  `DI`/`DO`/`AI`/`AO` addresses, digital port batching and analog ranges.
+  Native vendor libraries are resolved from
+  `%APPDATA%/FalcoCV/native/<driver>` or `FALCOCV_NATIVE_DIR`; `falcocv
+  native-deps` reports them.  USB-7250 hardware is validated, including
+  `verify_writes` with the relay settling delay.
+- Modbus TCP and OPC UA clients plus Modbus TCP/OPC UA servers are implemented.
+  The optional `protocols` extra installs `pymodbus`/`asyncua`; servers use
+  explicit mappings, start after the clients and are serialized/deployed in
+  the top-level `servers` section.  The OPC UA server uses anonymous/no-security
+  in this release.
 - Window geometry, dock state, splitter sizes and table column widths persist
-  through `ConfigManager.data["views"]`; **View > Reset all views** restores
-  defaults in the main window and HMI Designer.
+  through `ConfigManager.data["views"]`; the Servers tab adds
+  `hmi_servers.horizontal`, `hmi_servers.vertical` and
+  `hmi_servers.mappings`.  **View > Reset all views** restores defaults in the
+  main window and HMI Designer.
 - ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
   `fe8a135`): model v3, training mask, Canny / `min_gradient` /
   `max_features` controls, manual feature editor with brush, spatial feature
@@ -465,10 +504,11 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `676 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `734 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: validate Beckhoff ADS and Siemens S7 against real hardware.
-  Omron hardware validation is complete; its automated tests still use a fake
-  `aphyt` client.  Resume on another machine with `git pull origin dev`,
-  `pip install -e ".[dev]"` and
+  Omron and ADLINK USB-7250 hardware validation are complete; their automated
+  tests still use fakes where appropriate.  Modbus/OPC UA loopback tests run
+  with the optional `protocols` extra.  Resume on another machine with
+  `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

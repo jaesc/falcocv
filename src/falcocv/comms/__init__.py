@@ -21,6 +21,7 @@ from .config import (
     parse_comms_config,
     validate_comms_config,
 )
+from .dependencies import DependencyStatus
 from .manager import CommsManager
 from .monitor import CommsMonitorSession
 from .tags import TagStore
@@ -32,6 +33,7 @@ __all__ = [
     "CommsManager",
     "CommsMonitorSession",
     "CommsValidationResult",
+    "DependencyStatus",
     "DeviceConfig",
     "DeviceDriver",
     "DeviceStatus",

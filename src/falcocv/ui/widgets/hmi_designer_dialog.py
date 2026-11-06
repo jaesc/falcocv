@@ -33,6 +33,7 @@ from falcocv.ui.widgets.hmi_scene import HMIWidgetScene, HMIWidgetView, GRID
 from falcocv.ui.widgets.hmi_preview import HMIPreviewWidget
 from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
 from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+from falcocv.ui.widgets.hmi_servers_tab import HMIServersWidget
 from falcocv.ui.widgets.script_editor import ScriptEditor, FindReplaceBar
 from falcocv.ui.widgets.debug_panels import DebugToolbar, VariableInspector, WatchPanel
 from falcocv.ui.style import SUCCESS, WARNING, INFO, DANGER
@@ -54,8 +55,14 @@ _VIEW_SPLITTERS = {
     "hmi.debug.vertical": [500, 300],
     "hmi_comms.horizontal": [220, 700],
     "hmi_comms.vertical": [330, 470],
+    "hmi_servers.horizontal": [220, 700],
+    "hmi_servers.vertical": [330, 470],
 }
-_VIEW_HEADERS = ("hmi_comms.tags", "hmi_comms.monitor")
+_VIEW_HEADERS = (
+    "hmi_comms.tags",
+    "hmi_comms.monitor",
+    "hmi_servers.mappings",
+)
 
 
 class _HMIWSClient(QObject):
@@ -723,6 +730,7 @@ class HMIDesignerDialog(QDialog):
         self._view: HMIWidgetView | None = None
         self._layout_splitter: QSplitter | None = None
         self._comms_tab: HMICommsWidget | None = None
+        self._servers_tab: HMIServersWidget | None = None
         self._monitor_tab: HMICommsMonitorWidget | None = None
         self._script_splitter: QSplitter | None = None
         self._debug_splitter: QSplitter | None = None
@@ -871,7 +879,7 @@ class HMIDesignerDialog(QDialog):
                 save_header(header, key)
 
     def _reset_view_state(self):
-        reset_keys(("hmi", "hmi_comms", "hmi_designer"))
+        reset_keys(("hmi", "hmi_comms", "hmi_servers", "hmi_designer"))
         self.showNormal()
         self.resize(1100, 700)
         for key, default_sizes in _VIEW_SPLITTERS.items():
@@ -880,6 +888,8 @@ class HMIDesignerDialog(QDialog):
                 splitter.setSizes(default_sizes)
         if self._comms_tab is not None:
             self._comms_tab.reset_view_state()
+        if self._servers_tab is not None:
+            self._servers_tab.reset_view_state()
         if self._monitor_tab is not None:
             self._monitor_tab.reset_view_state()
 
@@ -1077,6 +1087,10 @@ class HMIDesignerDialog(QDialog):
         self._comms_tab.modified.connect(self._mark_modified)
         self._comms_tab.modified.connect(self._update_comms_warning)
         self._tabs.addTab(self._comms_tab, "Communications")
+
+        self._servers_tab = HMIServersWidget(self.project)
+        self._servers_tab.modified.connect(self._mark_modified)
+        self._tabs.addTab(self._servers_tab, "Servers")
 
         self._monitor_tab = HMICommsMonitorWidget(self.project)
         self._monitor_tab.set_before_connect(
@@ -1402,6 +1416,31 @@ class HMIDesignerDialog(QDialog):
                     + "\n".join(f"• {message}" for message in result.warnings),
                 )
                 return
+            dependencies = self._comms_tab.dependency_warnings()
+            if dependencies:
+                QMessageBox.warning(
+                    self,
+                    "Driver dependencies",
+                    "Driver setup requires attention:\n"
+                    + "\n".join(
+                        f"• {status.label}: {status.detail}"
+                        for status in dependencies
+                    ),
+                )
+                return
+        if self._servers_tab is not None:
+            if not self._servers_tab.flush_to_project():
+                QMessageBox.warning(
+                    self,
+                    "Servers",
+                    self._servers_tab.status.text()
+                    or "Invalid server configuration",
+                )
+                return
+            servers_ok, servers_msg = self._servers_tab.validate()
+            if not servers_ok:
+                QMessageBox.warning(self, "Servers", servers_msg)
+                return
         QMessageBox.information(self, "Check", "No syntax or configuration errors found.")
 
     def _stop_sync(self) -> bool:
@@ -1445,6 +1484,13 @@ class HMIDesignerDialog(QDialog):
 
     def _on_deploy(self):
         if not self._flush_to_project():
+            if (
+                self._servers_tab is not None
+                and self._servers_tab.status.text()
+            ):
+                QMessageBox.warning(
+                    self, "Servers", self._servers_tab.status.text()
+                )
             self._set_status("Comms config error", WARNING)
             return
         if self._comms_tab is not None:
@@ -1456,6 +1502,42 @@ class HMIDesignerDialog(QDialog):
                     comms_msg,
                 )
                 self._set_status("Comms config error", WARNING)
+                return
+            dependencies = self._comms_tab.dependency_warnings()
+            blockers = self._comms_tab.dependency_blockers()
+            if blockers:
+                QMessageBox.warning(
+                    self,
+                    "Driver dependencies",
+                    "Deploy is blocked by missing driver dependencies:\n"
+                    + "\n".join(
+                        f"• {status.label}: {status.detail}"
+                        for status in blockers
+                    ),
+                )
+                self._set_status("Driver dependency error", WARNING)
+                return
+            if dependencies:
+                answer = QMessageBox.warning(
+                    self,
+                    "Driver dependencies",
+                    "Driver setup has warnings:\n"
+                    + "\n".join(
+                        f"• {status.label}: {status.detail}"
+                        for status in dependencies
+                    )
+                    + "\n\nDeploy anyway?",
+                    QMessageBox.StandardButton.Yes
+                    | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+        if self._servers_tab is not None:
+            servers_ok, servers_msg = self._servers_tab.validate()
+            if not servers_ok:
+                QMessageBox.warning(self, "Servers", servers_msg)
+                self._set_status("Servers config error", WARNING)
                 return
 
         ok, errors = self._check_compile()
@@ -1508,6 +1590,7 @@ class HMIDesignerDialog(QDialog):
                 for s in self.project.slots
             ],
             "comms": self.project.comms_config,
+            "servers": self.project.servers_config,
         }
 
         if self.project.source_dir and os.path.isdir(self.project.source_dir):
@@ -1907,6 +1990,13 @@ class HMIDesignerDialog(QDialog):
             return False
         if self._current_path:
             if not self._flush_to_project():
+                if (
+                    self._servers_tab is not None
+                    and self._servers_tab.status.text()
+                ):
+                    QMessageBox.warning(
+                        self, "Servers", self._servers_tab.status.text()
+                    )
                 return False
             warnings: tuple[str, ...] = ()
             if self._comms_tab is not None:
@@ -1945,6 +2035,13 @@ class HMIDesignerDialog(QDialog):
         if not path:
             return False
         if not self._flush_to_project():
+            if (
+                self._servers_tab is not None
+                and self._servers_tab.status.text()
+            ):
+                QMessageBox.warning(
+                    self, "Servers", self._servers_tab.status.text()
+                )
             return False
         warnings: tuple[str, ...] = ()
         if self._comms_tab is not None:
@@ -2023,6 +2120,8 @@ class HMIDesignerDialog(QDialog):
             self._scene.sync_all()
             if self._comms_tab is not None:
                 ok = self._comms_tab.flush_to_project()
+            if ok and self._servers_tab is not None:
+                ok = self._servers_tab.flush_to_project()
         finally:
             self._saving = False
         return ok

@@ -15,6 +15,13 @@ from falcocv.comms import (
     parse_comms_config,
     validate_comms_config,
 )
+from falcocv.comms.servers import (
+    ServerConfigError,
+    ServerManager,
+    ServerRuntimeError,
+    default_servers_config,
+    parse_servers_config,
+)
 from falcocv.core.workflow import Workflow
 from falcocv.core.workflow_controller import WorkflowController
 from falcocv.core.job_manager import JobManager
@@ -143,6 +150,8 @@ class HMIProject:
         self.project_id: str = str(uuid.uuid4())[:8]
         self.comms_config: dict[str, Any] = default_comms_config()
         self.comms: CommsManager | None = None
+        self.servers_config: dict[str, Any] = default_servers_config()
+        self._server_manager: ServerManager | None = None
         self._runtime_lock = threading.RLock()
         self._script_thread: threading.Thread | None = None
         self._script_stop = threading.Event()
@@ -255,6 +264,7 @@ class HMIProject:
             "layout": self.layout,
             "script": self.script,
             "comms": self.comms_config,
+            "servers": self.servers_config,
         }
         if self.source_dir:
             data["source_dir"] = self.source_dir
@@ -296,6 +306,7 @@ class HMIProject:
             seen.add(w["name"])
         proj.script = data.get("script", proj.script)
         proj.comms_config = data.get("comms") or default_comms_config()
+        proj.servers_config = data.get("servers") or default_servers_config()
         return proj
 
     def save(self, path: str):
@@ -305,6 +316,12 @@ class HMIProject:
                 "Communications configuration is invalid:\n"
                 + "\n".join(f"• {message}" for message in result.errors)
             )
+        try:
+            parse_servers_config(self.servers_config)
+        except ServerConfigError as exc:
+            raise ServerConfigError(
+                "Servers configuration is invalid:\n" + str(exc)
+            ) from exc
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 
@@ -326,19 +343,40 @@ class HMIProject:
                 return
             config = parse_comms_config(self.comms_config)
             if not config.devices:
+                server_configs = parse_servers_config(self.servers_config)
+                if any(server.enabled for server in server_configs):
+                    raise ServerRuntimeError(
+                        "configured servers require at least one "
+                        "communications device"
+                    )
                 return
             manager = CommsManager(config, log=self.log)
             manager.start()
             self.comms = manager
             self.context["comms"] = manager
+            server_manager = ServerManager(
+                manager, self.servers_config, log=self.log
+            )
+            try:
+                server_manager.start()
+            except Exception:
+                manager.stop()
+                self.comms = None
+                self.context.pop("comms", None)
+                raise
+            self._server_manager = server_manager
 
     def stop_runtime(self):
         """Stop runtime services.  Idempotent and safe after a failed start."""
 
         with self._runtime_lock:
+            server_manager = self._server_manager
+            self._server_manager = None
             manager = self.comms
             self.comms = None
             self.context.pop("comms", None)
+        if server_manager is not None:
+            server_manager.stop()
         if manager is not None:
             manager.stop()
 

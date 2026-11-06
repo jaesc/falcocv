@@ -427,6 +427,70 @@ def test_comms_tab_structural_error_still_blocks_flush():
     assert tab._validate_candidate(invalid) is False
 
 
+def test_comms_tab_shows_driver_setup_only_when_attention_is_needed(
+    monkeypatch,
+):
+    app = _app()
+    assert app is not None
+
+    from falcocv.comms import DependencyStatus
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets import hmi_comms_tab
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "io",
+                "driver": "adlink",
+                "config": {"card_type": "USB_7250"},
+                "tags": [],
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        hmi_comms_tab,
+        "driver_dependencies",
+        lambda *_args, **_kwargs: (
+            DependencyStatus(
+                "adlink",
+                "ADLINK DASK runtime",
+                "missing",
+                "Install the ADLINK USB-DASK 64-bit SDK for USB-7250.",
+                help_key="ADLINK driver",
+            ),
+        ),
+    )
+    tab = hmi_comms_tab.HMICommsWidget(project)
+
+    assert not tab.dependency_group.isHidden()
+    assert "USB-DASK 64-bit" in tab.dependency_label.text()
+    assert not tab.dependency_path.isHidden()
+    assert not tab.dependency_help.isHidden()
+    assert tab.dependency_test.isHidden()
+    assert tab._config_widgets["dll_path"].isHidden()
+
+    monkeypatch.setattr(
+        hmi_comms_tab,
+        "driver_dependencies",
+        lambda *_args, **_kwargs: (
+            DependencyStatus(
+                "adlink",
+                "ADLINK DASK runtime",
+                "ok",
+                "DASK runtime detected.",
+                help_key="ADLINK driver",
+                test_kind="adlink_card",
+            ),
+        ),
+    )
+    tab._update_dependency_status()
+    assert not tab.dependency_test.isHidden()
+    assert tab.dependency_path.isHidden()
+    assert tab.dependency_help.isHidden()
+
+
 def test_comms_tab_write_retries_is_conditional():
     app = _app()
     assert app is not None
@@ -491,6 +555,53 @@ def test_comms_tab_default_follows_tag_type():
     default_item.setText("123")
     type_combo.setCurrentText("int")
     assert default_item.text() == "123"
+
+
+def test_comms_tab_renders_adlink_schema_and_analog_fields():
+    app = _app()
+    assert app is not None
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "io",
+                "driver": "adlink",
+                "config": {
+                    "card_type": "USB_7250",
+                    "card_number": 1,
+                    "ai_range": 2,
+                },
+                "tags": [
+                    {
+                        "name": "input",
+                        "address": "DI0.1",
+                        "type": "bool",
+                        "access": "r",
+                    },
+                    {
+                        "name": "analog",
+                        "address": "AI0",
+                        "type": "float",
+                        "access": "r",
+                    },
+                ],
+            }
+        ],
+    }
+    tab = HMICommsWidget(project)
+
+    assert tab.driver_combo.currentText() == "adlink"
+    assert tab._config_widgets["card_type"].currentData() == "USB_7250"
+    assert tab._config_widgets["card_number"].value() == 1
+    assert tab._config_widgets["ai_range"].currentData() == 2
+    assert tab.tags_table.item(0, 1).text() == "DI0.1"
+    assert tab.flush_to_project()
+    assert project.comms_config["devices"][0]["tags"][1]["address"] == "AI0"
 
 
 def test_comms_tab_columns_are_resizable():

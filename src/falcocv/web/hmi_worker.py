@@ -237,6 +237,8 @@ def handle_cmd(cmd: dict):
         proj = HMIProject()
         if data.get("comms"):
             proj.comms_config = data["comms"]
+        if data.get("servers"):
+            proj.servers_config = data["servers"]
 
         if files:
             tmpdir = tempfile.mkdtemp(prefix="hmi_src_")

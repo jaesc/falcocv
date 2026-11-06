@@ -127,7 +127,8 @@ class HMIWorkerManager:
 
     def start(self, script: str, bps: set[int] | dict[str, list[int]], layout: dict,
               slots_raw: list[dict], files: dict[str, str] | None = None,
-              entry_point: str = "main.py", comms: dict | None = None):
+              entry_point: str = "main.py", comms: dict | None = None,
+              servers: dict | None = None):
         self.stop()
         self.layout = dict(layout)
         self.slots = [
@@ -173,6 +174,7 @@ class HMIWorkerManager:
                 "layout": layout,
                 "slots": slots_raw,
                 "comms": comms or {},
+                "servers": servers or {},
             },
             "bps": bps,
         }
@@ -189,6 +191,7 @@ class HMIWorkerManager:
             "files": files,
             "entry_point": entry_point,
             "comms": comms or {},
+            "servers": servers or {},
         }
 
     def reload(self) -> bool:
@@ -203,6 +206,7 @@ class HMIWorkerManager:
             files=p["files"],
             entry_point=p["entry_point"],
             comms=p.get("comms", {}),
+            servers=p.get("servers", {}),
         )
         return True
 
@@ -371,17 +375,24 @@ class HmiLoadRequest(BaseModel):
     bp_by_file: dict[str, list[int]] = {}
     project_id: str = ""
     comms: dict = {}
+    servers: dict = {}
 
 
 @app.post("/api/hmi/load")
 def hmi_load(req: HmiLoadRequest):
     from falcocv.comms import CommsConfigError, parse_comms_config
+    from falcocv.comms.servers import ServerConfigError, parse_servers_config
     from falcocv.core.script_debugger import TraceDebugger
 
     if req.comms:
         try:
             parse_comms_config(req.comms)
         except CommsConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if req.servers:
+        try:
+            parse_servers_config(req.servers)
+        except ServerConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     bps: dict[str, list[int]] = {}
@@ -409,6 +420,7 @@ def hmi_load(req: HmiLoadRequest):
     worker.start(
         req.script, bps, req.layout, req.slots,
         files=req.files, entry_point=req.entry_point, comms=req.comms,
+        servers=req.servers,
     )
     _workers[pid] = worker
     return {"ok": True, "slots": len(req.slots), "project_id": pid}

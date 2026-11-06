@@ -1452,8 +1452,8 @@ TOOL_HELP["HMI Communications"] = {
     "outputs": [],
     "params": [
         {"name": "Device ID", "default": "—", "description": "Unique device identifier. It prefixes every tag id: <code>device.tag</code>. Changing it migrates tag-bound widget references and warns about HMI script references."},
-        {"name": "Driver", "default": "dummy", "description": "Available drivers: <code>dummy</code> (simulation), <code>omron</code> (NJ/NX), <code>beckhoff</code> (TwinCAT ADS) and <code>siemens</code> (S7)."},
-        {"name": "Address", "default": "—", "description": "Driver-specific: <code>Struct.Member</code> for Omron, a symbolic name such as <code>MAIN.bTrigger</code> for Beckhoff, or standard S7 addresses such as <code>DB1.DBW2</code>, <code>M0.0</code>, <code>I0.0</code> and <code>Q0.0</code>."},
+        {"name": "Driver", "default": "dummy", "description": "Available drivers: <code>dummy</code> (simulation), <code>omron</code> (NJ/NX), <code>beckhoff</code> (TwinCAT ADS), <code>siemens</code> (S7), <code>adlink</code> (DASK I/O), <code>modbus_tcp</code> (Modbus TCP client) and <code>opcua</code> (OPC UA client)."},
+        {"name": "Address", "default": "—", "description": "Driver-specific: <code>Struct.Member</code> for Omron, a symbolic name such as <code>MAIN.bTrigger</code> for Beckhoff, standard S7 addresses such as <code>DB1.DBW2</code>, <code>M0.0</code>, <code>I0.0</code> and <code>Q0.0</code>, ADLINK <code>DI0.3</code>, <code>DO0.3</code>, <code>AI0</code> and <code>AO0</code>, Modbus <code>coil:0</code>/<code>holding:100</code>, or an OPC UA NodeId."},
         {"name": "Type", "default": "bool", "description": "Tag data type: <code>bool</code>, <code>int</code>, <code>float</code> or <code>str</code>. New tags receive a type-appropriate default: false, 0, 0.0 or empty."},
         {"name": "Access", "default": "rw", "description": "<code>r</code> is read-only; <code>rw</code> allows reads and writes. Write-only tags are not supported."},
         {"name": "Poll ms", "default": "0", "description": "0 reads on demand; N &gt; 0 polls the tag in the background every N ms and updates the tag store and on_change callbacks. It does not change the dashboard refresh rate."},
@@ -1477,9 +1477,25 @@ TOOL_HELP["HMI Communications"] = {
         "read_list_by_name/write_list_by_name batch; its optional IP is only needed "
         "for Linux or routed/NAT ADS routes. <b>siemens</b> uses standard absolute "
         "S7 addresses, groups DB/area byte ranges, and supports S7 STRING[n] tags "
-        "with the Length field. Changing the driver offers <b>Keep tags</b>, "
-        "<b>Delete tags</b> or <b>Cancel</b>; Keep preserves tag metadata and "
-        "clears only the driver-specific addresses and configuration.</p>"
+        "with the Length field. <b>adlink</b> uses ADLINK DASK digital and "
+        "analog I/O cards; select the card model and use <code>DI0.3</code>, "
+        "<code>DO0.3</code>, <code>AI0</code> or <code>AO0</code>. Changing the "
+        "driver offers <b>Keep tags</b>, <b>Delete tags</b> or <b>Cancel</b>; "
+        "Keep preserves tag metadata and clears only the driver-specific "
+        "addresses and configuration.</p>"
+        "<h3>Native libraries</h3>"
+        "<p>ADLINK DASK DLLs and Beckhoff <code>TcAdsDll.dll</code> can be "
+        "placed in <code>%APPDATA%/FalcoCV/native/&lt;driver&gt;</code>. The "
+        "ADLINK driver also accepts an explicit <code>dll_path</code>. "
+        "<b>Driver setup</b> detects the runtime and only shows install/path "
+        "actions when something is missing; use <b>Test card</b> or "
+        "<b>Test connection</b> to verify the hardware. For Beckhoff the ADS "
+        "route always needs to be configured in TwinCAT even when the DLL is "
+        "found. <code>falcocv native-deps</code> reports what was found. "
+        "Siemens uses the pure-Python <code>python-snap7</code> package and "
+        "needs no DLL. ADLINK is Windows x64 only; <code>AO</code> reads return "
+        "the last value written by FalcoCV because DASK has no analog-output "
+        "readback.</p>"
         "<h3>Incomplete configurations</h3>"
         "<p>A draft may omit required driver fields (for example a Siemens "
         "<code>host</code>) or leave tag addresses empty. Save accepts it and "
@@ -1492,6 +1508,13 @@ TOOL_HELP["HMI Communications"] = {
         "(or <code>pip install -e \".[plc]\"</code> from source). This installs "
         "<code>aphyt</code>, <code>pyads</code> and <code>python-snap7</code>. "
         "Imports are lazy, so the project can be edited without them.</p>"
+        "<h3>Servers</h3>"
+        "<p>The <b>Servers</b> tab exposes existing tags through Modbus TCP "
+        "or OPC UA. Mappings are explicit and read-only by default; rw "
+        "mappings require a rw source tag. Servers start in the worker after "
+        "the Communications devices and stop before them. Modbus has no "
+        "authentication; keep it on a trusted network. OPC UA server security "
+        "is anonymous/no-security in this release.</p>"
         "<h3>Signal Monitor</h3>"
         "<p><b>Local test</b> uses the current Communications working copy, so "
         "saving is not required before Connect, but the configuration must be "
@@ -1519,6 +1542,142 @@ TOOL_HELP["HMI Communications"] = {
         "StatusIndicator",
         "LedIndicator",
     ],
+}
+
+TOOL_HELP["Modbus TCP"] = {
+    "name": "Modbus TCP",
+    "category": "HMI",
+    "purpose": (
+        "The <code>modbus_tcp</code> driver connects FalcoCV to a Modbus TCP "
+        "server. Modbus TCP servers can also be configured in the Servers tab."
+    ),
+    "inputs": [],
+    "outputs": [],
+    "params": [
+        {"name": "Host / port", "default": "502", "description": "Modbus TCP server address."},
+        {"name": "Unit ID", "default": "1", "description": "Modbus device id."},
+        {"name": "Word order", "default": "big", "description": "Word order for int32/uint32/float32 values spanning two registers."},
+        {"name": "Address", "default": "—", "description": "<code>coil:N</code>, <code>discrete:N</code>, <code>holding:N</code> or <code>input:N</code>; optional <code>.bit</code> and <code>:int32</code>/<code>:uint32</code>/<code>:float32</code>."},
+    ],
+    "notes": (
+        "<h3>Address examples</h3>"
+        "<pre>coil:0\nholding:100\nholding:100:int32\n"
+        "holding:100:float32\ninput:5</pre>"
+        "<h3>Servers tab</h3>"
+        "<p>Mapping entries expose existing tags to external clients. "
+        "Coils and holding registers can be rw; discrete inputs and input "
+        "registers are read-only. Modbus has no authentication: bind the "
+        "server only to trusted networks.</p>"
+    ),
+    "see_also": ["HMI Communications", "OPC UA"],
+}
+
+TOOL_HELP["OPC UA"] = {
+    "name": "OPC UA",
+    "category": "HMI",
+    "purpose": (
+        "The <code>opcua</code> driver connects to an OPC UA server using "
+        "NodeId addresses. An OPC UA server can also expose FalcoCV tags from "
+        "the Servers tab."
+    ),
+    "inputs": [],
+    "outputs": [],
+    "params": [
+        {"name": "Endpoint", "default": "opc.tcp://...", "description": "OPC UA endpoint URL."},
+        {"name": "Username / password", "default": "—", "description": "Optional credentials; anonymous is used by default."},
+        {"name": "Address", "default": "—", "description": "OPC UA NodeId, for example <code>ns=2;s=Count</code>."},
+    ],
+    "notes": (
+        "<h3>First release</h3>"
+        "<p>Client and server support anonymous/no-security connections for "
+        "commissioning and trusted networks. Keep the endpoint protected at "
+        "the network level. Username/password and certificate policies are "
+        "the next hardening step.</p>"
+        "<h3>Servers tab</h3>"
+        "<p>OPC UA server mappings use a NodeId and an existing tag id. "
+        "Read/write mappings require a rw tag.</p>"
+    ),
+    "see_also": ["HMI Communications", "Modbus TCP"],
+}
+
+TOOL_HELP["ADLINK driver"] = {
+    "name": "ADLINK DASK driver",
+    "category": "HMI",
+    "purpose": (
+        "The <code>adlink</code> driver reads and writes ADLINK DASK digital "
+        "and analog I/O cards from the Communications tab. The vendor DASK "
+        "runtime is installed separately from FalcoCV."
+    ),
+    "inputs": [],
+    "outputs": [],
+    "params": [
+        {"name": "Card type", "default": "USB-7250", "description": "ADLINK DASK model. The list includes the PCI, PCIe and USB card types known by the driver."},
+        {"name": "Card number", "default": "0", "description": "Zero-based index when more than one card is installed."},
+        {"name": "DASK DLL / folder", "default": "automatic", "description": "Advanced fallback. Leave empty to use the native folder or the system path."},
+        {"name": "Analog input range", "default": "10 V", "description": "DASK AD_B_* range used by AI tags."},
+        {"name": "Verify delay (ms)", "default": "20", "description": "Wait after a digital output write before reading it back. Relay outputs need a short settling time."},
+    ],
+    "notes": (
+        "<h3>Install on a new machine</h3>"
+        "<p>Install the official ADLINK DASK SDK/driver for the card model on "
+        "Windows x64. This installs the kernel driver and the DASK DLLs; "
+        "FalcoCV does not redistribute the vendor runtime. The USB-7250 needs "
+        "the USB-DASK component.</p>"
+        "<p>If the DLLs are not on the system path, use the suggested native "
+        "folder or select the SDK folder from <b>Driver setup</b>. The expected "
+        "native folder is <code>%APPDATA%/FalcoCV/native/adlink</code>. The "
+        "diagnostic command is <code>falcocv native-deps</code>.</p>"
+        "<h3>Tags</h3>"
+        "<p><code>DI0.3</code> and <code>DO0.3</code> are digital lines; "
+        "<code>AI0</code> and <code>AO0</code> are analog channels. "
+        "The verified USB-7250 has only port 0 with 8 inputs and 8 outputs: "
+        "<code>DI0.0..7</code> and <code>DO0.0..7</code>. "
+        "<code>AO</code> reads the last value written by FalcoCV because DASK "
+        "has no analog-output readback.</p>"
+        "<h3>Errors</h3>"
+        "<p>ADLINK error codes are translated into actionable messages. "
+        "Code -302 means the USB-DASK Windows driver/module was not found; "
+        "-31 and -32 mean an invalid digital port or line for the selected "
+        "model.</p>"
+        "<h3>Vendor support</h3>"
+        "<p>Search ADLINK support for <b>USB-DASK SDK</b> or <b>PCI-DASK "
+        "SDK</b>. <a href=\"https://www.adlinktech.com/en/Support\">Open "
+        "ADLINK support</a>.</p>"
+    ),
+    "see_also": ["HMI Communications", "Beckhoff driver"],
+}
+
+TOOL_HELP["Beckhoff driver"] = {
+    "name": "Beckhoff ADS driver",
+    "category": "HMI",
+    "purpose": (
+        "The <code>beckhoff</code> driver uses the TwinCAT ADS runtime and a "
+        "configured ADS route to read and write symbolic PLC variables."
+    ),
+    "inputs": [],
+    "outputs": [],
+    "params": [
+        {"name": "AMS Net ID", "default": "—", "description": "AMS Net ID of the TwinCAT target, for example <code>192.168.1.10.1.1</code>."},
+        {"name": "AMS port", "default": "851", "description": "ADS port. 851 is the TwinCAT 3 PLC runtime."},
+        {"name": "IP address", "default": "—", "description": "Optional; used only for Linux or routed/NAT networks."},
+    ],
+    "notes": (
+        "<h3>Install on a new machine</h3>"
+        "<p>Install TwinCAT 3 x64 (XAE or the ADS runtime) so that "
+        "<code>TcAdsDll.dll</code> and the ADS router are available. Configure "
+        "an ADS route from this PC to the target AMS Net ID and make sure the "
+        "PLC has the return route. If TwinCAT is already installed, FalcoCV "
+        "detects it automatically.</p>"
+        "<p>The native fallback folder is "
+        "<code>%APPDATA%/FalcoCV/native/beckhoff</code>. The diagnostic command "
+        "is <code>falcocv native-deps</code>. Finding the DLL alone does not "
+        "validate the route; use <b>Test connection</b> in Driver setup.</p>"
+        "<h3>Beckhoff support</h3>"
+        "<p>Search Beckhoff InfoSys for <b>TwinCAT ADS route</b> and "
+        "<b>TcAdsDll</b>. <a href=\"https://infosys.beckhoff.com/\">Open "
+        "Beckhoff InfoSys</a>.</p>"
+    ),
+    "see_also": ["HMI Communications", "ADLINK driver"],
 }
 
 # ── HMI Scripting ──────────────────────────────────────────────────────────

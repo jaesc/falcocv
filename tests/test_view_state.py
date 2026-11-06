@@ -115,3 +115,25 @@ def test_hmi_communications_panels_reset_to_defaults(fake_config):
     monitor.reset_view_state()
     assert monitor.table.columnWidth(0) == 220
     assert monitor._format_value(None) == "—"
+
+
+def test_hmi_servers_panels_reset_to_defaults(fake_config):
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_servers_tab import HMIServersWidget
+
+    servers = HMIServersWidget(HMIProject())
+    servers.resize(1000, 700)
+    servers.show()
+    app.processEvents()
+    servers.horizontal_splitter.setSizes([10, 10])
+    servers.vertical_splitter.setSizes([10, 10])
+    servers.mappings_table.setColumnWidth(0, 10)
+    servers.reset_view_state()
+    assert servers.horizontal_splitter.sizes()[0] > 100
+    assert servers.horizontal_splitter.sizes()[1] > 300
+    assert servers.vertical_splitter.sizes()[0] > 100
+    assert servers.vertical_splitter.sizes()[1] > 100
+    assert servers.mappings_table.columnWidth(0) == 240
+    servers.close()

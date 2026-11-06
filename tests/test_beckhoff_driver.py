@@ -226,6 +226,51 @@ def test_beckhoff_unreachable_target_fails_start(monkeypatch):
     assert client.is_open is False
 
 
+def test_beckhoff_dependency_status_reports_route(monkeypatch, tmp_path):
+    from falcocv.core.native_deps import NativeLibrary
+
+    dll = tmp_path / "TcAdsDll.dll"
+    dll.write_bytes(b"fake")
+    monkeypatch.setattr(
+        beckhoff_driver,
+        "resolve_tcads_dll",
+        lambda: NativeLibrary(dll, "test"),
+    )
+
+    statuses = beckhoff_driver.BeckhoffAdsDriver.check_dependencies({})
+    states = {status.key: status.state for status in statuses}
+    assert states["tcads"] == "ok"
+    assert states["ads_route"] == "unknown"
+
+
+def test_beckhoff_probe_opens_and_closes_connection(monkeypatch):
+    class _ProbeClient:
+        def __init__(self):
+            self.opened = False
+            self.closed = False
+
+        def open(self):
+            self.opened = True
+
+        def read_state(self):
+            assert self.opened
+            return (0, 0)
+
+        def close(self):
+            self.closed = True
+
+    client = _ProbeClient()
+    monkeypatch.setattr(
+        beckhoff_driver, "_create_client", lambda _config: client
+    )
+
+    assert beckhoff_driver.BeckhoffAdsDriver.probe(
+        {"ams_net_id": "192.168.1.10.1.1"}
+    ) == "ADS connection OK"
+    assert client.opened
+    assert client.closed
+
+
 def test_beckhoff_missing_pyads_is_reported(monkeypatch):
     def fail(_config):
         raise CommsError("driver 'beckhoff' requires the pyads package")

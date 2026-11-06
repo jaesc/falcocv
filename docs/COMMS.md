@@ -3,9 +3,10 @@
 FalcoCV has a generic communications layer for HMI projects. It is independent
 of Qt and of any specific PLC, Modbus or socket library.
 
-The current implementation ships the `dummy` driver for development and the
-`omron`, `beckhoff` and `siemens` drivers for real controllers. Real drivers are
-added without changing the project or script API.
+The current implementation ships the `dummy` driver for development, the
+`omron`, `beckhoff` and `siemens` drivers for PLCs, the `adlink` driver for
+ADLINK DASK I/O cards, and `modbus_tcp` / `opcua` clients. Modbus TCP and OPC UA
+server runtimes can expose existing tags to external clients.
 
 ## Concepts
 
@@ -404,6 +405,189 @@ DB1.DBD0
 S7-1200/1500 controllers require PUT/GET enabled and non-optimized DBs for
 absolute addressing. S7-300/400 use absolute addressing normally.
 
+## ADLINK DASK I/O driver
+
+The public driver name is `adlink`. It is a Windows x64 driver and uses the
+vendor DASK DLL through `ctypes`; it does not use the native FalcoCV kernel.
+
+Supported models are the DASK card types from the vendor enum, including
+`USB-7250`, `PCI-7250`, the PCI-72xx/74xx digital cards, the PCI-91xx/92xx
+analog cards and the PCIe DASK models. The model selector is generated from one
+registry, so new card ids only need to be added once.
+
+Supported addresses:
+
+```text
+DI0.3    digital input, port 0, line 3       bool, access r
+DO0.3    digital output, port 0, line 3      bool, access r or rw
+AI0      analog input, channel 0             float, access r
+AO0      analog output, channel 0            float, access rw
+```
+
+- Digital input reads use `DI_ReadLine` / `UD_DI_ReadLine`; port reads are
+  grouped with `DI_ReadPort` when several tags share a port.
+- Digital output writes use `DO_WriteLine` / `UD_DO_WriteLine`; reading an
+  output uses `DO_ReadLine` / `UD_DO_ReadLine`.
+- `AI` uses `AI_VReadChannel` / `UD_AI_VReadChannel` and the device
+  `ai_range` setting.
+- `AO` uses `AO_VWriteChannel` / `UD_AO_VWriteChannel`. There is no DASK
+  analog-output readback, so reading an `AO` tag returns the last value written
+  by FalcoCV.
+- `verify_writes` verifies digital outputs only; it is disabled by default.
+  `verify_delay_ms` (default 20 ms) waits for relay outputs to settle before
+  reading them back.
+- If a selected card does not implement an address family, DASK returns a
+  clear error instead of silently reading a wrong value. Common DASK codes are
+  translated, including `-302` (USB module/driver not found), `-31` (invalid
+  digital port) and `-32` (invalid digital line).
+- The verified USB-7250 has one 8-bit input port and one 8-bit output port:
+  `DI0.0..7` and `DO0.0..7`. Other models keep the generic port/line limits
+  until their capabilities are verified.
+
+The model, card number and optional DLL path are configured per device. The
+default DLL search is the per-user native folder, so the vendor SDK does not
+need to be in the project or in `C:\TS_LIB`. For a USB-7250 select
+`USB-7250` and provide `USB-Dask64.dll` (plus the SDK dependencies) in that
+folder.
+
+## Modbus TCP
+
+### Client
+
+The public driver name is `modbus_tcp`. It uses `pymodbus` and supports:
+
+```text
+coil:0                 bool, read/write
+discrete:0             bool, read-only
+holding:0              int16
+input:0                int16, read-only
+holding:0.3            bit 3 of a holding register
+holding:100:int32      signed 32-bit value in two registers
+holding:100:uint32     unsigned 32-bit value in two registers
+holding:100:float32    IEEE-754 float in two registers
+```
+
+The device config contains `host`, `port`, `unit_id`, `timeout` and
+`word_order`. `verify_writes` and `write_retries` follow the same behavior as
+the PLC drivers. Modbus TCP has no authentication; only expose it on a trusted
+network.
+
+### Server
+
+The **Servers** tab can create one or more `modbus_tcp_server` entries. A
+mapping is explicit:
+
+```json
+{
+  "address": "coil:0",
+  "tag": "plc.trigger",
+  "access": "rw"
+}
+```
+
+The stored form uses the same `coil:N`, `discrete:N`, `holding:N` and
+`input:N` address syntax. `coil` and `holding` can be `rw`; `discrete` and
+`input` are read-only. The server reads from the existing `CommsManager` tag
+store and external writes call `CommsManager.write()`; it never opens a second
+device connection.
+
+## OPC UA
+
+### Client
+
+The public driver name is `opcua`. It uses `asyncua` and addresses tags by
+NodeId:
+
+```text
+ns=2;s=MAIN.Count
+```
+
+The endpoint is required. Username/password are optional; the first release
+uses anonymous/no-security when they are empty. The client uses a dedicated
+background asyncio loop per device, so it remains synchronous to the
+`CommsManager` API.
+
+### Server
+
+The **Servers** tab can create an `opcua_server`. Mappings use a NodeId and an
+existing tag id:
+
+```json
+{
+  "address": "ns=2;s=Trigger",
+  "tag": "plc.trigger",
+  "access": "rw"
+}
+```
+
+`node_id` is accepted as an alias for `address` in OPC UA mappings.
+
+The server creates a `FalcoCV` folder under the configured namespace, publishes
+the variables and maps external writes back to `CommsManager`. The initial
+release is anonymous/no-security; certificates and strong security policies
+are the next hardening step.
+
+## Native libraries
+
+Vendor native libraries are not bundled in the wheel. FalcoCV resolves them
+from this order:
+
+1. an explicit per-device `dll_path` (file or directory);
+2. `FALCOCV_NATIVE_DIR`, when set for a portable installation;
+3. `%APPDATA%/FalcoCV/native/<driver>` on Windows
+   (`$XDG_DATA_HOME/FalcoCV/native/<driver>` elsewhere);
+4. the normal system library search path.
+
+The expected ADLINK location is:
+
+```text
+%APPDATA%\FalcoCV\native\adlink\
+  PCI-Dask64.dll
+  USB-Dask64.dll
+  (...other DASK dependencies...)
+```
+
+Copy the complete DASK SDK files, not only the main DLL. The driver adds that
+folder to the Windows DLL search path before loading the card library.
+
+For Beckhoff, `TcAdsDll.dll` can be provided by a TwinCAT installation or
+copied to `%APPDATA%/FalcoCV/native/beckhoff/`. The ADS route still has to be
+configured in TwinCAT.
+
+Siemens does not need a native library: the `snap7` package used by FalcoCV is
+pure Python. `python-snap7` 3.x does not require the old `snap7.dll`.
+
+The diagnostics command reports the resolved paths and expected folders:
+
+```bash
+falcocv native-deps
+```
+
+For a portable test environment, create a fresh Python 3.13 x64 venv, install
+the package with `.[plc]`, copy the vendor DLL folder to the target machine and
+run `falcocv native-deps` before opening the HMI Designer.
+
+## Driver setup in the HMI Designer
+
+The Communications tab checks the selected driver automatically:
+
+- If the ADLINK DASK runtime is found, it shows
+  `ADLINK DASK runtime: detected` and a **Test card** button. The DLL path
+  field is hidden.
+- If it is missing, it shows the exact package to install for the selected
+  card model and `How to install`, `Recheck` and **Select DLL folder** actions.
+  The native folder and manual path are an advanced fallback.
+- For Beckhoff, the tab reports `pyads` and `TcAdsDll.dll` separately. A
+  `PENDING ADS route` status is always shown until **Test connection** succeeds,
+  because a valid DLL does not prove that the TwinCAT route exists.
+- `Check` reports missing native dependencies. Deploy blocks on missing
+  dependencies; an unverified ADS route asks for confirmation so a correctly
+  configured remote worker is not rejected locally.
+
+FalcoCV does not redistribute the vendor SDKs. The help dialog contains the
+install text and stable vendor support links; the diagnostic command remains
+the source of truth for paths and architecture.
+
 ## Driver dependencies
 
 Install all PLC libraries with:
@@ -413,7 +597,19 @@ pip install -e ".[plc]"
 ```
 
 The extra installs `aphyt`, `pyads` and `python-snap7`. Driver imports are lazy,
-so FalcoCV still starts when one of them is missing.
+so FalcoCV still starts when one of them is missing. ADLINK has no pip package;
+the vendor DASK DLL is handled by the native-library search above.
+
+Modbus and OPC UA use a separate extra:
+
+```bash
+pip install -e ".[protocols]"
+```
+
+It installs `pymodbus` and `asyncua`. These libraries are pure Python and need
+no native DLL. Client imports are lazy and server configuration can be edited
+without them; starting a client/server without the extra reports a clear
+missing-package error.
 
 ## Driver batching
 
@@ -471,8 +667,9 @@ The tag model is the seam for future drivers:
 
 - raw TCP / framed sockets;
 - Modbus TCP;
+- OPC UA;
 - other PLCs;
-- future MQTT/OPC UA adapters.
+- future MQTT adapters.
 
 Future HMI widgets will read the same `TagStore`:
 

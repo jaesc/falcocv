@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import importlib.util
+import sys
 import threading
 from typing import Any
+
+from falcocv.core.native_deps import (
+    add_native_dll_directory,
+    resolve_tcads_dll,
+)
 
 from ..base import (
     CommsError,
@@ -12,6 +19,7 @@ from ..base import (
     TagDef,
     coerce_tag_value,
 )
+from ..dependencies import DependencyStatus
 from .schema import ConfigField, DriverSchema
 from .verify import values_match
 
@@ -55,12 +63,20 @@ BECKHOFF_SCHEMA = DriverSchema(
 )
 
 
+_NATIVE_DLL_HANDLE = None
+
+
 def _create_client(config: DeviceConfig):
+    global _NATIVE_DLL_HANDLE
+    if _NATIVE_DLL_HANDLE is None:
+        _NATIVE_DLL_HANDLE = add_native_dll_directory("beckhoff")
     try:
         import pyads
     except Exception as exc:
         raise CommsError(
-            "driver 'beckhoff' requires the pyads package",
+            "driver 'beckhoff' requires pyads and TcAdsDll.dll "
+            "(install TwinCAT or put TcAdsDll.dll in the native/beckhoff "
+            "folder)",
             device=config.id,
             cause=exc,
         ) from exc
@@ -83,6 +99,89 @@ def _status_ok(status: Any) -> bool:
 class BeckhoffAdsDriver(DeviceDriver):
     driver_name = "beckhoff"
     config_schema = BECKHOFF_SCHEMA
+
+    @classmethod
+    def check_dependencies(cls, config: dict) -> tuple[DependencyStatus, ...]:
+        pyads_installed = importlib.util.find_spec("pyads") is not None
+        tcads = resolve_tcads_dll()
+        statuses: list[DependencyStatus] = []
+        statuses.append(
+            DependencyStatus(
+                "pyads",
+                "pyads package",
+                "ok" if pyads_installed else "missing",
+                (
+                    "pyads is installed."
+                    if pyads_installed
+                    else "Install the FalcoCV plc extra (pyads)."
+                ),
+                help_key="Beckhoff driver",
+            )
+        )
+        if not tcads.found:
+            statuses.append(
+                DependencyStatus(
+                    "tcads",
+                    "TwinCAT ADS runtime",
+                    "missing",
+                    "Install TwinCAT 3 x64 or provide TcAdsDll.dll in the "
+                    "native/beckhoff folder.",
+                    help_key="Beckhoff driver",
+                )
+            )
+            return tuple(statuses)
+
+        tcads_state = "ok"
+        tcads_detail = "TcAdsDll.dll detected."
+        if (
+            sys.maxsize > 2**32
+            and "common32" in str(tcads.path).lower()
+        ):
+            tcads_state = "error"
+            tcads_detail = (
+                "A 32-bit TcAdsDll.dll was found; install TwinCAT x64 for "
+                "64-bit Python."
+            )
+        statuses.append(
+            DependencyStatus(
+                "tcads",
+                "TwinCAT ADS runtime",
+                tcads_state,
+                tcads_detail,
+                help_key="Beckhoff driver",
+            )
+        )
+        if pyads_installed and tcads_state == "ok":
+            statuses.append(
+                DependencyStatus(
+                    "ads_route",
+                    "ADS route",
+                    "unknown",
+                    "Configure an ADS route from this PC to the target "
+                    "AMS Net ID.",
+                    help_key="Beckhoff driver",
+                    test_kind="ads_connection",
+                )
+            )
+        return tuple(statuses)
+
+    @classmethod
+    def probe(cls, config: dict) -> str:
+        device = DeviceConfig(
+            id="probe",
+            driver=cls.driver_name,
+            config=dict(config),
+        )
+        client = _create_client(device)
+        try:
+            client.open()
+            client.read_state()
+            return "ADS connection OK"
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     def __init__(self, config: DeviceConfig):
         super().__init__(config)

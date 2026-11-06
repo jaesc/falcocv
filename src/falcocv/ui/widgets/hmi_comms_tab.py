@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import copy
 import json
+from dataclasses import replace
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -36,9 +39,15 @@ from PyQt6.QtWidgets import (
 )
 
 from falcocv.comms import validate_comms_config
-from falcocv.comms.drivers import available_drivers, get_driver_schema
+from falcocv.comms.drivers import (
+    available_drivers,
+    driver_dependencies,
+    driver_probe,
+    get_driver_schema,
+)
 from falcocv.comms.drivers.schema import DriverSchema, field_keys
 from falcocv.core.hmi import HMIProject
+from falcocv.core.native_deps import native_driver_dir
 
 _TAG_COLUMNS = (
     "Name",
@@ -98,6 +107,11 @@ class HMICommsWidget(QWidget):
         self._driver_schema = get_driver_schema("dummy")
         self._config_widgets: dict[str, QWidget] = {}
         self._validation_warnings: list[str] = []
+        self._dependency_statuses = ()
+        self._dependency_timer = QTimer(self)
+        self._dependency_timer.setSingleShot(True)
+        self._dependency_timer.setInterval(250)
+        self._dependency_timer.timeout.connect(self._update_dependency_status)
         self._build()
         self._load_devices()
 
@@ -185,6 +199,35 @@ class HMICommsWidget(QWidget):
         self.advanced_edit.hide()
         device_form.addRow(self.advanced_check)
         device_form.addRow(self.advanced_edit)
+
+        self.dependency_group = QGroupBox("Driver setup")
+        dependency_layout = QVBoxLayout(self.dependency_group)
+        self.dependency_label = QLabel("")
+        self.dependency_label.setWordWrap(True)
+        dependency_layout.addWidget(self.dependency_label)
+        dependency_buttons = QHBoxLayout()
+        self.dependency_recheck = QPushButton("Recheck")
+        self.dependency_help = QPushButton("How to install")
+        self.dependency_test = QPushButton("Test connection")
+        self.dependency_path = QPushButton("Select DLL folder...")
+        for button in (
+            self.dependency_recheck,
+            self.dependency_help,
+            self.dependency_test,
+            self.dependency_path,
+        ):
+            button.setAutoDefault(False)
+            dependency_buttons.addWidget(button)
+        dependency_buttons.addStretch()
+        dependency_layout.addLayout(dependency_buttons)
+        self.dependency_group.hide()
+        device_form.addRow(self.dependency_group)
+        self.dependency_recheck.clicked.connect(
+            self._update_dependency_status
+        )
+        self.dependency_help.clicked.connect(self._open_dependency_help)
+        self.dependency_test.clicked.connect(self._test_dependency)
+        self.dependency_path.clicked.connect(self._choose_dll_folder)
 
         self.device_id.textChanged.connect(self._on_device_id_changed)
         self.enabled_check.toggled.connect(self._mark_dirty)
@@ -282,6 +325,138 @@ class HMICommsWidget(QWidget):
     def _mark_dirty(self, *_args):
         if not self._loading:
             self.modified.emit()
+            self._dependency_timer.start()
+
+    def _dependency_config_snapshot(self) -> dict:
+        row = self._current_row
+        if row < 0 or row >= len(self._devices()):
+            return {}
+        device = copy.deepcopy(self._devices()[row])
+        try:
+            device["config"] = self._collect_config()
+        except (ValueError, TypeError):
+            pass
+        return device
+
+    def _update_dependency_status(self):
+        if self._loading:
+            return
+        driver = self.driver_combo.currentText()
+        device = self._dependency_config_snapshot()
+        statuses = driver_dependencies(driver, device.get("config", {}))
+        self._dependency_statuses = statuses
+        if not statuses:
+            self.dependency_group.hide()
+            return
+
+        state_prefix = {
+            "ok": "OK",
+            "missing": "MISSING",
+            "error": "ERROR",
+            "unknown": "PENDING",
+        }
+        lines = []
+        for status in statuses:
+            line = f"{state_prefix[status.state]}  {status.label}"
+            if status.detail:
+                line += f": {status.detail}"
+            lines.append(line)
+        self.dependency_label.setText("\n".join(lines))
+
+        has_blocking = any(status.blocking for status in statuses)
+        has_unknown = any(status.state == "unknown" for status in statuses)
+        color = "#f14c4c" if has_blocking else (
+            "#d19a00" if has_unknown else "#4ec9b0"
+        )
+        self.dependency_label.setStyleSheet(f"color: {color};")
+        self.dependency_help.setVisible(has_blocking or has_unknown)
+        self.dependency_help.setText(
+            "How to configure" if driver == "beckhoff" else "How to install"
+        )
+        self.dependency_path.setVisible(
+            driver == "adlink" and has_blocking
+        )
+        can_test = (
+            not has_blocking
+            and any(status.test_kind for status in statuses)
+        )
+        self.dependency_test.setVisible(can_test)
+        self.dependency_test.setEnabled(can_test)
+        self.dependency_test.setText(
+            "Test card" if driver == "adlink" else "Test connection"
+        )
+        self.dependency_group.show()
+
+    def _open_dependency_help(self):
+        from falcocv.ui.widgets.help_dialog import ToolHelpDialog
+
+        key = next(
+            (
+                status.help_key
+                for status in self._dependency_statuses
+                if status.help_key
+            ),
+            "HMI Communications",
+        )
+        ToolHelpDialog(parent=self, preselected_key=key).exec()
+
+    def _choose_dll_folder(self):
+        widget = self._config_widgets.get("dll_path")
+        if not isinstance(widget, QLineEdit):
+            return
+        current = widget.text().strip()
+        initial = current or str(native_driver_dir("adlink"))
+        path = QFileDialog.getExistingDirectory(
+            self, "Select ADLINK DASK folder", initial
+        )
+        if path:
+            widget.setText(path)
+            self._update_dependency_status()
+
+    def _test_dependency(self):
+        driver = self.driver_combo.currentText()
+        device = self._dependency_config_snapshot()
+        if not device:
+            return
+        self.dependency_test.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            message = driver_probe(driver, device.get("config", {}))
+        except Exception as exc:
+            self.dependency_help.setVisible(True)
+            self.dependency_label.setStyleSheet("color: #f14c4c;")
+            self.dependency_label.setText(
+                "Connection test failed:\n" + str(exc)
+            )
+            self._dependency_statuses = tuple(
+                replace(
+                    status,
+                    state="error",
+                    detail=str(exc),
+                )
+                if status.test_kind
+                else status
+                for status in self._dependency_statuses
+            )
+        else:
+            self.dependency_help.setVisible(False)
+            self.dependency_label.setStyleSheet("color: #4ec9b0;")
+            self.dependency_label.setText(message)
+            self._dependency_statuses = tuple(
+                replace(
+                    status,
+                    state="ok",
+                    detail=message,
+                )
+                if status.test_kind
+                else status
+                for status in self._dependency_statuses
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.dependency_test.setEnabled(
+                self.dependency_test.isVisible()
+            )
 
     def _device_label(self, device_id: str, driver: str) -> str:
         return f"{device_id.strip() or '?'}  [{driver}]"
@@ -319,6 +494,7 @@ class HMICommsWidget(QWidget):
         finally:
             self._loading = False
         self._update_validation_label()
+        self._update_dependency_status()
 
     def _clear_device_form(self):
         self._current_row = -1
@@ -460,6 +636,7 @@ class HMICommsWidget(QWidget):
             self._load_device(row)
         finally:
             self._loading = False
+        self._update_dependency_status()
 
     def _capture_current(self, allow_incomplete: bool = True) -> bool:
         """Copy the current form and tag table into the in-memory draft.
@@ -604,6 +781,11 @@ class HMICommsWidget(QWidget):
             self._set_config_value(widget, config.get(field.key, field.default))
             self._config_widgets[field.key] = widget
             self.config_layout.addRow(field.label + ":", widget)
+            label = self.config_layout.labelForField(widget)
+            if field.key == "dll_path":
+                widget.hide()
+                if label is not None:
+                    label.hide()
             self._connect_config_widget(widget)
 
         self._apply_conditional_visibility()
@@ -772,6 +954,7 @@ class HMICommsWidget(QWidget):
         finally:
             self._loading = False
         self._update_validation_label()
+        self._update_dependency_status()
         self.modified.emit()
 
     def _has_pending_driver_data(self) -> bool:
@@ -1006,6 +1189,22 @@ class HMICommsWidget(QWidget):
         return True
 
     # ── validation / persistence ──────────────────────────────────────────
+
+    def dependency_warnings(self):
+        """Return current non-OK dependency statuses for Check/Deploy."""
+
+        if not self._dependency_statuses and self._current_row >= 0:
+            self._update_dependency_status()
+        return tuple(
+            status
+            for status in self._dependency_statuses
+            if status.state != "ok"
+        )
+
+    def dependency_blockers(self):
+        return tuple(
+            status for status in self.dependency_warnings() if status.blocking
+        )
 
     def _set_validation_warnings(self, warnings):
         self._validation_warnings = list(warnings)
