@@ -59,10 +59,11 @@ def _native_deps_report() -> int:
     print(
         "siemens:  "
         + (
-            "python-snap7 installed (pure Python; no native DLL required)"
+            "python-snap7 installed"
             if snap7_installed
             else "python-snap7 is not installed"
         )
+        + " (pure Python; no native DLL required)"
     )
     pymodbus_installed = importlib.util.find_spec("pymodbus") is not None
     asyncua_installed = importlib.util.find_spec("asyncua") is not None

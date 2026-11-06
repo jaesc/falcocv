@@ -236,6 +236,11 @@ def test_beckhoff_dependency_status_reports_route(monkeypatch, tmp_path):
         "resolve_tcads_dll",
         lambda: NativeLibrary(dll, "test"),
     )
+    monkeypatch.setattr(
+        beckhoff_driver.importlib.util,
+        "find_spec",
+        lambda name: object() if name == "pyads" else None,
+    )
 
     statuses = beckhoff_driver.BeckhoffAdsDriver.check_dependencies({})
     states = {status.key: status.state for status in statuses}

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from falcocv.comms import CommsError, parse_comms_config
@@ -339,6 +341,9 @@ def test_adlink_ao_read_is_cached_value():
     assert driver.read(tag) == 2.25
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="ADLINK DASK is Windows-only"
+)
 def test_adlink_dependency_status_and_probe(monkeypatch, tmp_path):
     from pathlib import Path
 
@@ -368,6 +373,9 @@ def test_adlink_dependency_status_and_probe(monkeypatch, tmp_path):
     assert api.release_calls
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32", reason="ADLINK DASK is Windows-only"
+)
 def test_adlink_dependency_status_is_missing_without_runtime(monkeypatch):
     from falcocv.core.native_deps import NativeLibrary
 
