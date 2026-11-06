@@ -35,6 +35,23 @@ Missing hole (NG):
 
 ![NG result](result_ng.jpg)
 
+## Dashboard demo
+
+`demo_dashboard.hmi` is a richer HMI project built around the same inspection
+job. It contains:
+
+- an `inspection` slot pointing at `demo_inspection.cvj`;
+- a title, status indicator, result LED, result image, hole-distance field and
+  runtime log;
+- a demo script that runs the slot every two seconds and publishes the cycle
+  state and log messages.
+
+Open the project in **HMI Designer** to edit the layout and preview it, then
+use **Deploy** to send it to the web server. The dashboard is available at
+`http://localhost:8000/?id=demo` after deployment.
+
+![HMI dashboard preview](../docs/images/hmi-dashboard.png)
+
 ## Dataset
 
 `images/` contains 14 rendered scenes (1280x960) plus `manifest.json` with the

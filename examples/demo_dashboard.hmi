@@ -1,0 +1,129 @@
+{
+  "version": "1.0",
+  "project_id": "demo",
+  "slots": [
+    {
+      "name": "inspection",
+      "job_path": "examples/demo_inspection.cvj"
+    }
+  ],
+  "layout": {
+    "rows": 56,
+    "cols": 100,
+    "tag_refresh_ms": 500,
+    "widgets": [
+      {
+        "id": "title",
+        "type": "TextLabel",
+        "name": "Title",
+        "x": 2,
+        "y": 1,
+        "w": 62,
+        "h": 4,
+        "z": 0,
+        "label": "FalcoCV  |  INSPECTION STATION",
+        "font_size": 26,
+        "halign": "left"
+      },
+      {
+        "id": "subtitle",
+        "type": "TextLabel",
+        "name": "Subtitle",
+        "x": 2,
+        "y": 4,
+        "w": 62,
+        "h": 2,
+        "z": 1,
+        "label": "Synthetic bracket inspection  |  Shape Match + Blob Detector + Measurement",
+        "font_size": 12,
+        "halign": "left"
+      },
+      {
+        "id": "status",
+        "type": "StatusIndicator",
+        "name": "InspectionStatus",
+        "x": 3,
+        "y": 8,
+        "w": 15,
+        "h": 10,
+        "z": 2,
+        "label": "INSPECTION",
+        "slot": "inspection"
+      },
+      {
+        "id": "led",
+        "type": "LedIndicator",
+        "name": "PartLed",
+        "x": 20,
+        "y": 8,
+        "w": 11,
+        "h": 10,
+        "z": 3,
+        "label": "PART",
+        "slot": "inspection"
+      },
+      {
+        "id": "image",
+        "type": "ImageViewer",
+        "name": "ResultImage",
+        "x": 33,
+        "y": 8,
+        "w": 65,
+        "h": 32,
+        "z": 4,
+        "slot": "inspection",
+        "output": "Measurement > output image",
+        "label": "RESULT IMAGE"
+      },
+      {
+        "id": "distance",
+        "type": "MeasureLabel",
+        "name": "HoleDistance",
+        "x": 3,
+        "y": 20,
+        "w": 28,
+        "h": 10,
+        "z": 5,
+        "slot": "inspection",
+        "output": "Measurement > results",
+        "field": "[0].value",
+        "label": "HOLE DISTANCE",
+        "min": 12.5,
+        "max": 15.5,
+        "halign": "center"
+      },
+      {
+        "id": "log",
+        "type": "LogPanel",
+        "name": "RuntimeLog",
+        "x": 3,
+        "y": 32,
+        "w": 28,
+        "h": 20,
+        "z": 6
+      },
+      {
+        "id": "footer",
+        "type": "TextLabel",
+        "name": "Footer",
+        "x": 33,
+        "y": 42,
+        "w": 65,
+        "h": 3,
+        "z": 7,
+        "label": "LIVE  |  demo project  |  cycle running",
+        "font_size": 12,
+        "halign": "right"
+      }
+    ]
+  },
+  "script": "# Demo HMI: run the inspection job and publish its result\nlog(\"Inspection station ready\")\nwhile True:\n    set_slot_status(\"inspection\", \"pending\")\n    run_slot(\"inspection\")\n    set_slot_status(\"inspection\", \"pass\")\n    log(\"Bracket inspected: PASS\")\n    sleep(2)\n",
+  "comms": {
+    "version": 1,
+    "devices": []
+  },
+  "servers": {
+    "version": 1,
+    "servers": []
+  }
+}

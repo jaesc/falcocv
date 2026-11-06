@@ -53,6 +53,43 @@ operator dashboards.
 - **Camera acquisition** — GigE Vision and USB3 Vision cameras through Harvesters
   and a vendor GenTL producer.
 
+## Screenshots
+
+Generated with the bundled demo project by
+[`scripts/capture_readme_screenshots.py`](scripts/capture_readme_screenshots.py).
+The 3D view uses a synthetic point cloud; the HMI dashboard image is the
+Designer preview with representative runtime values.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/vision-editor.png" alt="FalcoCV Vision Editor"></td>
+    <td width="50%"><img src="docs/images/vision-3d.png" alt="FalcoCV 3D point-cloud viewer"></td>
+  </tr>
+  <tr>
+    <td><b>Vision Editor</b><br>Workflow, result image and per-tool timing for the
+      demo inspection job.</td>
+    <td><b>3D analysis</b><br>Interactive point-cloud viewer with a world-space
+      ROI and world-coordinate navigation.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/hmi-designer.png" alt="FalcoCV HMI Designer"></td>
+    <td><img src="docs/images/hmi-dashboard.png" alt="FalcoCV HMI dashboard preview"></td>
+  </tr>
+  <tr>
+    <td><b>HMI Designer</b><br>Job slots, dashboard widgets, live preview and
+      deployment controls.</td>
+    <td><b>HMI dashboard</b><br>Operator view with verdict, measurement and
+      runtime log (preview data).</td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/images/hmi-servers.png" alt="FalcoCV Modbus and OPC UA server mappings"></td>
+  </tr>
+  <tr>
+    <td colspan="2"><b>Communications servers</b><br>Explicit Modbus TCP and
+      OPC UA mappings exposed from HMI communications tags.</td>
+  </tr>
+</table>
+
 ## Install
 
 FalcoCV is distributed as a wheel for Windows x86_64 and Linux x86_64
