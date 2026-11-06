@@ -1428,7 +1428,11 @@ TOOL_HELP["HMI Project"] = {
         "<code>elif ok is False:</code><br>"
         "<code>&nbsp;&nbsp;&nbsp;&nbsp;log('Skipped', level='warning')</code><br>"
         "<code>else:</code><br>"
-        "<code>&nbsp;&nbsp;&nbsp;&nbsp;log('Cancelled')</code>"
+        "<code>&nbsp;&nbsp;&nbsp;&nbsp;log('Cancelled')</code><br><br>"
+        "<b>Workspace layout:</b> window geometry, panel splitters, dock "
+        "placement and table column widths are restored between runs. "
+        "<b>View &gt; Reset all views</b> returns the current workspace to "
+        "its defaults."
     ),
     "see_also": ["ImageViewer", "MeasureLabel", "StatusIndicator", "TextLabel", "LogPanel"],
 }
@@ -1454,7 +1458,8 @@ TOOL_HELP["HMI Communications"] = {
         {"name": "Access", "default": "rw", "description": "<code>r</code> is read-only; <code>rw</code> allows reads and writes. Write-only tags are not supported."},
         {"name": "Poll ms", "default": "0", "description": "0 reads on demand; N &gt; 0 polls the tag in the background every N ms and updates the tag store and on_change callbacks. It does not change the dashboard refresh rate."},
         {"name": "Length", "default": "—", "description": "Maximum string length. Required for Siemens S7 <code>STRING[n]</code> tags using a <code>DB1.DBB...</code> address."},
-        {"name": "Verify writes", "default": "false", "description": "When enabled, each written batch is read back once and compared. There are no automatic write retries. Disable it for command bits that the PLC resets immediately."},
+        {"name": "Verify writes", "default": "false", "description": "When enabled, each written batch is read back once and compared. Without it the driver trusts the library response and never reads back or retries."},
+        {"name": "Write retries", "default": "0", "description": "Visible only when Verify writes is enabled. Extra write + verify attempts after a verification mismatch: 0 means one attempt, 1 means up to two attempts, and so on. Write/read transport errors are not retried. Disable verification for command bits that the PLC resets immediately."},
         {"name": "comms.read(tag_id)", "default": "—", "description": "Read one tag immediately and return its value."},
         {"name": "comms.write(tag_id, value)", "default": "—", "description": "Write one tag. The manager checks access and value type."},
         {"name": "comms.read_many(tag_ids)", "default": "—", "description": "Read several tags; drivers batch the device I/O where possible."},
@@ -1472,7 +1477,16 @@ TOOL_HELP["HMI Communications"] = {
         "read_list_by_name/write_list_by_name batch; its optional IP is only needed "
         "for Linux or routed/NAT ADS routes. <b>siemens</b> uses standard absolute "
         "S7 addresses, groups DB/area byte ranges, and supports S7 STRING[n] tags "
-        "with the Length field.</p>"
+        "with the Length field. Changing the driver offers <b>Keep tags</b>, "
+        "<b>Delete tags</b> or <b>Cancel</b>; Keep preserves tag metadata and "
+        "clears only the driver-specific addresses and configuration.</p>"
+        "<h3>Incomplete configurations</h3>"
+        "<p>A draft may omit required driver fields (for example a Siemens "
+        "<code>host</code>) or leave tag addresses empty. Save accepts it and "
+        "the Communications tab shows a warning. Check reports the missing "
+        "fields; Deploy, local Signal Monitor Connect and worker startup block "
+        "until the configuration is complete. Structural errors such as a "
+        "duplicate device or an invalid tag default still block saving.</p>"
         "<h3>Dependencies</h3>"
         "<p>Install all PLC libraries with <code>pip install \"falcocv[plc]\"</code> "
         "(or <code>pip install -e \".[plc]\"</code> from source). This installs "
@@ -1480,8 +1494,9 @@ TOOL_HELP["HMI Communications"] = {
         "Imports are lazy, so the project can be edited without them.</p>"
         "<h3>Signal Monitor</h3>"
         "<p><b>Local test</b> uses the current Communications working copy, so "
-        "saving is not required before Connect. It reports an error when no device "
-        "is connected or when every tag read fails. <b>Live worker</b> reads and "
+        "saving is not required before Connect, but the configuration must be "
+        "complete. It reports an error when no device is connected or when every "
+        "tag read fails. <b>Live worker</b> reads and "
         "writes the deployed worker through HTTP and never opens a second PLC "
         "connection.</p>"
         "<h3>Dashboard</h3>"

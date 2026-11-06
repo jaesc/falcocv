@@ -9,9 +9,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from falcocv.comms import (
+    CommsConfigError,
     CommsManager,
     default_comms_config,
     parse_comms_config,
+    validate_comms_config,
 )
 from falcocv.core.workflow import Workflow
 from falcocv.core.workflow_controller import WorkflowController
@@ -297,6 +299,12 @@ class HMIProject:
         return proj
 
     def save(self, path: str):
+        result = validate_comms_config(self.comms_config)
+        if result.errors:
+            raise CommsConfigError(
+                "Communications configuration is invalid:\n"
+                + "\n".join(f"• {message}" for message in result.errors)
+            )
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
 

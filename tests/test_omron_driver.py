@@ -67,7 +67,7 @@ class _FakeClient:
         self.dictionary_calls.append("load_if_present")
 
 
-def _config(ttl=1000, verify=False):
+def _config(ttl=1000, verify=False, retries=0):
     return {
         "version": 1,
         "devices": [
@@ -78,6 +78,7 @@ def _config(ttl=1000, verify=False):
                     "host": "192.168.1.10",
                     "snapshot_ttl_ms": ttl,
                     "verify_writes": verify,
+                    "write_retries": retries,
                 },
                 "tags": [
                     {
@@ -107,8 +108,9 @@ def test_omron_schema_has_no_dictionary_file():
     assert "host" in fields
     assert "snapshot_ttl_ms" in fields
     assert "dictionary_file" not in fields
-    assert "write_retries" not in fields
     assert fields["verify_writes"].default is False
+    assert fields["write_retries"].default == 0
+    assert fields["write_retries"].visible_when == ("verify_writes", True)
 
     config = _config()
     config["devices"][0]["config"]["dictionary_file"] = "legacy.pkl"
@@ -195,6 +197,23 @@ def test_omron_verify_writes_is_off_by_default(monkeypatch):
         driver.stop()
 
 
+def test_omron_verify_false_ignores_retries(monkeypatch):
+    client = _FakeClient(
+        {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}}
+    )
+    monkeypatch.setattr(omron_driver, "_create_client", lambda host: client)
+    device = parse_comms_config(_config(verify=False, retries=3)).devices[0]
+    driver = omron_driver.OmronFastDriver(device)
+
+    driver.start()
+    try:
+        driver.write(device.tags[1], 11)
+        assert client.write_calls == 1
+        assert client.read_calls == 1
+    finally:
+        driver.stop()
+
+
 def test_omron_write_failure_is_not_retried(monkeypatch):
     client = _FakeClient(
         {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}},
@@ -231,6 +250,46 @@ def test_omron_verification_failure_invalidates_cache_without_retry(
             driver.write(device.tags[1], 11)
         assert client.write_calls == 1
         assert driver.read(device.tags[1]) == 7
+    finally:
+        driver.stop()
+
+
+def test_omron_verification_retries_until_match(monkeypatch):
+    client = _FakeClient(
+        {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}},
+        reject_writes=1,
+    )
+    monkeypatch.setattr(omron_driver, "_create_client", lambda host: client)
+    device = parse_comms_config(
+        _config(verify=True, retries=1)
+    ).devices[0]
+    driver = omron_driver.OmronFastDriver(device)
+
+    driver.start()
+    try:
+        driver.write(device.tags[1], 11)
+        assert client.write_calls == 2
+        assert driver.read(device.tags[1]) == 11
+    finally:
+        driver.stop()
+
+
+def test_omron_verify_true_does_not_retry_write_errors(monkeypatch):
+    client = _FakeClient(
+        {"Vision": {"Trigger": _Item(False), "Count": _Item(7)}},
+        fail_writes=1,
+    )
+    monkeypatch.setattr(omron_driver, "_create_client", lambda host: client)
+    device = parse_comms_config(
+        _config(verify=True, retries=3)
+    ).devices[0]
+    driver = omron_driver.OmronFastDriver(device)
+
+    driver.start()
+    try:
+        with pytest.raises(CommsError):
+            driver.write(device.tags[1], 11)
+        assert client.write_calls == 1
     finally:
         driver.stop()
 

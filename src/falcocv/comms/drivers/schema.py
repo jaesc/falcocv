@@ -23,6 +23,7 @@ class ConfigField:
     minimum: float | None = None
     maximum: float | None = None
     secret: bool = False
+    visible_when: tuple[str, Any] | None = None
 
 
 @dataclass(frozen=True)

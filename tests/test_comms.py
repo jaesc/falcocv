@@ -13,6 +13,7 @@ from falcocv.comms import (
     CommsMonitorSession,
     DeviceDriver,
     parse_comms_config,
+    validate_comms_config,
 )
 
 
@@ -94,6 +95,64 @@ def test_parse_comms_config_builds_tag_identifiers():
 def test_invalid_comms_config_is_rejected(bad_config):
     with pytest.raises(CommsConfigError):
         parse_comms_config(bad_config)
+
+
+def test_validate_comms_config_reports_incomplete_fields():
+    config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "plc",
+                "driver": "siemens",
+                "config": {},
+                "tags": [
+                    {
+                        "name": "trigger",
+                        "address": "",
+                        "type": "bool",
+                        "access": "rw",
+                    }
+                ],
+            }
+        ],
+    }
+
+    result = validate_comms_config(config)
+
+    assert result.errors == ()
+    assert result.config is not None
+    assert result.is_complete is False
+    assert any("config.host is required" in item for item in result.warnings)
+    assert any("address is required" in item for item in result.warnings)
+    assert result.config.devices[0].tags[0].address == ""
+    with pytest.raises(CommsConfigError, match="config.host is required"):
+        parse_comms_config(config)
+
+
+def test_validate_comms_config_keeps_structural_errors():
+    result = validate_comms_config(
+        {
+            "version": 1,
+            "devices": [
+                {
+                    "id": "plc",
+                    "driver": "siemens",
+                    "config": {},
+                    "tags": [
+                        {
+                            "name": "trigger",
+                            "type": "int",
+                            "default": "not-an-int",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert result.config is None
+    assert result.errors
+    assert result.warnings == ()
 
 
 def test_duplicate_tag_is_rejected():

@@ -101,9 +101,10 @@ except Exception:
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSplitter, QMenu, QMessageBox, QDockWidget)
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QGuiApplication
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import QRect, Qt, QTimer
 from falcocv.ui.style import ALT_BG, apply_qt_theme, BORDER, CAUTION, COMPACT_CSS, DARK_BG, SUCCESS, TEXT_DIM
 from falcocv.ui.window_geometry import load_window_geometry, save_window_geometry
+from falcocv.ui.view_state import save_window_layout, restore_window_layout
 from falcocv.core.config import ConfigManager
 from falcocv.version import __version__, __build__, __semver__
 
@@ -165,8 +166,10 @@ class MainWindow(QMainWindow):
         )
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.toolbox_dock)
 
-        # Restore dock visibility
-        if not self.config.get_toolbox_visible():
+        # Restore dock layout when available; fall back to the legacy visibility
+        # flag for configurations created before view-state persistence.
+        restored_layout = restore_window_layout(self, "main")
+        if not restored_layout and not self.config.get_toolbox_visible():
             self.toolbox_dock.hide()
 
         # Menu Bar
@@ -201,6 +204,7 @@ class MainWindow(QMainWindow):
                 tool._config_window.close()
 
         save_window_geometry(self.config, self.geometry(), self.isMaximized())
+        save_window_layout(self, "main")
         self.config.set_editor_splitter(self.editor.splitter.sizes())
         self.config.set_toolbox_visible(self.toolbox_dock.isVisible())
         self.editor.controller.run_loop_stop()
@@ -264,7 +268,7 @@ class MainWindow(QMainWindow):
         self.overlays_action.triggered.connect(self._toggle_overlays)
         view_menu.addAction(self.overlays_action)
 
-        reset_action = QAction("Reset defaults", self)
+        reset_action = QAction("Reset all views", self)
         reset_action.triggered.connect(self._reset_view_defaults)
         view_menu.addAction(reset_action)
 
@@ -324,8 +328,33 @@ class MainWindow(QMainWindow):
     def _reset_view_defaults(self):
         from falcocv.core.config import ConfigManager
         cfg = ConfigManager()
+
+        # Let open tool windows save their current geometry before the view
+        # state is cleared; they will reopen with defaults.
+        for tool in self.workflow.tools:
+            window = getattr(tool, "_config_window", None)
+            if window is not None:
+                try:
+                    window.close()
+                except Exception:
+                    pass
+
         cfg.reset_view_defaults()
+        default = cfg.defaults["window"]
+        self.showNormal()
+        self.setGeometry(
+            QRect(
+                default["x"],
+                default["y"],
+                default["width"],
+                default["height"],
+            )
+        )
         self.editor.splitter.setSizes(cfg.get_editor_splitter())
+        self.toolbox_dock.setFloating(False)
+        self.addDockWidget(
+            Qt.DockWidgetArea.LeftDockWidgetArea, self.toolbox_dock
+        )
         self.toolbox_dock.setVisible(cfg.get_toolbox_visible())
         visible = cfg.get_show_overlays()
         self.overlays_action.setChecked(visible)

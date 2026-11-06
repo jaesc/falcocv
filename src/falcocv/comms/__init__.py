@@ -15,7 +15,12 @@ from .base import (
     TagDef,
     TagValue,
 )
-from .config import default_comms_config, parse_comms_config
+from .config import (
+    CommsValidationResult,
+    default_comms_config,
+    parse_comms_config,
+    validate_comms_config,
+)
 from .manager import CommsManager
 from .monitor import CommsMonitorSession
 from .tags import TagStore
@@ -26,6 +31,7 @@ __all__ = [
     "CommsError",
     "CommsManager",
     "CommsMonitorSession",
+    "CommsValidationResult",
     "DeviceConfig",
     "DeviceDriver",
     "DeviceStatus",
@@ -34,4 +40,5 @@ __all__ = [
     "TagValue",
     "default_comms_config",
     "parse_comms_config",
+    "validate_comms_config",
 ]

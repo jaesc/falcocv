@@ -23,6 +23,11 @@ class ConfigManager:
                 "maximized": False,
                 "editor_splitter": [400, 600]
             },
+            "views": {
+                "windows": {},
+                "splitters": {},
+                "headers": {},
+            },
             "colors": {
                 "tool_input": "#4EC9B0",
                 "tool_output": "#2196F3",
@@ -196,4 +201,9 @@ class ConfigManager:
         self.data["viewer3d"] = dict(self.defaults["viewer3d"])
         self.data["resolution_mode"] = self.defaults["resolution_mode"]
         self.data["window"] = dict(self.defaults["window"])
+        self.data["views"] = {
+            "windows": {},
+            "splitters": {},
+            "headers": {},
+        }
         self.save()

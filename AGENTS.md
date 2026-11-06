@@ -223,9 +223,14 @@ cpp/bin/       → local kernel build output (gitignored)
   template document the handoff with the generic `log` callback.
 - **Communications runtime** -> `src/falcocv/comms/` owns generic devices, tags
   and quality, independent of Qt.  The optional `comms` section of `.hmi` is
-  validated by `parse_comms_config`; `HMIProject.start_runtime()` creates the
-  `CommsManager`, injects `context['comms']`, and `stop_runtime()` disconnects
-  it.  The worker starts runtime before the HMI script and stops the script
+  validated by `parse_comms_config`; `validate_comms_config` separates
+  structural errors from incompleteness warnings, so the designer can save a
+  draft with missing driver fields or empty tag addresses.  Incomplete drafts
+  are marked in the Communications tab and produce Check warnings; Deploy,
+  local Signal Monitor Connect and worker startup block until complete.
+  Structural errors still block saving.
+  `HMIProject.start_runtime()` creates the `CommsManager`, injects
+  `context['comms']`, and `stop_runtime()` disconnects it.  The worker starts runtime before the HMI script and stops the script
   before the devices.  The first driver is `dummy`; tag definitions live in
   `.hmi` while runtime values and statuses stay runtime-only.  Future
   TCP/Modbus/PLC drivers implement `DeviceDriver` and register in
@@ -264,10 +269,17 @@ cpp/bin/       → local kernel build output (gitignored)
   lazily when the driver starts.  The `beckhoff` driver uses symbolic names and
   one `read_list_by_name`/`write_list_by_name` batch; its optional IP is only for
   Linux/routed ADS routes.  The `siemens` driver uses standard absolute S7
-  addresses and groups DB/area byte ranges.  All PLC drivers default
-  `verify_writes` to false and never retry writes; when enabled they read each
-  written batch back once.  The optional `plc` extra installs `aphyt`, `pyads`
-  and `python-snap7`.
+  addresses and groups DB/area byte ranges.  Changing a device driver offers
+  Keep tags / Delete tags / Cancel; Keep preserves tag metadata and clears only
+  the driver-specific addresses and configuration.  All PLC drivers default
+  `verify_writes` to false.  Without verification they trust the library and
+  never read back or retry.  With verification they read each written batch
+  back; `write_retries` (default 0) controls extra write+verify attempts after
+  a value mismatch only, not transport errors.  The optional `plc` extra
+  installs `aphyt`, `pyads` and `python-snap7`.  Window geometry, dock state,
+  splitter sizes and table column widths persist through
+  `ConfigManager.data["views"]` using Qt geometry/state blobs; main and HMI
+  Designer `View > Reset all views` clear and reapply defaults.
 - **PlaneFitter fixed-Z ROIs** -> when every ROI has a fixed Z range, the
   native plane fit skips the full 82 MP image-range scan; it samples the image
   every 32 pixels only for the cover polygon.  The plane and polygon remain
@@ -412,7 +424,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
-## Current handoff (2026-11-05)
+## Current handoff (2026-11-06)
 
 - `dev` has the ShapeMatch v3 work and the geometry validation; `main` is the
   1.0.2 release.  No release planned.
@@ -420,7 +432,17 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   been validated against real hardware; Beckhoff and Siemens still use fake
   clients pending hardware validation.  The optional `plc` extra installs
   `aphyt`, `pyads` and `python-snap7`.  Write verification is opt-in for all
-  three; writes are never retried.
+  three; `write_retries` only applies after a verification mismatch.
+- HMI communications drafts can now be saved incomplete (missing required
+  driver fields or empty tag addresses) through `validate_comms_config`; the
+  Communications tab and HMI Designer tab show the warning.  Check reports
+  warnings; Deploy, local Signal Monitor Connect and worker startup block
+  incomplete runtime configs.  `HMIProject.save` rejects structural errors but
+  preserves incomplete drafts.  Driver changes offer Keep tags / Delete tags /
+  Cancel.
+- Window geometry, dock state, splitter sizes and table column widths persist
+  through `ConfigManager.data["views"]`; **View > Reset all views** restores
+  defaults in the main window and HMI Designer.
 - ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
   `fe8a135`): model v3, training mask, Canny / `min_gradient` /
   `max_features` controls, manual feature editor with brush, spatial feature
@@ -443,7 +465,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
   is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
   procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
-- Latest verification: `654 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
+- Latest verification: `676 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
   PASS.  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
 - Next work: validate Beckhoff ADS and Siemens S7 against real hardware.
   Omron hardware validation is complete; its automated tests still use a fake

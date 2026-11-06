@@ -144,11 +144,20 @@ Driver schemas live with the driver (`ConfigField` / `DriverSchema`); adding a
 real driver also adds its UI fields without hard-coding them in the HMI
 Designer.
 
-Changing the driver of a device with configuration or tags asks for
-confirmation. Accepting clears the driver-specific configuration, the advanced
-JSON and all tags while keeping the device ID and enabled flag; the fields are
-rebuilt with the new driver's defaults. This prevents stale dummy fields or tag
-addresses from surviving a driver change.
+Changing the driver of a device with configuration or tags asks what to do with
+its tags:
+
+- **Keep tags** preserves the tag names, types, access, polling, defaults,
+  descriptions and string lengths, but clears every address because address
+  formats are driver-specific. The tag metadata and the device ID/enabled flag
+  survive the change.
+- **Delete tags** removes the tags for that device.
+- **Cancel** keeps the current driver.
+
+Both Keep and Delete clear the old driver-specific configuration and advanced
+JSON, then rebuild the fields with the new driver's defaults. Tags kept with an
+empty address are valid draft data: they can be saved, but Deploy and Signal
+Monitor remain blocked until the addresses are filled.
 
 The device ID is updated in the Devices list while typing. Because it is part
 of every tag id (`device.tag`), changing it also rewrites tag-bound widget
@@ -185,8 +194,20 @@ New tags get a type-appropriate default: `false` for `bool`, `0` for `int`,
 automatic default, but preserves a custom value when it is valid for the new
 type.
 
-The tab validates the configuration on save, Check and Deploy. The worker is the
-only place where devices are actually opened.
+The tab distinguishes structural errors from incomplete data:
+
+- **Structural errors** (unknown driver, duplicate ids, invalid type/access or a
+  default that cannot be converted) block saving and execution.
+- **Incomplete data** (a required driver field such as Siemens `host`, or an
+  empty tag address) is allowed while editing and saving. The Communications
+  tab shows a persistent warning and the HMI Designer marks the tab as
+  `Communications ⚠`.
+
+Save and Save As accept incomplete projects, so a partially prepared
+configuration is never lost. Check reports the incomplete fields as warnings.
+Deploy, local Signal Monitor Connect and the worker startup path require a
+complete configuration and block with the list of missing fields. The worker is
+the only place where devices are actually opened.
 
 The designer edits an isolated in-memory working copy. Nothing is written to the
 `.hmi` until Save. If Deploy is pressed with unsaved changes, it offers
@@ -197,9 +218,10 @@ The **Signal Monitor** tab has two modes:
 
 - **Local test**: creates a temporary `CommsMonitorSession` from the current
   Communications working copy and starts it explicitly with **Connect**. It
-  applies the draft automatically, so saving is not required before testing.
-  It must not be used while another process owns the same hardware. A device
-  that fails to start is shown as an error, not as connected.
+  applies the draft automatically, so saving is not required before testing,
+  but the configuration must be complete. It must not be used while another
+  process owns the same hardware. A device that fails to start is shown as an
+  error, not as connected.
 - **Live worker**: talks to the deployed worker over HTTP, so it reads and writes
   the same `CommsManager` instance as the running HMI. It does not open a second
   PLC connection. The target is the server URL plus the designer project's
@@ -290,13 +312,15 @@ internally:
 - one network read per struct, shared by all requested members;
 - short-lived snapshot cache controlled by `snapshot_ttl_ms`;
 - shadow-copy writes;
-- optional one-shot read-back verification, disabled by default.
+- optional read-back verification, disabled by default;
+- optional verification retries, visible only when verification is enabled.
 
 ```json
 {
   "host": "192.168.1.10",
   "snapshot_ttl_ms": 50,
-  "verify_writes": false
+  "verify_writes": false,
+  "write_retries": 0
 }
 ```
 
@@ -319,7 +343,8 @@ The public driver name is `beckhoff`.
   "ams_net_id": "192.168.1.10.1.1",
   "ams_port": 851,
   "ip_address": "",
-  "verify_writes": false
+  "verify_writes": false,
+  "write_retries": 0
 }
 ```
 
@@ -329,8 +354,9 @@ The public driver name is `beckhoff`.
 - Tags use symbolic names, for example `MAIN.bTrigger`.
 - `read_many` uses `read_list_by_name`; `write_many` uses
   `write_list_by_name`.
-- `verify_writes=true` reads the written symbols back once. There are no write
-  retries.
+- `verify_writes=true` reads the written symbols back once.
+- `write_retries` is only visible when verification is enabled and controls
+  extra write + verify attempts after a mismatch. `0` means one attempt.
 
 The ADS route must be configured in TwinCAT before deploying.
 
@@ -344,7 +370,8 @@ The public driver name is `siemens`.
   "rack": 0,
   "slot": 1,
   "port": 102,
-  "verify_writes": false
+  "verify_writes": false,
+  "write_retries": 0
 }
 ```
 
@@ -370,8 +397,9 @@ DB1.DBD0
 - Multi-byte values are big-endian.
 - Reads and writes are grouped by area/DB and byte range; writes use
   read-modify-write to preserve neighbouring bytes.
-- `verify_writes=true` reads each written range back once. There are no write
-  retries.
+- `verify_writes=true` reads each written range back once.
+- `write_retries` is only visible when verification is enabled and controls
+  extra write + verify attempts after a mismatch. `0` means one attempt.
 
 S7-1200/1500 controllers require PUT/GET enabled and non-optimized DBs for
 absolute addressing. S7-300/400 use absolute addressing normally.
@@ -414,9 +442,11 @@ This is where protocol-specific optimizations belong:
 The core only knows `read_many(tags)` and `write_many(items)`. It does not know
 what a struct, CIP session or S7 address is.
 
-Write verification stays inside the driver and is a single optional read-back;
-writes are never retried automatically. If a batch write fails, the driver
-raises `CommsError` and the manager marks the affected tags as `bad`.
+Write verification stays inside the driver. Without verification the driver
+trusts the library response and never reads back or retries. With verification,
+`write_retries` controls extra write + verify attempts after a value mismatch;
+transport/read errors are not retried. If a batch write ultimately fails, the
+driver raises `CommsError` and the manager marks the affected tags as `bad`.
 
 ## Lifecycle
 

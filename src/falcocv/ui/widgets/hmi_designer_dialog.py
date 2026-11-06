@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QDoubleSpinBox, QDialogButtonBox, QApplication, QMenuBar,
     QTreeWidget, QTreeWidgetItem, QInputDialog, QMenu,
     QAbstractItemView, QStyle, QFileIconProvider, QRadioButton,
-    QColorDialog, QFrame,
+    QColorDialog, QFrame, QHeaderView,
 )
 
 from falcocv.core.hmi import (
@@ -36,6 +36,26 @@ from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
 from falcocv.ui.widgets.script_editor import ScriptEditor, FindReplaceBar
 from falcocv.ui.widgets.debug_panels import DebugToolbar, VariableInspector, WatchPanel
 from falcocv.ui.style import SUCCESS, WARNING, INFO, DANGER
+from falcocv.ui.view_state import (
+    reset_keys,
+    restore_header,
+    restore_splitter,
+    restore_window,
+    save_header,
+    save_splitter,
+    save_window,
+)
+
+_VIEW_SPLITTERS = {
+    "hmi.layout": [220, 700],
+    "hmi.script.single": [500, 300],
+    "hmi.script.multi": [180, 700],
+    "hmi.debug.horizontal": [350, 350],
+    "hmi.debug.vertical": [500, 300],
+    "hmi_comms.horizontal": [220, 700],
+    "hmi_comms.vertical": [330, 470],
+}
+_VIEW_HEADERS = ("hmi_comms.tags", "hmi_comms.monitor")
 
 
 class _HMIWSClient(QObject):
@@ -766,6 +786,9 @@ class HMIDesignerDialog(QDialog):
         settings_menu.addAction(self._show_grid_action)
         settings_menu.addAction("Server connection...", self._on_server_settings)
 
+        view_menu = menu_bar.addMenu("View")
+        view_menu.addAction("Reset all views", self._reset_view_state)
+
         help_menu = menu_bar.addMenu("Help")
         help_menu.addAction("HMI Reference...", self._on_hmi_help)
         help_menu.addAction("HMI Communications...", self._on_hmi_comms_help)
@@ -821,9 +844,44 @@ class HMIDesignerDialog(QDialog):
 
         self._ws_client = None
         self._last_debug_sizes = None
+        restore_window(self, "hmi_designer", (1100, 700))
         QTimer.singleShot(100, self._start_ws)
 
     # ── Menu actions ──────────────────────────────────────────
+
+    def _restore_view_splitters(self):
+        for key, default_sizes in _VIEW_SPLITTERS.items():
+            splitter = self.findChild(QSplitter, key)
+            if splitter is not None:
+                restore_splitter(splitter, key, default_sizes)
+        for key in _VIEW_HEADERS:
+            header = self.findChild(QHeaderView, key)
+            if header is not None:
+                restore_header(header, key)
+
+    def _save_view_state(self):
+        save_window(self, "hmi_designer")
+        for key in _VIEW_SPLITTERS:
+            splitter = self.findChild(QSplitter, key)
+            if splitter is not None:
+                save_splitter(splitter, key)
+        for key in _VIEW_HEADERS:
+            header = self.findChild(QHeaderView, key)
+            if header is not None:
+                save_header(header, key)
+
+    def _reset_view_state(self):
+        reset_keys(("hmi", "hmi_comms", "hmi_designer"))
+        self.showNormal()
+        self.resize(1100, 700)
+        for key, default_sizes in _VIEW_SPLITTERS.items():
+            splitter = self.findChild(QSplitter, key)
+            if splitter is not None:
+                splitter.setSizes(default_sizes)
+        if self._comms_tab is not None:
+            self._comms_tab.reset_view_state()
+        if self._monitor_tab is not None:
+            self._monitor_tab.reset_view_state()
 
     def _new_script_project(self):
         if not self._close_project():
@@ -996,6 +1054,7 @@ class HMIDesignerDialog(QDialog):
         lt.setContentsMargins(0, 0, 0, 0)
 
         self._layout_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._layout_splitter.setObjectName("hmi.layout")
         left_panel = self._build_left_panel()
         self._layout_splitter.addWidget(left_panel)
 
@@ -1016,6 +1075,7 @@ class HMIDesignerDialog(QDialog):
 
         self._comms_tab = HMICommsWidget(self.project)
         self._comms_tab.modified.connect(self._mark_modified)
+        self._comms_tab.modified.connect(self._update_comms_warning)
         self._tabs.addTab(self._comms_tab, "Communications")
 
         self._monitor_tab = HMICommsMonitorWidget(self.project)
@@ -1073,6 +1133,37 @@ class HMIDesignerDialog(QDialog):
         QTimer.singleShot(100, self._start_ws)
         self._update_footer()
         self._update_dashboard_refresh_menu()
+        self._restore_view_splitters()
+        self._update_comms_warning()
+
+    def _update_comms_warning(self):
+        """Show incomplete communications in the tab even when it is hidden."""
+
+        if self._comms_tab is None or self._tabs is None:
+            return
+        result = self._comms_tab.draft_validation()
+        index = self._tabs.indexOf(self._comms_tab)
+        if index < 0:
+            return
+        issues = result.errors or result.warnings
+        if issues:
+            label = "invalid" if result.errors else "incomplete"
+            self._tabs.setTabText(index, "Communications ⚠")
+            self._tabs.setTabToolTip(
+                index,
+                f"Communications configuration is {label}:\n"
+                + "\n".join(f"• {message}" for message in issues),
+            )
+            status = getattr(self, "_deploy_status", None)
+            if status is not None and status.text() in ("", "Idle"):
+                self._set_status(
+                    "Comms config error" if result.errors
+                    else "Comms incomplete",
+                    WARNING,
+                )
+        else:
+            self._tabs.setTabText(index, "Communications")
+            self._tabs.setTabToolTip(index, "")
 
     def _build_left_panel(self):
         panel = QWidget()
@@ -1147,6 +1238,7 @@ class HMIDesignerDialog(QDialog):
 
         # Vertical splitter: editor | debug
         self._script_splitter = QSplitter(Qt.Orientation.Vertical)
+        self._script_splitter.setObjectName("hmi.script.single")
         self._script_splitter.setHandleWidth(6)
 
         # ── Editor ────────────────────────────────────────────
@@ -1177,6 +1269,7 @@ class HMIDesignerDialog(QDialog):
         debug_lyt.addWidget(self._debug_toolbar)
 
         self._debug_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._debug_splitter.setObjectName("hmi.debug.horizontal")
         self._debug_splitter.setHandleWidth(6)
         self._var_inspector = VariableInspector()
         self._var_inspector.show()
@@ -1290,13 +1383,23 @@ class HMIDesignerDialog(QDialog):
             self._show_compile_errors(msg)
             return
         if self._comms_tab is not None:
-            self._comms_tab.flush_to_project()
-            comms_ok, comms_msg = self._comms_tab.validate()
-            if not comms_ok:
+            if not self._comms_tab.flush_to_project():
+                return
+            result = self._comms_tab.draft_validation()
+            if result.errors:
                 QMessageBox.warning(
                     self,
                     "Communications configuration",
-                    comms_msg,
+                    "Communications configuration is invalid:\n"
+                    + "\n".join(f"• {message}" for message in result.errors),
+                )
+                return
+            if result.warnings:
+                QMessageBox.warning(
+                    self,
+                    "Communications configuration",
+                    "Communications configuration is incomplete:\n"
+                    + "\n".join(f"• {message}" for message in result.warnings),
                 )
                 return
         QMessageBox.information(self, "Check", "No syntax or configuration errors found.")
@@ -1341,7 +1444,9 @@ class HMIDesignerDialog(QDialog):
         return "cancel"
 
     def _on_deploy(self):
-        self._flush_to_project()
+        if not self._flush_to_project():
+            self._set_status("Comms config error", WARNING)
+            return
         if self._comms_tab is not None:
             comms_ok, comms_msg = self._comms_tab.validate()
             if not comms_ok:
@@ -1667,6 +1772,7 @@ class HMIDesignerDialog(QDialog):
 
     def _close_project(self) -> bool:
         """Close current project, prompting to save if modified. Returns True if closed."""
+        self._save_view_state()
         if self.project and self._modified:
             name = os.path.basename(self._current_path) if self._current_path else "current project"
             btn = QMessageBox.question(self, "Unsaved Changes",
@@ -1800,12 +1906,22 @@ class HMIDesignerDialog(QDialog):
         if not self.project:
             return False
         if self._current_path:
-            self._flush_to_project()
+            if not self._flush_to_project():
+                return False
+            warnings: tuple[str, ...] = ()
             if self._comms_tab is not None:
-                ok, msg = self._comms_tab.validate()
-                if not ok:
-                    QMessageBox.warning(self, "Communications configuration", msg)
+                result = self._comms_tab.draft_validation()
+                if result.errors:
+                    QMessageBox.warning(
+                        self,
+                        "Communications configuration",
+                        "Communications configuration is invalid:\n"
+                        + "\n".join(
+                            f"• {message}" for message in result.errors
+                        ),
+                    )
                     return False
+                warnings = result.warnings
             try:
                 self.project.save(self._current_path)
             except Exception as exc:
@@ -1815,6 +1931,9 @@ class HMIDesignerDialog(QDialog):
             self.update_title()
             ConfigManager().add_recent_hmi_file(self._current_path)
             self.update_recent_hmi_menu()
+            self._update_comms_warning()
+            if warnings:
+                self._set_status("Saved (comms incomplete)", WARNING)
             return True
         return self._save_project_as()
 
@@ -1825,12 +1944,20 @@ class HMIDesignerDialog(QDialog):
                                               "HMI Files (*.hmi);;All Files (*)")
         if not path:
             return False
-        self._flush_to_project()
+        if not self._flush_to_project():
+            return False
+        warnings: tuple[str, ...] = ()
         if self._comms_tab is not None:
-            ok, msg = self._comms_tab.validate()
-            if not ok:
-                QMessageBox.warning(self, "Communications configuration", msg)
+            result = self._comms_tab.draft_validation()
+            if result.errors:
+                QMessageBox.warning(
+                    self,
+                    "Communications configuration",
+                    "Communications configuration is invalid:\n"
+                    + "\n".join(f"• {message}" for message in result.errors),
+                )
                 return False
+            warnings = result.warnings
         try:
             self.project.save(path)
         except Exception as exc:
@@ -1841,6 +1968,9 @@ class HMIDesignerDialog(QDialog):
         self.update_title()
         ConfigManager().add_recent_hmi_file(path)
         self.update_recent_hmi_menu()
+        self._update_comms_warning()
+        if warnings:
+            self._set_status("Saved (comms incomplete)", WARNING)
         return True
 
     def _full_reload(self):
@@ -1880,18 +2010,22 @@ class HMIDesignerDialog(QDialog):
         self._update_dashboard_refresh_menu()
         self.update_title()
 
-    def _flush_to_project(self):
+    def _flush_to_project(self) -> bool:
         self._saving = True
-        self.project.layout["rows"] = self.rows_spin.value()
-        self.project.layout["cols"] = self.cols_spin.value()
-        if self._editor_by_path:
-            self._write_all_sources()
-        else:
-            self.project.script = self._tab_to_spaces(self.script_edit.text())
-        self._scene.sync_all()
-        if self._comms_tab is not None:
-            self._comms_tab.flush_to_project()
-        self._saving = False
+        ok = True
+        try:
+            self.project.layout["rows"] = self.rows_spin.value()
+            self.project.layout["cols"] = self.cols_spin.value()
+            if self._editor_by_path:
+                self._write_all_sources()
+            else:
+                self.project.script = self._tab_to_spaces(self.script_edit.text())
+            self._scene.sync_all()
+            if self._comms_tab is not None:
+                ok = self._comms_tab.flush_to_project()
+        finally:
+            self._saving = False
+        return ok
 
     def get_project(self) -> HMIProject:
         self._flush_to_project()
@@ -2494,6 +2628,7 @@ class HMIDesignerDialog(QDialog):
         sl.setContentsMargins(0, 0, 0, 0)
 
         self._script_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._script_splitter.setObjectName("hmi.script.multi")
         self._script_splitter.setHandleWidth(6)
 
         file_panel = QWidget()
@@ -2550,6 +2685,7 @@ class HMIDesignerDialog(QDialog):
         epl.setContentsMargins(0, 0, 0, 0)
 
         self._debug_vsplitter = QSplitter(Qt.Orientation.Vertical)
+        self._debug_vsplitter.setObjectName("hmi.debug.vertical")
         self._debug_vsplitter.setHandleWidth(6)
 
         editor_area = QWidget()
@@ -2580,6 +2716,7 @@ class HMIDesignerDialog(QDialog):
         dc_lyt.addWidget(self._debug_toolbar)
 
         self._debug_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._debug_splitter.setObjectName("hmi.debug.horizontal")
         self._debug_splitter.setHandleWidth(6)
         self._var_inspector = VariableInspector()
         self._var_inspector.show()

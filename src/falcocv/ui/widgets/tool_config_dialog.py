@@ -1,11 +1,14 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QWidget
 from PyQt6.QtCore import Qt, QTimer, QRect
 
+from falcocv.ui.view_state import restore_window, save_window
+
 
 class ToolConfigDialog(QDialog):
     def __init__(self, tool, parent=None, geometry=None):
         super().__init__(parent)
         self._tool = tool
+        self._view_key = f"tool.{tool.__class__.__name__}"
         self._config_widget = tool.get_config_widget()
 
         self.setWindowTitle(f"Edit {tool.name}")
@@ -38,11 +41,13 @@ class ToolConfigDialog(QDialog):
             btn.setAutoDefault(False)
             btn.setDefault(False)
 
-        if geometry is not None:
-            self.move(geometry.topLeft())
-            self.resize(geometry.size())
-        else:
-            self.resize(1000, 700)
+        restored = restore_window(self, self._view_key, (1000, 700))
+        if not restored:
+            if geometry is not None:
+                self.move(geometry.topLeft())
+                self.resize(geometry.size())
+            else:
+                self.resize(1000, 700)
 
         # Keep a reference to avoid garbage collection
         tool._config_window = self
@@ -84,6 +89,7 @@ class ToolConfigDialog(QDialog):
                 signal = getattr(self._tool, signal_name, None)
                 if signal is not None and hasattr(signal, "disconnect_owner"):
                     signal.disconnect_owner(self._config_widget)
+        save_window(self, self._view_key)
         self._tool._config_window = None
         super().closeEvent(event)
 
@@ -99,11 +105,8 @@ def open_tool_config(tool, parent=None, geometry=None):
         tool._config_window = None
 
     if wnd is not None:
-        if geometry is not None:
-            wnd.move(geometry.topLeft())
-            wnd.resize(geometry.size())
-        elif not wnd.isVisible():
-            wnd.resize(1000, 700)
+        # Preserve the geometry of an existing tool window.  The viewer-derived
+        # geometry is only a fallback for the first creation.
         wnd.show()
         wnd.raise_()
         wnd.activateWindow()

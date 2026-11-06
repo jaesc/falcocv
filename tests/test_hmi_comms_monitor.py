@@ -408,6 +408,41 @@ def test_monitor_does_not_report_connected_without_a_connected_device():
     assert "No device connected" in tab.status_label.text()
 
 
+def test_monitor_blocks_incomplete_configuration_with_details():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_monitor import HMICommsMonitorWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "plc",
+                "driver": "siemens",
+                "config": {},
+                "tags": [
+                    {
+                        "name": "trigger",
+                        "address": "",
+                        "type": "bool",
+                        "access": "rw",
+                    }
+                ],
+            }
+        ],
+    }
+    tab = HMICommsMonitorWidget(project)
+    tab.connect_monitor()
+
+    assert tab._connection_state == "error"
+    assert tab._connected is False
+    assert "incomplete" in tab.status_label.text().lower()
+    assert "config.host is required" in tab.status_label.text()
+    assert "address is required" in tab.status_label.text()
+
+
 def test_monitor_does_not_overwrite_dirty_editor_on_refresh():
     app = _app()
     assert app is not None

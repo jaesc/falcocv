@@ -77,7 +77,7 @@ class _FakeClient:
         return self._write("Q", 0, start, data)
 
 
-def _config(verify=False, tags=None):
+def _config(verify=False, tags=None, retries=0):
     return {
         "version": 1,
         "devices": [
@@ -89,6 +89,7 @@ def _config(verify=False, tags=None):
                     "rack": 0,
                     "slot": 1,
                     "verify_writes": verify,
+                    "write_retries": retries,
                 },
                 "tags": tags or [
                     {"name": "trigger", "address": "DB1.DBX0.0", "type": "bool", "access": "rw"},
@@ -101,8 +102,8 @@ def _config(verify=False, tags=None):
     }
 
 
-def _device(verify=False, tags=None):
-    return parse_comms_config(_config(verify, tags)).devices[0]
+def _device(verify=False, tags=None, retries=0):
+    return parse_comms_config(_config(verify, tags, retries)).devices[0]
 
 
 def _client(monkeypatch, **kwargs):
@@ -111,9 +112,9 @@ def _client(monkeypatch, **kwargs):
     return client
 
 
-def _start(monkeypatch, verify=False, tags=None, **kwargs):
+def _start(monkeypatch, verify=False, tags=None, retries=0, **kwargs):
     client = _client(monkeypatch, **kwargs)
-    device = _device(verify, tags)
+    device = _device(verify, tags, retries)
     driver = siemens_driver.SiemensS7Driver(device)
     driver.start()
     return client, device, driver
@@ -134,7 +135,8 @@ def test_siemens_schema_and_addresses():
     fields = {field.key: field for field in schema.fields}
     assert "siemens" in available_drivers()
     assert fields["verify_writes"].default is False
-    assert "write_retries" not in fields
+    assert fields["write_retries"].default == 0
+    assert fields["write_retries"].visible_when == ("verify_writes", True)
 
 
 def test_siemens_rejects_incompatible_addresses():
@@ -229,12 +231,39 @@ def test_siemens_verify_write_failure_does_not_retry(monkeypatch):
 
 def test_siemens_write_status_error_does_not_retry(monkeypatch):
     client, device, driver = _start(
-        monkeypatch, write_status=1
+        monkeypatch, verify=True, retries=3, write_status=1
     )
     try:
         with pytest.raises(CommsError, match="status"):
             driver.write(device.tags[1], 9)
         assert len(client.write_calls) == 1
+    finally:
+        driver.stop()
+
+
+def test_siemens_verification_retries_until_match(monkeypatch):
+    client, device, driver = _start(
+        monkeypatch, verify=True, retries=1, reject_writes=1
+    )
+    _seed(client)
+    try:
+        driver.write(device.tags[1], 9)
+        assert len(client.write_calls) == 2
+        assert len(client.read_calls) == 4
+        assert struct.unpack_from(">h", client.memory[("DB", 1)], 2)[0] == 9
+    finally:
+        driver.stop()
+
+
+def test_siemens_verify_false_ignores_retries(monkeypatch):
+    client, device, driver = _start(
+        monkeypatch, verify=False, retries=3
+    )
+    _seed(client)
+    try:
+        driver.write(device.tags[1], 9)
+        assert len(client.write_calls) == 1
+        assert len(client.read_calls) == 1
     finally:
         driver.stop()
 

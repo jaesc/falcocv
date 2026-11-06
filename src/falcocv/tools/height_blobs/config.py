@@ -25,6 +25,7 @@ from falcocv.core.roi_3d import get_3d_data
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
     configure_params_splitter,
+    save_params_splitter,
     create_execution_footer,
     add_record_header,
     make_record_selector,
@@ -428,3 +429,6 @@ class HeightBlobs3DConfig(QWidget):
             bbox_center=cloud.get("bbox_center"),
             bbox_size=cloud.get("bbox_size"),
         )
+
+    def on_config_closed(self):
+        save_params_splitter(self.content_splitter, "HeightBlobs3D")

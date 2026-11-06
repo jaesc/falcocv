@@ -133,7 +133,6 @@ def test_comms_tab_rejects_invalid_tag_default():
 def test_comms_tab_change_driver_clears_config_and_tags(monkeypatch):
     app = _app()
     assert app is not None
-    from PyQt6.QtWidgets import QMessageBox
 
     from falcocv.core.hmi import HMIProject
     from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
@@ -166,14 +165,14 @@ def test_comms_tab_change_driver_clears_config_and_tags(monkeypatch):
     tab = HMICommsWidget(project)
     prompts = []
 
-    def confirm(_parent, _title, text, *_args):
-        prompts.append(text)
-        return QMessageBox.StandardButton.Yes
+    def confirm(_old, _new, has_tags):
+        prompts.append(has_tags)
+        return "delete"
 
-    monkeypatch.setattr(QMessageBox, "warning", confirm)
+    monkeypatch.setattr(tab, "_ask_driver_change", confirm)
     tab.driver_combo.setCurrentText("omron")
 
-    assert prompts and "clear" in prompts[0].lower()
+    assert prompts == [True]
     assert tab._driver_schema.name == "omron"
     assert tab.tags_table.rowCount() == 0
     assert tab.advanced_edit.toPlainText() == ""
@@ -198,7 +197,6 @@ def test_comms_tab_change_driver_clears_config_and_tags(monkeypatch):
 def test_comms_tab_change_driver_can_be_cancelled(monkeypatch):
     app = _app()
     assert app is not None
-    from PyQt6.QtWidgets import QMessageBox
 
     from falcocv.core.hmi import HMIProject
     from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
@@ -226,9 +224,9 @@ def test_comms_tab_change_driver_can_be_cancelled(monkeypatch):
     original = copy.deepcopy(tab._draft_config)
 
     monkeypatch.setattr(
-        QMessageBox,
-        "warning",
-        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+        tab,
+        "_ask_driver_change",
+        lambda *_args, **_kwargs: "cancel",
     )
     tab.driver_combo.setCurrentText("omron")
 
@@ -242,7 +240,6 @@ def test_comms_tab_change_driver_can_be_cancelled(monkeypatch):
 def test_comms_tab_change_driver_without_data_does_not_prompt(monkeypatch):
     app = _app()
     assert app is not None
-    from PyQt6.QtWidgets import QMessageBox
 
     from falcocv.core.hmi import HMIProject
     from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
@@ -254,12 +251,219 @@ def test_comms_tab_change_driver_without_data_does_not_prompt(monkeypatch):
     def unexpected_prompt(*_args, **_kwargs):
         raise AssertionError("empty driver change should not prompt")
 
-    monkeypatch.setattr(QMessageBox, "warning", unexpected_prompt)
+    monkeypatch.setattr(tab, "_ask_driver_change", unexpected_prompt)
     tab.driver_combo.setCurrentText("omron")
 
     assert tab._driver_schema.name == "omron"
     assert tab.tags_table.rowCount() == 0
     assert tab._draft_config["devices"][0]["driver"] == "omron"
+
+
+def test_comms_tab_change_driver_can_keep_tags_with_blank_addresses(
+    monkeypatch,
+):
+    app = _app()
+    assert app is not None
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "plc",
+                "driver": "dummy",
+                "config": {"read_delay_ms": 5},
+                "tags": [
+                    {
+                        "name": "trigger",
+                        "address": "trigger",
+                        "type": "bool",
+                        "access": "rw",
+                        "poll_ms": 10,
+                        "description": "Start cycle",
+                    }
+                ],
+            }
+        ],
+    }
+    tab = HMICommsWidget(project)
+    monkeypatch.setattr(
+        tab, "_ask_driver_change", lambda *_args, **_kwargs: "keep"
+    )
+
+    tab.driver_combo.setCurrentText("omron")
+
+    assert tab.tags_table.rowCount() == 1
+    assert tab.tags_table.item(0, 0).text() == "trigger"
+    assert tab.tags_table.item(0, 1).text() == ""
+    assert tab._draft_config["devices"][0]["config"] == {}
+    assert tab._draft_config["devices"][0]["tags"][0]["poll_ms"] == 10
+    assert "addresses cleared" in tab.status.text()
+    assert not tab.validation_label.isHidden()
+    assert "config.host is required" in tab.validation_label.text()
+    assert "address is required" in tab.validation_label.text()
+
+    assert tab.flush_to_project()
+    saved = project.comms_config["devices"][0]
+    assert saved["driver"] == "omron"
+    assert saved["tags"][0]["address"] == ""
+    assert saved["tags"][0]["description"] == "Start cycle"
+    assert tab.validate()[0] is False
+
+    tab._config_widgets["host"].setText("192.168.1.20")
+    tab.tags_table.item(0, 1).setText("D100")
+    assert tab.flush_to_project()
+    assert tab.validate() == (True, "")
+
+
+def test_comms_tab_keeps_missing_address_default_as_tag_name():
+    app = _app()
+    assert app is not None
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "dummy",
+                "driver": "dummy",
+                "config": {},
+                "tags": [
+                    {
+                        "name": "count",
+                        "type": "int",
+                        "access": "rw",
+                    }
+                ],
+            }
+        ],
+    }
+    tab = HMICommsWidget(project)
+
+    assert tab.tags_table.item(0, 1).text() == "count"
+    assert tab.flush_to_project()
+    assert project.comms_config["devices"][0]["tags"][0]["address"] == "count"
+
+
+def test_comms_tab_saves_incomplete_config_and_reloads_it(tmp_path):
+    app = _app()
+    assert app is not None
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "plc",
+                "driver": "siemens",
+                "enabled": True,
+                "config": {},
+                "tags": [
+                    {
+                        "name": "trigger",
+                        "address": "",
+                        "type": "bool",
+                        "access": "rw",
+                    }
+                ],
+            }
+        ],
+    }
+    tab = HMICommsWidget(project)
+
+    assert not tab.validation_label.isHidden()
+    assert "config.host is required" in tab.validation_label.text()
+    assert "address is required" in tab.validation_label.text()
+    assert tab.flush_to_project()
+    assert tab.draft_validation().warnings
+    assert tab.validate()[0] is False
+
+    path = tmp_path / "incomplete.hmi"
+    project.save(path)
+    loaded = HMIProject.load(path)
+    saved = loaded.comms_config["devices"][0]
+    assert saved["driver"] == "siemens"
+    assert "host" not in saved["config"] or not saved["config"]["host"]
+    assert saved["tags"][0]["address"] == ""
+
+    loaded_tab = HMICommsWidget(loaded)
+    assert not loaded_tab.validation_label.isHidden()
+    assert "Communications incomplete" in loaded_tab.validation_label.text()
+
+
+def test_comms_tab_structural_error_still_blocks_flush():
+    app = _app()
+    assert app is not None
+
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    tab = HMICommsWidget(project)
+    tab._add_device()
+    tab._add_tag()
+    tab.tags_table.item(0, 5).setText("not-a-bool")
+
+    assert tab.flush_to_project() is False
+    assert project.comms_config["devices"] == []
+    invalid = copy.deepcopy(tab._draft_config)
+    invalid["devices"][0]["tags"] = [
+        {
+            "name": "tag1",
+            "address": "tag1",
+            "type": "bool",
+            "default": "not-a-bool",
+        }
+    ]
+    assert tab._validate_candidate(invalid) is False
+
+
+def test_comms_tab_write_retries_is_conditional():
+    app = _app()
+    assert app is not None
+    from falcocv.core.hmi import HMIProject
+    from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
+
+    project = HMIProject()
+    project.comms_config = {
+        "version": 1,
+        "devices": [
+            {
+                "id": "plc",
+                "driver": "omron",
+                "config": {
+                    "host": "192.168.1.10",
+                    "verify_writes": False,
+                    "write_retries": 2,
+                },
+                "tags": [],
+            }
+        ],
+    }
+    tab = HMICommsWidget(project)
+    verify = tab._config_widgets["verify_writes"]
+    retries = tab._config_widgets["write_retries"]
+
+    assert verify.isChecked() is False
+    assert retries.isHidden()
+    assert retries.value() == 2
+
+    verify.setChecked(True)
+    app.processEvents()
+    assert not retries.isHidden()
+
+    verify.setChecked(False)
+    app.processEvents()
+    assert retries.isHidden()
 
 
 def test_comms_tab_default_follows_tag_type():

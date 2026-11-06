@@ -34,11 +34,10 @@ from PyQt6.QtWidgets import (
 )
 
 from falcocv.comms import (
-    CommsConfigError,
     CommsMonitorSession,
     TagDef,
     TagValue,
-    parse_comms_config,
+    validate_comms_config,
 )
 from falcocv.core.config import ConfigManager
 from falcocv.core.hmi import HMIProject
@@ -334,6 +333,7 @@ class HMICommsMonitorWidget(QWidget):
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
         table_header = self.table.horizontalHeader()
+        table_header.setObjectName("hmi_comms.monitor")
         table_header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         table_header.setStretchLastSection(False)
         for column, width in enumerate(_COLUMN_WIDTHS):
@@ -348,6 +348,10 @@ class HMICommsMonitorWidget(QWidget):
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         layout.addWidget(self.status_label)
+
+    def reset_view_state(self):
+        for column, width in enumerate(_COLUMN_WIDTHS):
+            self.table.setColumnWidth(column, width)
 
     # ── lifecycle ─────────────────────────────────────────────────────────
 
@@ -400,11 +404,28 @@ class HMICommsMonitorWidget(QWidget):
                 self._set_connection_state("error", message)
                 self._set_status(message, error=True)
                 return
-        try:
-            config = parse_comms_config(self.project.comms_config)
-        except CommsConfigError as exc:
-            self._set_connection_state("error", str(exc))
-            self._set_status(str(exc), error=True)
+        result = validate_comms_config(self.project.comms_config)
+        if result.errors:
+            message = (
+                "Communications configuration is invalid:\n"
+                + "\n".join(f"• {item}" for item in result.errors)
+            )
+            self._set_connection_state("error", message)
+            self._set_status(message, error=True)
+            return
+        if result.warnings:
+            message = (
+                "Communications configuration is incomplete:\n"
+                + "\n".join(f"• {item}" for item in result.warnings)
+            )
+            self._set_connection_state("error", message)
+            self._set_status(message, error=True)
+            return
+        config = result.config
+        if config is None:
+            message = "Communications configuration is unavailable."
+            self._set_connection_state("error", message)
+            self._set_status(message, error=True)
             return
         if not config.devices:
             message = "No devices configured."

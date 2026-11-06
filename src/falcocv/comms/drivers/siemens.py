@@ -44,8 +44,15 @@ SIEMENS_SCHEMA = DriverSchema(
         ConfigField(
             "verify_writes", "Verify writes", "bool", False,
             help=(
-                "Read each written range back once and compare the values. "
-                "No write is repeated."
+                "Read each written range back once and compare the values."
+            ),
+        ),
+        ConfigField(
+            "write_retries", "Write retries", "int", 0, minimum=0,
+            visible_when=("verify_writes", True),
+            help=(
+                "Extra write + verify attempts after a verification mismatch. "
+                "0 means one write attempt."
             ),
         ),
     ),
@@ -225,6 +232,11 @@ class SiemensS7Driver(DeviceDriver):
         self._connected = False
         self._lock = threading.RLock()
         self._verify_writes = bool(config.config.get("verify_writes", False))
+        self._write_retries = (
+            max(0, int(config.config.get("write_retries", 0) or 0))
+            if self._verify_writes
+            else 0
+        )
         self._specs: dict[str, _S7Tag] = {}
         for tag in config.tags:
             self._specs[tag.id] = _parse_tag(tag)
@@ -318,28 +330,44 @@ class SiemensS7Driver(DeviceDriver):
 
         with self._lock:
             for data_range in self._ranges([spec for spec, _ in entries]):
-                raw = self._read_bytes(
-                    data_range.area,
-                    data_range.db,
-                    data_range.start,
-                    data_range.end - data_range.start,
-                )
-                data = bytearray(raw)
                 range_entries = [
                     (spec, value)
                     for spec, value in entries
                     if spec in data_range.tags
                 ]
-                for spec, value in range_entries:
-                    self._encode(spec, data, data_range.start, value)
-                self._write_bytes(
-                    data_range.area,
-                    data_range.db,
-                    data_range.start,
-                    data,
-                )
-                if self._verify_writes:
-                    self._verify_range(data_range, range_entries)
+                self._write_range(data_range, range_entries)
+                if not self._verify_writes:
+                    continue
+
+                last_error: CommsError | None = None
+                for attempt in range(self._write_retries + 1):
+                    last_error = self._verify_range(
+                        data_range, range_entries
+                    )
+                    if last_error is None:
+                        break
+                    if attempt >= self._write_retries:
+                        break
+                    self._write_range(data_range, range_entries)
+                if last_error is not None:
+                    raise last_error
+
+    def _write_range(self, data_range: _Range, entries) -> None:
+        raw = self._read_bytes(
+            data_range.area,
+            data_range.db,
+            data_range.start,
+            data_range.end - data_range.start,
+        )
+        data = bytearray(raw)
+        for spec, value in entries:
+            self._encode(spec, data, data_range.start, value)
+        self._write_bytes(
+            data_range.area,
+            data_range.db,
+            data_range.start,
+            data,
+        )
 
     def _spec_for(self, tag: TagDef) -> _S7Tag:
         spec = self._specs.get(tag.id)
@@ -504,7 +532,7 @@ class SiemensS7Driver(DeviceDriver):
             tag=spec.tag.id,
         )
 
-    def _verify_range(self, data_range: _Range, entries) -> None:
+    def _verify_range(self, data_range: _Range, entries) -> CommsError | None:
         try:
             data = self._read_bytes(
                 data_range.area,
@@ -521,12 +549,13 @@ class SiemensS7Driver(DeviceDriver):
         for spec, expected in entries:
             actual = self._decode(spec, data_range.start, data)
             if not values_match(spec.tag, expected, actual):
-                raise CommsError(
+                return CommsError(
                     f"S7 write verification failed for '{spec.tag.id}': "
                     f"wrote {expected!r}, read {actual!r}",
                     device=self.config.id,
                     tag=spec.tag.id,
                 )
+        return None
 
     def _ensure_connected(self) -> None:
         if self._client is None or not self._connected:

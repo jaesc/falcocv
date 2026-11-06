@@ -40,8 +40,15 @@ BECKHOFF_SCHEMA = DriverSchema(
         ConfigField(
             "verify_writes", "Verify writes", "bool", False,
             help=(
-                "Read each written batch back once and compare the values. "
-                "No write is repeated."
+                "Read each written batch back once and compare the values."
+            ),
+        ),
+        ConfigField(
+            "write_retries", "Write retries", "int", 0, minimum=0,
+            visible_when=("verify_writes", True),
+            help=(
+                "Extra write + verify attempts after a verification mismatch. "
+                "0 means one write attempt."
             ),
         ),
     ),
@@ -83,6 +90,11 @@ class BeckhoffAdsDriver(DeviceDriver):
         self._connected = False
         self._lock = threading.RLock()
         self._verify_writes = bool(config.config.get("verify_writes", False))
+        self._write_retries = (
+            max(0, int(config.config.get("write_retries", 0) or 0))
+            if self._verify_writes
+            else 0
+        )
 
     def start(self) -> None:
         if self._client is not None:
@@ -183,45 +195,60 @@ class BeckhoffAdsDriver(DeviceDriver):
             return
 
         with self._lock:
-            try:
-                if hasattr(self._client, "write_list_by_name"):
-                    statuses = self._client.write_list_by_name(
-                        {tag.address: value for tag, value in entries}
-                    )
-                else:
-                    statuses = {}
-                    for tag, value in entries:
-                        self._client.write_by_name(tag.address, value)
-            except Exception as exc:
-                raise CommsError(
-                    f"Beckhoff write failed: {exc}",
-                    device=self.config.id,
-                    cause=exc,
-                ) from exc
+            self._write_batch(entries)
+            if not self._verify_writes:
+                return
 
-            if statuses is not None and not isinstance(statuses, dict):
-                raise CommsError(
-                    "Beckhoff write did not return a status dictionary",
-                    device=self.config.id,
+            last_error: CommsError | None = None
+            for attempt in range(self._write_retries + 1):
+                last_error = self._verify_entries(entries)
+                if last_error is None:
+                    return
+                if attempt >= self._write_retries:
+                    break
+                self._write_batch(entries)
+            raise last_error or CommsError(
+                "Beckhoff write verification failed",
+                device=self.config.id,
+            )
+
+    def _write_batch(self, entries) -> None:
+        try:
+            if hasattr(self._client, "write_list_by_name"):
+                statuses = self._client.write_list_by_name(
+                    {tag.address: value for tag, value in entries}
                 )
-            if isinstance(statuses, dict) and statuses:
-                for tag, _value in entries:
-                    if tag.address not in statuses:
-                        raise CommsError(
-                            f"Beckhoff write returned no status for "
-                            f"'{tag.address}'",
-                            device=self.config.id,
-                            tag=tag.id,
-                        )
-                for address, status in statuses.items():
-                    if not _status_ok(status):
-                        raise CommsError(
-                            f"Beckhoff write failed for '{address}': {status}",
-                            device=self.config.id,
-                        )
+            else:
+                statuses = {}
+                for tag, value in entries:
+                    self._client.write_by_name(tag.address, value)
+        except Exception as exc:
+            raise CommsError(
+                f"Beckhoff write failed: {exc}",
+                device=self.config.id,
+                cause=exc,
+            ) from exc
 
-            if self._verify_writes:
-                self._verify_entries(entries)
+        if statuses is not None and not isinstance(statuses, dict):
+            raise CommsError(
+                "Beckhoff write did not return a status dictionary",
+                device=self.config.id,
+            )
+        if isinstance(statuses, dict) and statuses:
+            for tag, _value in entries:
+                if tag.address not in statuses:
+                    raise CommsError(
+                        f"Beckhoff write returned no status for "
+                        f"'{tag.address}'",
+                        device=self.config.id,
+                        tag=tag.id,
+                    )
+            for address, status in statuses.items():
+                if not _status_ok(status):
+                    raise CommsError(
+                        f"Beckhoff write failed for '{address}': {status}",
+                        device=self.config.id,
+                    )
 
     def _read_values(self, addresses) -> dict[str, Any]:
         if hasattr(self._client, "read_list_by_name"):
@@ -231,7 +258,7 @@ class BeckhoffAdsDriver(DeviceDriver):
             for address in addresses
         }
 
-    def _verify_entries(self, entries) -> None:
+    def _verify_entries(self, entries) -> CommsError | None:
         addresses = [tag.address for tag, _value in entries]
         try:
             values = self._read_values(addresses)
@@ -248,19 +275,20 @@ class BeckhoffAdsDriver(DeviceDriver):
             )
         for tag, expected in entries:
             if tag.address not in values:
-                raise CommsError(
+                return CommsError(
                     f"Beckhoff verification did not return '{tag.address}'",
                     device=self.config.id,
                     tag=tag.id,
                 )
             actual = values[tag.address]
             if not values_match(tag, expected, actual):
-                raise CommsError(
+                return CommsError(
                     f"Beckhoff write verification failed for '{tag.id}': "
                     f"wrote {expected!r}, read {actual!r}",
                     device=self.config.id,
                     tag=tag.id,
                 )
+        return None
 
     def _ensure_connected(self) -> None:
         if self._client is None or not self._connected:

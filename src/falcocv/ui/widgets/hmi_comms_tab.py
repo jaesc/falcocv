@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from falcocv.comms import CommsConfigError, parse_comms_config
+from falcocv.comms import validate_comms_config
 from falcocv.comms.drivers import available_drivers, get_driver_schema
 from falcocv.comms.drivers.schema import DriverSchema, field_keys
 from falcocv.core.hmi import HMIProject
@@ -97,6 +97,7 @@ class HMICommsWidget(QWidget):
         self._current_row = -1
         self._driver_schema = get_driver_schema("dummy")
         self._config_widgets: dict[str, QWidget] = {}
+        self._validation_warnings: list[str] = []
         self._build()
         self._load_devices()
 
@@ -114,7 +115,15 @@ class HMICommsWidget(QWidget):
         helper.setStyleSheet("color: #888;")
         layout.addWidget(helper)
 
+        self.validation_label = QLabel("")
+        self.validation_label.setWordWrap(True)
+        self.validation_label.setStyleSheet("color: #d19a00;")
+        self.validation_label.hide()
+        layout.addWidget(self.validation_label)
+
         horizontal = QSplitter(Qt.Orientation.Horizontal)
+        horizontal.setObjectName("hmi_comms.horizontal")
+        self.horizontal_splitter = horizontal
         layout.addWidget(horizontal, 1)
 
         left = QGroupBox("Devices")
@@ -137,6 +146,8 @@ class HMICommsWidget(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
 
         vertical = QSplitter(Qt.Orientation.Vertical)
+        vertical.setObjectName("hmi_comms.vertical")
+        self.vertical_splitter = vertical
         right_layout.addWidget(vertical, 1)
 
         device_group = QGroupBox("Device")
@@ -196,6 +207,7 @@ class HMICommsWidget(QWidget):
         tags_layout = QVBoxLayout(tags_group)
         self.tags_table = QTableWidget(0, len(_TAG_COLUMNS))
         self.tags_table.setHorizontalHeaderLabels(_TAG_COLUMNS)
+        self.tags_table.horizontalHeader().setObjectName("hmi_comms.tags")
         self.tags_table.horizontalHeaderItem(1).setToolTip(
             "Driver-specific address: Struct.Member (Omron), symbolic name "
             "(Beckhoff) or DB1.DBW2 / M0.0 (Siemens)."
@@ -252,6 +264,12 @@ class HMICommsWidget(QWidget):
         self.status.setStyleSheet("color: #888;")
         layout.addWidget(self.status)
 
+    def reset_view_state(self):
+        self.horizontal_splitter.setSizes([220, 700])
+        self.vertical_splitter.setSizes([330, 470])
+        for column, width in enumerate(_TAG_COLUMN_WIDTHS):
+            self.tags_table.setColumnWidth(column, width)
+
     # ── device list / form ────────────────────────────────────────────────
 
     def _devices(self) -> list[dict]:
@@ -300,6 +318,7 @@ class HMICommsWidget(QWidget):
                 self._clear_device_form()
         finally:
             self._loading = False
+        self._update_validation_label()
 
     def _clear_device_form(self):
         self._current_row = -1
@@ -393,7 +412,7 @@ class HMICommsWidget(QWidget):
                 self.tags_table.insertRow(row)
                 values = [
                     tag.get("name", ""),
-                    tag.get("address", ""),
+                    tag.get("address", tag.get("name", "")),
                     tag.get("type", "bool"),
                     tag.get("access", "rw"),
                     str(tag.get("poll_ms", 0)),
@@ -442,7 +461,7 @@ class HMICommsWidget(QWidget):
         finally:
             self._loading = False
 
-    def _capture_current(self) -> bool:
+    def _capture_current(self, allow_incomplete: bool = True) -> bool:
         """Copy the current form and tag table into the in-memory draft.
 
         Apply the device before the tags so a driver change can rebuild a
@@ -458,10 +477,14 @@ class HMICommsWidget(QWidget):
             return False
         old_device_id = str(self._devices()[row].get("id", "")).strip()
         backup = copy.deepcopy(self._draft_config)
-        if not self._apply_device(reload=False):
+        if not self._apply_device(
+            reload=False, allow_incomplete=allow_incomplete
+        ):
             self._draft_config = backup
             return False
-        if not self._apply_tags(reload=False):
+        if not self._apply_tags(
+            reload=False, allow_incomplete=allow_incomplete
+        ):
             self._draft_config = backup
             return False
         new_device_id = str(
@@ -583,6 +606,43 @@ class HMICommsWidget(QWidget):
             self.config_layout.addRow(field.label + ":", widget)
             self._connect_config_widget(widget)
 
+        self._apply_conditional_visibility()
+        for field in schema.fields:
+            if field.visible_when is None:
+                continue
+            source = self._config_widgets.get(field.visible_when[0])
+            if isinstance(source, QCheckBox):
+                source.toggled.connect(self._apply_conditional_visibility)
+
+    def _apply_conditional_visibility(self, *_args):
+        for field in self._driver_schema.fields:
+            if field.visible_when is None:
+                continue
+            widget = self._config_widgets.get(field.key)
+            source = self._config_widgets.get(field.visible_when[0])
+            if widget is None or source is None:
+                continue
+            if isinstance(source, QCheckBox):
+                current = source.isChecked()
+            else:
+                current = self._config_value(
+                    next(
+                        (
+                            item
+                            for item in self._driver_schema.fields
+                            if item.key == field.visible_when[0]
+                        ),
+                        field,
+                    ),
+                    source,
+                )
+            visible = current == field.visible_when[1]
+            widget.setVisible(visible)
+            label = self.config_layout.labelForField(widget)
+            if label is not None:
+                label.setVisible(visible)
+        self.config_layout.invalidate()
+
     def _connect_config_widget(self, widget: QWidget):
         if isinstance(widget, QLineEdit):
             widget.textChanged.connect(self._mark_dirty)
@@ -595,6 +655,58 @@ class HMICommsWidget(QWidget):
         elif isinstance(widget, QComboBox):
             widget.currentIndexChanged.connect(self._mark_dirty)
 
+    def _ask_driver_change(
+        self, old_driver: str, driver: str, has_tags: bool
+    ) -> str:
+        """Ask whether the existing tags should survive a driver change."""
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Change communications driver")
+        if has_tags:
+            box.setText(
+                f"Changing the driver from '{old_driver}' to '{driver}' will "
+                "clear the current driver configuration and advanced JSON."
+            )
+            box.setInformativeText(
+                "Keep tags preserves the tag definitions but clears every "
+                "address because address formats are driver-specific.\n"
+                "Delete tags removes the tags for this device.\n"
+                "Cancel keeps the current driver."
+            )
+            keep_button = box.addButton(
+                "Keep tags", QMessageBox.ButtonRole.AcceptRole
+            )
+            delete_button = box.addButton(
+                "Delete tags", QMessageBox.ButtonRole.DestructiveRole
+            )
+            cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+            box.setDefaultButton(keep_button)
+            box.setEscapeButton(cancel_button)
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is keep_button:
+                return "keep"
+            if clicked is delete_button:
+                return "delete"
+            return "cancel"
+
+        box.setText(
+            f"Changing the driver from '{old_driver}' to '{driver}' will "
+            "clear the current driver configuration and advanced JSON.\n\n"
+            "Continue?"
+        )
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        box.setEscapeButton(QMessageBox.StandardButton.No)
+        return (
+            "delete"
+            if box.exec() == QMessageBox.StandardButton.Yes
+            else "cancel"
+        )
+
     def _on_driver_changed(self, driver: str):
         if self._loading:
             return
@@ -602,29 +714,40 @@ class HMICommsWidget(QWidget):
         if driver == old_driver:
             return
 
-        if self._has_pending_driver_data():
-            answer = QMessageBox.warning(
-                self,
-                "Change communications driver",
-                f"Changing the driver from '{old_driver}' to '{driver}' will "
-                "clear the current driver configuration, advanced JSON and all "
-                "tags for this device.\n\nContinue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes:
+        row = self._current_row
+        old_tags: list[dict] = []
+        if 0 <= row < len(self._devices()):
+            try:
+                old_tags = self._tags_from_table()
+                self._collect_config()
+            except ValueError as exc:
+                self._show_error(str(exc))
                 self._restore_driver(old_driver)
                 return
 
+        pending = self._has_pending_driver_data()
+        action = "delete"
+        if pending:
+            action = self._ask_driver_change(
+                old_driver, driver, has_tags=bool(old_tags)
+            )
+            if action == "cancel":
+                self._restore_driver(old_driver)
+                return
+
+        tags = []
+        if action == "keep":
+            tags = [dict(tag, address="") for tag in old_tags]
+
         self._loading = True
         try:
-            row = self._current_row
             if 0 <= row < len(self._devices()):
                 device = copy.deepcopy(self._devices()[row])
+                device["id"] = self.device_id.text().strip()
                 device["driver"] = driver
                 device["enabled"] = self.enabled_check.isChecked()
                 device["config"] = {}
-                device["tags"] = []
+                device["tags"] = copy.deepcopy(tags)
                 self._devices()[row] = device
                 self._refresh_current_device_label()
 
@@ -632,11 +755,23 @@ class HMICommsWidget(QWidget):
             self.advanced_edit.clear()
             self.advanced_check.setChecked(False)
             self.advanced_edit.hide()
-            self.tags_table.setRowCount(0)
+            if tags:
+                self._load_tags({"tags": tags})
+            else:
+                self.tags_table.setRowCount(0)
             self._reset_device_scroll()
-            self.status.setText("")
+            if action == "keep":
+                self.status.setText(
+                    "Driver changed. Tags kept; addresses cleared and must be "
+                    "updated for the new driver."
+                )
+                self.status.setStyleSheet("color: #d19a00;")
+            else:
+                self.status.setText("")
+                self.status.setStyleSheet("color: #888;")
         finally:
             self._loading = False
+        self._update_validation_label()
         self.modified.emit()
 
     def _has_pending_driver_data(self) -> bool:
@@ -697,7 +832,9 @@ class HMICommsWidget(QWidget):
                     config[key] = value
         return config
 
-    def _apply_device(self, reload: bool = True) -> bool:
+    def _apply_device(
+        self, reload: bool = True, allow_incomplete: bool = True
+    ) -> bool:
         devices = self._devices()
         if self._current_row < 0 or self._current_row >= len(devices):
             return False
@@ -716,7 +853,9 @@ class HMICommsWidget(QWidget):
             return False
         candidate = copy.deepcopy(self._draft_config)
         candidate["devices"][self._current_row] = device
-        if not self._validate_candidate(candidate):
+        if not self._validate_candidate(
+            candidate, allow_incomplete=allow_incomplete
+        ):
             return False
         self._draft_config = candidate
         if reload:
@@ -829,7 +968,7 @@ class HMICommsWidget(QWidget):
                     )
             tag = {
                 "name": name.strip(),
-                "address": address.strip() or name.strip(),
+                "address": address.strip(),
                 "type": tag_type.strip() or "bool",
                 "access": access.strip() or "rw",
                 "poll_ms": poll_ms,
@@ -842,7 +981,9 @@ class HMICommsWidget(QWidget):
             tags.append(tag)
         return tags
 
-    def _apply_tags(self, reload: bool = True) -> bool:
+    def _apply_tags(
+        self, reload: bool = True, allow_incomplete: bool = True
+    ) -> bool:
         devices = self._devices()
         if self._current_row < 0 or self._current_row >= len(devices):
             return False
@@ -855,7 +996,9 @@ class HMICommsWidget(QWidget):
         device = copy.deepcopy(candidate["devices"][self._current_row])
         device["tags"] = tags
         candidate["devices"][self._current_row] = device
-        if not self._validate_candidate(candidate):
+        if not self._validate_candidate(
+            candidate, allow_incomplete=allow_incomplete
+        ):
             return False
         self._draft_config = candidate
         if reload:
@@ -864,25 +1007,72 @@ class HMICommsWidget(QWidget):
 
     # ── validation / persistence ──────────────────────────────────────────
 
-    def _validate_candidate(self, candidate: dict) -> bool:
-        try:
-            parse_comms_config(candidate)
-        except CommsConfigError as exc:
-            self._show_error(str(exc))
+    def _set_validation_warnings(self, warnings):
+        self._validation_warnings = list(warnings)
+        if self._validation_warnings:
+            detail = "\n".join(
+                f"• {message}" for message in self._validation_warnings
+            )
+            self.validation_label.setStyleSheet("color: #d19a00;")
+            self.validation_label.setText(
+                "Communications incomplete:\n" + detail
+            )
+            self.validation_label.show()
+        else:
+            self.validation_label.clear()
+            self.validation_label.hide()
+
+    def _update_validation_label(self):
+        result = validate_comms_config(self._draft_config)
+        if result.errors:
+            self.validation_label.setStyleSheet("color: #f14c4c;")
+            self.validation_label.setText(
+                "Communications configuration invalid:\n"
+                + "\n".join(f"• {message}" for message in result.errors)
+            )
+            self.validation_label.show()
+            return
+        self._set_validation_warnings(result.warnings)
+
+    def draft_validation(self):
+        """Return structural errors and incompleteness warnings for the draft."""
+
+        return validate_comms_config(self._draft_config)
+
+    def _validate_candidate(
+        self, candidate: dict, allow_incomplete: bool = True
+    ) -> bool:
+        result = validate_comms_config(candidate)
+        if result.errors:
+            self._show_error(result.errors[0])
             return False
+        if result.warnings and not allow_incomplete:
+            self._show_error(
+                "Communications configuration is incomplete:\n"
+                + "\n".join(f"• {message}" for message in result.warnings)
+            )
+            return False
+        self._set_validation_warnings(result.warnings)
         return True
 
     def flush_to_project(self) -> bool:
-        """Commit the validated draft into the working project.
+        """Commit the draft into the working project.
 
-        The working project is still in RAM; only ``HMIProject.save`` writes
-        the ``.hmi`` file.
+        Incomplete fields are intentionally allowed here so a partially
+        prepared communications configuration can be saved.  Structural errors
+        still block the capture.  The working project is still in RAM; only
+        ``HMIProject.save`` writes the ``.hmi`` file.
         """
 
-        if self._current_row >= 0 and not self._capture_current():
+        if self._current_row >= 0 and not self._capture_current(
+            allow_incomplete=True
+        ):
             return False
-        if not self._validate_candidate(self._draft_config):
+        result = validate_comms_config(self._draft_config)
+        if result.errors:
+            self._show_error(result.errors[0])
             return False
+        self._set_validation_warnings(result.warnings)
         self.project.comms_config = copy.deepcopy(self._draft_config)
         if not self._devices():
             self.status.setText("No devices configured.")
@@ -890,10 +1080,19 @@ class HMICommsWidget(QWidget):
         return True
 
     def validate(self) -> tuple[bool, str]:
-        try:
-            parse_comms_config(self._draft_config)
-        except CommsConfigError as exc:
-            return False, str(exc)
+        """Validate a runtime-ready configuration (deploy/execute)."""
+
+        result = validate_comms_config(self._draft_config)
+        if result.errors:
+            return False, (
+                "Communications configuration is invalid:\n"
+                + "\n".join(f"• {message}" for message in result.errors)
+            )
+        if result.warnings:
+            return False, (
+                "Communications configuration is incomplete:\n"
+                + "\n".join(f"• {message}" for message in result.warnings)
+            )
         return True, ""
 
     # ── actions ───────────────────────────────────────────────────────────

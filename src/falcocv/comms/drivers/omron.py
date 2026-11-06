@@ -43,6 +43,14 @@ OMRON_SCHEMA = DriverSchema(
             "verify_writes", "Verify writes", "bool", False,
             help="Read back each written struct once and compare the values.",
         ),
+        ConfigField(
+            "write_retries", "Write retries", "int", 0, minimum=0,
+            visible_when=("verify_writes", True),
+            help=(
+                "Extra write + verify attempts after a verification mismatch. "
+                "0 means one write attempt."
+            ),
+        ),
     ),
 )
 
@@ -75,6 +83,11 @@ class OmronFastDriver(DeviceDriver):
             float(config.config.get("snapshot_ttl_ms", 50) or 0) / 1000.0,
         )
         self._verify_writes = bool(config.config.get("verify_writes", False))
+        self._write_retries = (
+            max(0, int(config.config.get("write_retries", 0) or 0))
+            if self._verify_writes
+            else 0
+        )
         # Validate addresses at construction time; the actual reads/writes still
         # resolve them per operation so a tag can be reused safely.
         for tag in config.tags:
@@ -260,26 +273,7 @@ class OmronFastDriver(DeviceDriver):
             for tag, value, member in entries:
                 self._write_member(shadow, member, value, tag)
             self._client.write_variable(struct, shadow)
-            if not self._verify_writes:
-                self._structs[struct] = shadow
-                self._snap_t[struct] = time.perf_counter()
-                return
-
-            check = self._client.read_variable(struct)
-            for tag, value, member in entries:
-                actual = self._read_member(check, member, tag)
-                if not values_match(tag, value, actual):
-                    raise CommsError(
-                        f"Omron write verification failed for '{tag.id}': "
-                        f"wrote {value!r}, read {actual!r}",
-                        device=self.config.id,
-                        tag=tag.id,
-                    )
-            self._structs[struct] = check
-            self._snap_t[struct] = time.perf_counter()
         except Exception as exc:
-            # A failed write may still have reached the controller.  Never
-            # serve the attempted shadow value from the snapshot cache.
             self._structs.pop(struct, None)
             self._snap_t.pop(struct, None)
             if isinstance(exc, CommsError):
@@ -289,3 +283,61 @@ class OmronFastDriver(DeviceDriver):
                 device=self.config.id,
                 cause=exc,
             ) from exc
+
+        if not self._verify_writes:
+            self._structs[struct] = shadow
+            self._snap_t[struct] = time.perf_counter()
+            return
+
+        last_error: CommsError | None = None
+        for attempt in range(self._write_retries + 1):
+            try:
+                check = self._client.read_variable(struct)
+            except Exception as exc:
+                self._structs.pop(struct, None)
+                self._snap_t.pop(struct, None)
+                raise CommsError(
+                    f"Omron write verification read failed: {exc}",
+                    device=self.config.id,
+                    cause=exc,
+                ) from exc
+
+            for tag, value, member in entries:
+                actual = self._read_member(check, member, tag)
+                if not values_match(tag, value, actual):
+                    last_error = CommsError(
+                        f"Omron write verification failed for '{tag.id}': "
+                        f"wrote {value!r}, read {actual!r}",
+                        device=self.config.id,
+                        tag=tag.id,
+                    )
+                    break
+            else:
+                self._structs[struct] = check
+                self._snap_t[struct] = time.perf_counter()
+                return
+
+            if attempt >= self._write_retries:
+                break
+            try:
+                shadow = self._read_struct(struct)
+                for tag, value, member in entries:
+                    self._write_member(shadow, member, value, tag)
+                self._client.write_variable(struct, shadow)
+            except Exception as exc:
+                self._structs.pop(struct, None)
+                self._snap_t.pop(struct, None)
+                if isinstance(exc, CommsError):
+                    raise
+                raise CommsError(
+                    f"Omron retry write failed: {exc}",
+                    device=self.config.id,
+                    cause=exc,
+                ) from exc
+
+        self._structs.pop(struct, None)
+        self._snap_t.pop(struct, None)
+        raise last_error or CommsError(
+            "Omron write verification failed",
+            device=self.config.id,
+        )

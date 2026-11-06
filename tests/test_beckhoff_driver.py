@@ -57,7 +57,7 @@ class _FakeClient:
         return {name: status for name in values}
 
 
-def _config(verify=False):
+def _config(verify=False, retries=0):
     return {
         "version": 1,
         "devices": [
@@ -68,6 +68,7 @@ def _config(verify=False):
                     "ams_net_id": "192.168.1.10.1.1",
                     "ams_port": 851,
                     "verify_writes": verify,
+                    "write_retries": retries,
                 },
                 "tags": [
                     {
@@ -88,8 +89,8 @@ def _config(verify=False):
     }
 
 
-def _device(verify=False):
-    return parse_comms_config(_config(verify)).devices[0]
+def _device(verify=False, retries=0):
+    return parse_comms_config(_config(verify, retries)).devices[0]
 
 
 def test_beckhoff_schema_and_optional_ip():
@@ -98,7 +99,8 @@ def test_beckhoff_schema_and_optional_ip():
     assert "beckhoff" in available_drivers()
     assert fields["verify_writes"].default is False
     assert "ip_address" in fields
-    assert "write_retries" not in fields
+    assert fields["write_retries"].default == 0
+    assert fields["write_retries"].visible_when == ("verify_writes", True)
 
     config = _config()
     config["devices"][0]["config"]["ip_address"] = "10.0.0.50"
@@ -168,10 +170,41 @@ def test_beckhoff_verify_failure_does_not_retry(monkeypatch):
         driver.stop()
 
 
+def test_beckhoff_verification_retries_until_match(monkeypatch):
+    client = _FakeClient({"MAIN.nCount": 7}, reject_writes=1)
+    monkeypatch.setattr(beckhoff_driver, "_create_client", lambda _config: client)
+    device = _device(verify=True, retries=1)
+    driver = beckhoff_driver.BeckhoffAdsDriver(device)
+
+    driver.start()
+    try:
+        driver.write(device.tags[1], 9)
+        assert client.write_calls == 2
+        assert client.read_calls == 2
+        assert client.values["MAIN.nCount"] == 9
+    finally:
+        driver.stop()
+
+
+def test_beckhoff_verify_false_ignores_retries(monkeypatch):
+    client = _FakeClient({"MAIN.nCount": 7})
+    monkeypatch.setattr(beckhoff_driver, "_create_client", lambda _config: client)
+    device = _device(verify=False, retries=3)
+    driver = beckhoff_driver.BeckhoffAdsDriver(device)
+
+    driver.start()
+    try:
+        driver.write(device.tags[1], 9)
+        assert client.write_calls == 1
+        assert client.read_calls == 0
+    finally:
+        driver.stop()
+
+
 def test_beckhoff_write_status_error_is_reported(monkeypatch):
     client = _FakeClient({"MAIN.nCount": 7}, write_status="symbol not found")
     monkeypatch.setattr(beckhoff_driver, "_create_client", lambda _config: client)
-    device = _device()
+    device = _device(verify=True, retries=3)
     driver = beckhoff_driver.BeckhoffAdsDriver(device)
 
     driver.start()

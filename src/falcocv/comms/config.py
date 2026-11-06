@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from .base import (
@@ -20,6 +20,19 @@ _ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
 SUPPORTED_CONFIG_VERSION = 1
 
 
+@dataclass(frozen=True)
+class CommsValidationResult:
+    """Structural errors and non-blocking incompleteness warnings."""
+
+    config: CommsConfig | None
+    errors: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+
+    @property
+    def is_complete(self) -> bool:
+        return not self.errors and not self.warnings
+
+
 def default_comms_config() -> dict[str, Any]:
     """Return a fresh, empty, serialisable comms configuration."""
 
@@ -29,14 +42,35 @@ def default_comms_config() -> dict[str, Any]:
 def parse_comms_config(data: Any) -> CommsConfig:
     """Validate a project ``comms`` dictionary and return dataclasses.
 
-    A missing or empty section is valid.  Invalid definitions raise
-    :class:`CommsConfigError` so deploy/load can fail with a useful message.
+    A missing or empty section is valid.  Invalid or incomplete definitions
+    raise :class:`CommsConfigError` so deploy/load cannot run a partial
+    configuration.
     """
 
+    config, warnings = _parse_comms_config(data, allow_incomplete=False)
+    if warnings:
+        raise CommsConfigError("; ".join(warnings))
+    return config
+
+
+def validate_comms_config(data: Any) -> CommsValidationResult:
+    """Validate a project comms section, allowing incomplete fields."""
+
+    try:
+        config, warnings = _parse_comms_config(data, allow_incomplete=True)
+    except CommsConfigError as exc:
+        return CommsValidationResult(None, (str(exc),), ())
+    return CommsValidationResult(config, (), tuple(warnings))
+
+
+def _parse_comms_config(
+    data: Any, *, allow_incomplete: bool
+) -> tuple[CommsConfig, list[str]]:
+    warnings: list[str] = []
     if isinstance(data, CommsConfig):
-        return data
+        return data, warnings
     if data is None or data == {}:
-        return CommsConfig()
+        return CommsConfig(), warnings
 
     if not isinstance(data, dict):
         raise CommsConfigError("comms must be a JSON object")
@@ -105,6 +139,8 @@ def parse_comms_config(data: Any) -> CommsConfig:
             driver,
             driver_config,
             get_driver_schema(driver),
+            allow_incomplete=allow_incomplete,
+            warnings=warnings,
         )
 
         raw_tags = raw_device.get("tags", [])
@@ -115,7 +151,14 @@ def parse_comms_config(data: Any) -> CommsConfig:
 
         tags: list[TagDef] = []
         for tag_index, raw_tag in enumerate(raw_tags):
-            tag = _parse_tag(device_id, raw_tag, index, tag_index)
+            tag = _parse_tag(
+                device_id,
+                raw_tag,
+                index,
+                tag_index,
+                allow_incomplete=allow_incomplete,
+                warnings=warnings,
+            )
             if tag.id in tag_ids:
                 raise CommsConfigError(f"duplicate tag id '{tag.id}'")
             tag_ids.add(tag.id)
@@ -131,7 +174,7 @@ def parse_comms_config(data: Any) -> CommsConfig:
             )
         )
 
-    return CommsConfig(version=version, devices=tuple(devices))
+    return CommsConfig(version=version, devices=tuple(devices)), warnings
 
 
 def _validate_driver_config(
@@ -139,6 +182,9 @@ def _validate_driver_config(
     driver: str,
     config: dict,
     schema,
+    *,
+    allow_incomplete: bool,
+    warnings: list[str],
 ) -> None:
     known = {field.key for field in schema.fields}
     for field in schema.fields:
@@ -146,10 +192,14 @@ def _validate_driver_config(
         if field.required and (
             value is None or (isinstance(value, str) and not value.strip())
         ):
-            raise CommsConfigError(
-                f"comms device '{device_id}' ({driver}) requires "
-                f"config.{field.key}"
+            message = (
+                f"Device '{device_id}' ({driver}): "
+                f"config.{field.key} is required"
             )
+            if allow_incomplete:
+                warnings.append(message)
+                continue
+            raise CommsConfigError(message)
         if field.key not in config or value is None:
             continue
         if field.kind == "bool":
@@ -210,6 +260,9 @@ def _parse_tag(
     raw_tag: Any,
     device_index: int,
     tag_index: int,
+    *,
+    allow_incomplete: bool,
+    warnings: list[str],
 ) -> TagDef:
     where = f"comms.devices[{device_index}].tags[{tag_index}]"
     if not isinstance(raw_tag, dict):
@@ -220,8 +273,14 @@ def _parse_tag(
         raise CommsConfigError(f"{where}.name must match {_ID_RE.pattern}")
 
     address = raw_tag.get("address", name)
-    if not isinstance(address, str) or not address:
-        raise CommsConfigError(f"{where}.address must be a non-empty string")
+    if not isinstance(address, str):
+        raise CommsConfigError(f"{where}.address must be a string")
+    if not address:
+        message = f"Tag '{device_id}.{name}': address is required"
+        if allow_incomplete:
+            warnings.append(message)
+        else:
+            raise CommsConfigError(message)
 
     tag_type = raw_tag.get("type", "bool")
     if not isinstance(tag_type, str) or tag_type not in TAG_TYPES:

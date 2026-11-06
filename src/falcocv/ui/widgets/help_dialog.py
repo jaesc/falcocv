@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QVBoxLayout, QListWidget,
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QFont, QColor
 
+from falcocv.ui.view_state import restore_window, save_window
 from falcocv.ui.style import (DARK_BG, ALT_BG, TEXT, TEXT_MUTED, BORDER, HIGHLIGHT,
                       PANEL_BG, CAUTION, INFO,
                       SCRIPT_BG, SCRIPT_TEXT, SCRIPT_KEYWORD,
@@ -340,6 +341,11 @@ class ToolHelpDialog(QDialog):
         # Initial render (immediate with QTextBrowser)
         self._pending_entry = TOOL_HELP.get(self._current_key, {})
         self._do_render()
+        restore_window(self, "help", (900, 650))
+
+    def closeEvent(self, event):
+        save_window(self, "help")
+        super().closeEvent(event)
 
     def _populate(self):
         """Build the categorized list from TOOL_HELP data."""

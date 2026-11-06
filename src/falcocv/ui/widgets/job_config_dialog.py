@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QCheckBox, QPushButton, QGroupBox, QWidget)
 from PyQt6.QtCore import Qt
 from falcocv.ui.style import BORDER, TEXT
+from falcocv.ui.view_state import restore_window, save_window
 
 
 class JobConfigDialog(QDialog):
@@ -55,6 +56,15 @@ class JobConfigDialog(QDialog):
         for btn in self.findChildren(QPushButton):
             btn.setAutoDefault(False)
             btn.setDefault(False)
+        restore_window(self, "job_config", (400, 300))
+
+    def closeEvent(self, event):
+        save_window(self, "job_config")
+        super().closeEvent(event)
+
+    def accept(self):
+        save_window(self, "job_config")
+        super().accept()
 
     def _on_stop_on_error_changed(self, checked: bool):
         self.workflow.stop_on_error = checked

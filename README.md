@@ -44,7 +44,11 @@ operator dashboards.
 - **Communications runtime** — generic devices and tags in the `.hmi` project,
   editable from the HMI Designer, with local and live signal monitors, a dummy
   driver with simulated signals and Omron, Beckhoff ADS and Siemens S7 drivers.
-  See [`docs/COMMS.md`](docs/COMMS.md).
+  Drafts can be saved with missing fields; Deploy and Signal Monitor require a
+  complete configuration. See [`docs/COMMS.md`](docs/COMMS.md).
+- **Persistent workspace** — window geometry, dock placement, splitter sizes
+  and table column widths are restored between runs. Use **View > Reset all
+  views** to return the current workspace to its defaults.
 - **Camera acquisition** — GigE Vision and USB3 Vision cameras through Harvesters
   and a vendor GenTL producer.
 
@@ -89,7 +93,12 @@ python -m pip install -e ".[plc]"
 
 It includes `aphyt` (Omron), `pyads` (Beckhoff ADS) and `python-snap7`
 (Siemens S7). Driver imports are lazy, so the rest of FalcoCV can be used
-without these dependencies. Hardware-specific prerequisites:
+without these dependencies. Write verification is opt-in; when enabled,
+`write_retries` adds verification retries, while without verification the
+driver trusts the library response and never retries. A device configuration
+may be saved incomplete (for example Siemens without a host) and completed
+later; only Deploy and execution require every field and tag address.
+Hardware-specific prerequisites:
 
 - Omron: reachable NJ/NX controller; no persistent dictionary file is used.
 - Beckhoff: TwinCAT ADS route configured in the router. The optional
