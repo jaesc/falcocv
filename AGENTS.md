@@ -135,7 +135,9 @@ cpp/bin/       → local kernel build output (gitignored)
   (1e-6).  Opt-out with `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0`; the Python path
   falls back to the legacy vote when the loaded kernel lacks the symbol.
   Measured: 1 MP 50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms, demo geometry
-  51.1 -> 44.2 ms, hybrid 94.3 -> 86.6 ms.  Real-data gate still pending.
+  51.1 -> 44.2 ms, hybrid 94.3 -> 86.6 ms.  The 39-frame depth A/B and the
+  1005-frame shape2 gate passed with exact parity (0 mismatches); an
+  in-process 100-frame A/B measured 56.1 ms fused vs 57.8 ms legacy.
 - **ShapeMatch training noise filter** -> `edge_filter_mode` (`auto`/`manual`)
   and `edge_filter_min_area` discard small Canny components before feature
   selection.  Auto = `max(8, min(0.10 * largest_component,
@@ -145,9 +147,14 @@ cpp/bin/       → local kernel build output (gitignored)
 - **ShapeMatch edge proposals** -> `edge_proposals` defaults to True in
   `geometry`: a reduced edge-map correlation proposes the top 5 NMS peaks
   before refinement.  The edge score is proposal-only, never the final
-  confidence, and no grayscale is used.  On 39 real depth frames it raised
-  detections from 16 to 38 at `min_score=0.15` (39 at 0.08) with zero false
-  positives and <1 ms proposal cost.
+  confidence, and no grayscale is used.  The proposal view uses a factor
+  derived from the template (`min_template // 32`, never finer than the search
+  view, capped at 8x); `FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR=search` restores the
+  old view for A/B.  On 39 real depth frames it raised detections from 16 to
+  39 at `min_score=0.15` with zero false positives; the old full search view
+  found 38.  The 1005-frame shape2 job already uses search factor 8, so the
+  proposal view is unchanged there; the gate reported 0 lost/extra and the
+  same 85.68 px precision outlier.
 - **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
   >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
   full angle/scale scan runs on the best ones plus the strongest vote peaks.
@@ -530,10 +537,10 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   `max_features` controls, manual feature editor with brush, spatial feature
   coverage, ROI-bound search preprocessing and geometry mode.
 - Post-1.1.0 (2026-11-08): fused native vote (`shape_match_vote_fused`, legacy
-  parity, opt-out), training noise filter, geometry edge proposals, compact
-  ShapeMatch settings panel with the pre-gate hidden in geometry, global wheel
-  guard, Qt 6.12 ROI spin fix, and HeightBlobs visibility options mirroring
-  Blob Detector 2D.
+  parity, opt-out), training noise filter, geometry edge proposals on a coarser
+  template-derived view, compact ShapeMatch settings panel with the pre-gate
+  hidden in geometry, global wheel guard, Qt 6.12 ROI spin fix, and HeightBlobs
+  visibility options mirroring Blob Detector 2D.
 - ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
 - Spatial coverage is the default automatic selection.  Automatic orientation
   coverage was prototyped and rejected because it changed pose/score on a real
@@ -556,18 +563,21 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
   `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
   the Designer preview with representative data, not a live worker capture.
-- Latest verification: `741 passed, 12 skipped, 3 xfailed`; UI
+- Latest verification: `742 passed, 12 skipped, 3 xfailed`; UI
   `147 passed, 5 skipped`; the fused vote matches the legacy path exactly
-  (1e-6).  The `falcocv-1.1.0` wheel was built before this post-1.1.0 work and
-  passed `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it
-  before publishing a new wheel.  Synthetic ShapeMatch matrix:
+  (1e-6); the 39-frame depth A/B found 39/39 true detections with zero false
+  positives; the 1005-frame shape2 gate found 0 lost/extra, exact fused/legacy
+  parity, and the same known 85.68 px geometry precision outlier.  The
+  `falcocv-1.1.0` wheel was built before this post-1.1.0 work and passed
+  `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it before
+  publishing a new wheel.  Synthetic ShapeMatch matrix:
   0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: run the real-data gate for the fused vote and geometry edge
-  proposals (`scripts/validate_shape_match_modes.py`,
-  `docs/SHAPE_MATCH_VALIDATION.md`), then validate Beckhoff ADS and Siemens S7
-  against real hardware.  Omron and ADLINK USB-7250 hardware validation are
-  complete; their automated tests still use fakes where appropriate.
-  Modbus/OPC UA loopback tests run with the optional `protocols` extra.
-  Resume on another machine with `git pull origin dev`,
+- Next work: fix the known geometry translation precision outlier
+  (`0855.JPG`, ~85 px) or keep geometry as the fast mode; validate the coarser
+  proposal view on more small-template jobs; then validate Beckhoff ADS and
+  Siemens S7 against real hardware.  Omron and ADLINK USB-7250 hardware
+  validation are complete; their automated tests still use fakes where
+  appropriate.  Modbus/OPC UA loopback tests run with the optional `protocols`
+  extra.  Resume on another machine with `git pull origin dev`,
   `pip install -e ".[dev,plc,protocols]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

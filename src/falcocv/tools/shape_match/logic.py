@@ -131,6 +131,10 @@ _MAX_PRE_GATE = 20
 _MAX_EDGE_PROPOSALS = 5
 _EDGE_PROPOSAL_MIN_SCORE = 0.05
 _EDGE_PROPOSAL_NMS_FRACTION = 0.25
+# Proposals only need approximate positions, so they run on a coarser view
+# than the search stage.  Never finer than the search view; capped at 8x.
+_PROPOSAL_MIN_TEMPLATE_PX = 32
+_PROPOSAL_MAX_FACTOR = 8
 # Pre-gate scores close to the best are worth a full scan.  A small floor
 # prevents a noisy pre-gate from collapsing the shortlist.
 _ADAPTIVE_PRE_GATE_MARGIN = 0.05
@@ -1889,7 +1893,35 @@ class ShapeMatch(BaseTool):
             raise RuntimeError(f"shape_match_vote_fused failed: {result['error']}")
         return self._kernel_candidates(result)
 
-    def _edge_proposals(self, search_gray, search_map):
+    def _proposal_factor(self, search_factor):
+        """View factor for the full-search edge proposals.
+
+        The proposal stage only needs approximate locations, so it may run on
+        a coarser view than the search stage.  It is never finer than the
+        search view and is capped at 8x.  ``FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR``
+        accepts ``search`` (old behaviour) or an explicit positive factor for
+        A/B measurements.
+        """
+        search_factor = max(1, int(search_factor))
+        override = os.environ.get(
+            "FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR", ""
+        ).strip().lower()
+        if override == "search":
+            return search_factor
+        if override:
+            try:
+                forced = int(override)
+            except ValueError:
+                forced = 0
+            if forced > 0:
+                return forced
+        min_template = min(self._template_size) if self._template_size[0] else 0
+        if min_template <= 0:
+            return search_factor
+        factor = max(search_factor, min_template // _PROPOSAL_MIN_TEMPLATE_PX)
+        return max(1, min(_PROPOSAL_MAX_FACTOR, factor))
+
+    def _edge_proposals(self, scene_gray, view_map, view_factor=1):
         """Full-search correlation on reduced edge maps.
 
         This is a proposal stage only: the raw edge-correlation score is used
@@ -1900,27 +1932,33 @@ class ShapeMatch(BaseTool):
         if (
             self._template_edges is None
             or self._search_template_gray is None
-            or search_gray is None
-            or search_map is None
+            or scene_gray is None
+            or view_map is None
         ):
             return []
-        if search_gray.dtype != np.uint8 or self._template_edges.size == 0:
+        if scene_gray.dtype != np.uint8 or self._template_edges.size == 0:
             return []
-        template_h, template_w = self._search_template_gray.shape[:2]
+        view_factor = max(1, int(view_factor))
+        base_h, base_w = self._template_edges.shape[:2]
+        template_w = max(4, int(round(base_w / float(view_factor))))
+        template_h = max(4, int(round(base_h / float(view_factor))))
         if template_w < 4 or template_h < 4:
             return []
         if (
-            template_w > search_gray.shape[1]
-            or template_h > search_gray.shape[0]
+            template_w > scene_gray.shape[1]
+            or template_h > scene_gray.shape[0]
         ):
             return []
-        template_edges = cv2.resize(
-            self._template_edges,
-            (template_w, template_h),
-            interpolation=cv2.INTER_AREA,
-        )
+        if view_factor > 1:
+            template_edges = cv2.resize(
+                self._template_edges,
+                (template_w, template_h),
+                interpolation=cv2.INTER_AREA,
+            )
+        else:
+            template_edges = self._template_edges
         scene_edges = cv2.Canny(
-            search_gray,
+            scene_gray,
             int(self._model_edge_low),
             int(self._model_edge_high),
         )
@@ -1930,7 +1968,7 @@ class ShapeMatch(BaseTool):
         if response.size == 0:
             return []
 
-        scale_x, scale_y, origin_x, origin_y = search_map
+        scale_x, scale_y, origin_x, origin_y = view_map
         if abs(scale_x) < 1e-9 or abs(scale_y) < 1e-9:
             return []
 
@@ -2984,6 +3022,7 @@ class ShapeMatch(BaseTool):
         ah,
         vote_factor,
         search_factor,
+        proposal_factor,
         ecc_factor,
     ):
         """Return a frame-aligned gray block covering the ROI plus ECC halo.
@@ -2996,6 +3035,7 @@ class ShapeMatch(BaseTool):
         factors = [
             max(1, int(vote_factor)),
             max(1, int(search_factor)),
+            max(1, int(proposal_factor)),
             max(1, int(ecc_factor)),
         ]
         block_factor = math.lcm(*factors)
@@ -3682,6 +3722,7 @@ class ShapeMatch(BaseTool):
             )
         vote_factor = self._vote_factor()
         search_factor = int(self._search_factor)
+        proposal_factor = self._proposal_factor(search_factor)
         ecc_factor = int(self._ecc_factor)
         vote_map = search_map = ecc_map = None
         if roi_m_inv is None:
@@ -3701,10 +3742,11 @@ class ShapeMatch(BaseTool):
                     0,
                     roi["aw"],
                     roi["ah"],
-                    (vote_factor, search_factor),
+                    (vote_factor, search_factor, proposal_factor),
                 )
                 vote_gray, vote_map = views[vote_factor]
                 search_gray, search_map = views[search_factor]
+                proposal_gray, proposal_map = views[proposal_factor]
                 ecc_gray = raw
                 ecc_map = (1.0, 1.0, 0.0, 0.0)
                 ecc_frame = raw
@@ -3721,6 +3763,7 @@ class ShapeMatch(BaseTool):
                             roi["ah"],
                             vote_factor,
                             search_factor,
+                            proposal_factor,
                             ecc_factor,
                         )
                     )
@@ -3736,10 +3779,11 @@ class ShapeMatch(BaseTool):
                         local_ay,
                         roi["aw"],
                         roi["ah"],
-                        (vote_factor, search_factor),
+                        (vote_factor, search_factor, proposal_factor),
                     )
                     vote_gray, vote_map = views[vote_factor]
                     search_gray, search_map = views[search_factor]
+                    proposal_gray, proposal_map = views[proposal_factor]
                     ecc_gray, ecc_map = None, None
                     ecc_frame = frame_gray
                     ecc_origin = (local_ax, local_ay)
@@ -3761,10 +3805,11 @@ class ShapeMatch(BaseTool):
                     ]
                     views = self._pyramid_views(
                         frame_gray, ax, ay, roi["aw"], roi["ah"],
-                        (vote_factor, search_factor),
+                        (vote_factor, search_factor, proposal_factor),
                     )
                     vote_gray, vote_map = views[vote_factor]
                     search_gray, search_map = views[search_factor]
+                    proposal_gray, proposal_map = views[proposal_factor]
                     ecc_gray, ecc_map = None, None
                     ecc_frame = frame_gray
                     ecc_origin = (ax, ay)
@@ -3783,6 +3828,9 @@ class ShapeMatch(BaseTool):
             )
             search_gray, search_map = self._resized_view(
                 gray_for_match, search_factor
+            )
+            proposal_gray, proposal_map = self._resized_view(
+                gray_for_match, proposal_factor
             )
             ecc_gray, ecc_map = self._resized_view(
                 gray_for_match, ecc_factor
@@ -3974,7 +4022,9 @@ class ShapeMatch(BaseTool):
             and search_gray is not None
             and search_map is not None
         ):
-            edge_proposals = self._edge_proposals(search_gray, search_map)
+            edge_proposals = self._edge_proposals(
+                proposal_gray, proposal_map, proposal_factor
+            )
             if edge_proposals:
                 coarse = self._dedupe_candidates(
                     list(coarse) + edge_proposals,

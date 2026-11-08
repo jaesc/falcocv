@@ -898,8 +898,24 @@ Status:
     19.1 -> 14.8 ms, 1 MP 50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms, fixed
     scale 14.2 -> 11.2 ms.  Demo: hybrid 94.3 -> 86.6 ms, geometry
     51.1 -> 44.2 ms.  Pose/score parity exact on the demo and synthetic
-    suite; full suite 725 passed.  The fused path is opt-out with
-    `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0` until the real-data gate is run.
+    suite; full suite 725 passed.  The 39-frame depth A/B and the 1005-frame
+    shape2 gate passed with exact parity (0 mismatches); an in-process
+    100-frame A/B measured 56.1 ms fused vs 57.8 ms legacy.  The gate's known
+    85.68 px geometry precision outlier is unchanged.  The fused path is
+    opt-out with `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0`.
+13. Coarser edge-proposal view (2026-11-08, dev) -
+    **done and kept**: the full-search edge proposal stage now runs on a view
+    derived from the template size (`min_template // 32`, never finer than the
+    search view, capped at 8x) instead of always reusing the search view.
+    `_aligned_roi_gray_block` and `_pyramid_views` include the proposal factor
+    and keep the frame-anchored sampling.  `FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR=search`
+    restores the old view for A/B.  Synthetic medians: 480x360 18.8 -> 13.7 ms,
+    1 MP 58.9 -> 38.0 ms, 2.7 MP 135.5 -> 71.1 ms; the `cv2.matchTemplate`
+    proposal phase drops 3.0 -> 0.9 ms, 25.8 -> 7.6 ms and 66.8 -> 15.9 ms.
+    On the 39-frame depth job: 38 -> 39 true detections, 0 false,
+    fused/legacy parity exact.  On the 1005-frame shape2 job the search factor
+    is already 8, so the proposal view is unchanged; the gate found 0 lost/0
+    extra and the same 85.68 px precision outlier.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.

@@ -97,6 +97,21 @@ def test_shape_match_fused_vote_matches_legacy(monkeypatch):
         )
 
 
+def test_proposal_factor_reduces_the_search_view(monkeypatch):
+    tool = ShapeMatch()
+    tool._template_size = (120, 90)
+    assert tool._proposal_factor(1) == 2
+    assert tool._proposal_factor(3) == 3
+
+    tool._template_size = (800, 600)
+    assert tool._proposal_factor(1) == 8
+
+    monkeypatch.setenv("FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR", "search")
+    assert tool._proposal_factor(4) == 4
+    monkeypatch.setenv("FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR", "1")
+    assert tool._proposal_factor(4) == 1
+
+
 def test_shape_match_occlusion_and_illumination():
     scenes = {scene.name: scene for scene in scene_suite()}
     tool = _tool(scenes["baseline"].template)
@@ -832,10 +847,10 @@ def test_pyramid_views_from_roi_block_match_full_frame():
     frame = rng.integers(0, 255, (640, 860, 3), dtype=np.uint8)
     ax, ay, aw, ah = 203, 151, 307, 241
 
-    for vote_factor, search_factor, ecc_factor in (
-        (1, 1, 1),
-        (2, 4, 2),
-        (3, 7, 2),
+    for vote_factor, search_factor, proposal_factor, ecc_factor in (
+        (1, 1, 1, 1),
+        (2, 4, 4, 2),
+        (3, 7, 8, 2),
     ):
         full_gray = tool._gray(frame)
         old_views = tool._pyramid_views(
@@ -844,7 +859,7 @@ def test_pyramid_views_from_roi_block_match_full_frame():
             ay,
             aw,
             ah,
-            (vote_factor, search_factor),
+            (vote_factor, search_factor, proposal_factor),
         )
         block, left, top = tool._aligned_roi_gray_block(
             frame,
@@ -854,6 +869,7 @@ def test_pyramid_views_from_roi_block_match_full_frame():
             ah,
             vote_factor,
             search_factor,
+            proposal_factor,
             ecc_factor,
         )
         new_views = tool._pyramid_views(
@@ -862,9 +878,9 @@ def test_pyramid_views_from_roi_block_match_full_frame():
             ay - top,
             aw,
             ah,
-            (vote_factor, search_factor),
+            (vote_factor, search_factor, proposal_factor),
         )
-        for factor in (vote_factor, search_factor):
+        for factor in (vote_factor, search_factor, proposal_factor):
             old_gray, old_map = old_views[factor]
             new_gray, new_map = new_views[factor]
             assert np.array_equal(old_gray, new_gray), (factor, "pixels")

@@ -144,3 +144,24 @@ Consequence: geometry stays a fast mode, not the precision default.  Either the
 solver's translation precision is improved, or production jobs that need pose
 accuracy keep `match_mode="hybrid"`.
 
+## Re-run 2026-11-08 (fused vote + coarser proposals)
+
+`shape2.cvj`, 1005 frames, geometry with the fused vote and the
+template-derived proposal view (the job already uses search factor 8, so the
+proposal view is unchanged).  The run used `--no-gate` because the known
+`0855.JPG` precision outlier is still present.
+
+| | value |
+|---|---:|
+| lost / extra | 0 / 0 |
+| max px | 85.68 |
+| max angle | 2.17 deg |
+| max scale | 1.99 % |
+| geometry median | 59.9 ms |
+| hybrid median | 91.6 ms |
+
+The full geometry-vs-hybrid verdict remains FAIL as a precision gate: the
+`0855.JPG` outlier is unchanged, and angle/scale still exceed the 2 deg /
+1.5 % thresholds.  The fused vote matched the legacy path exactly on every
+frame (0 mismatches, all pose/score deltas 0), and an in-process 100-frame A/B
+measured 56.1 ms fused vs 57.8 ms legacy.  Detections remain 0 lost / 0 extra.
