@@ -916,6 +916,17 @@ Status:
     fused/legacy parity exact.  On the 1005-frame shape2 job the search factor
     is already 8, so the proposal view is unchanged; the gate found 0 lost/0
     extra and the same 85.68 px precision outlier.
+14. Edge proposals in the geometry pre-gate + low-confidence second chance
+    (2026-11-08, dev) - **done and kept**: edge proposals are an independent
+    source and now compete in the geometry pre-gate instead of being merged
+    into the vote list before scoring.  When the primary geometry solve scores
+    below 0.50, the strongest edge proposal is solved as one extra hypothesis
+    and replaces it only if the final score improves by at least 0.05.  On the
+    1005-frame shape2 job: 0 lost / 0 extra, max px 85.68 -> 11.01, max angle
+    2.17 deg (unchanged), max scale 2.58 % (was 1.99 %), geometry median
+    59.9 -> 63.2 ms (+5.5 %).  The worst remaining frames are 11.0, 10.3 and
+    8.1 px; the gross 80 px failures are gone.  The edge-based geometry mode
+    still does not pass the strict 5 px / 2 deg / 1.5 % precision gate.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.

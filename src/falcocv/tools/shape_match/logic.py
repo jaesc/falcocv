@@ -139,6 +139,11 @@ _PROPOSAL_MAX_FACTOR = 8
 # prevents a noisy pre-gate from collapsing the shortlist.
 _ADAPTIVE_PRE_GATE_MARGIN = 0.05
 _MIN_PRE_GATE_KEEP = 2
+# Low-confidence geometry gets one second chance from the strongest
+# independent edge proposal; the vote can otherwise lock onto a repeated
+# structure.  Accept it only when the final score improves by a margin.
+_GEOMETRY_SECOND_CHANCE_MAX = 0.50
+_GEOMETRY_SECOND_CHANCE_MARGIN = 0.05
 # Prototype only: ``ncc`` keeps the production path unchanged.  ``alignment``
 # and ``edge`` score the coarse proposals with geometry instead of grayscale.
 _PRE_GATE_SCORER = "ncc"
@@ -3977,13 +3982,33 @@ class ShapeMatch(BaseTool):
                     3,
                 )
 
-        if search_gray is not None and search_map is not None and len(coarse) > 4:
+        edge_proposals = []
+        if (
+            bool(self.params.get("edge_proposals", False))
+            and search_gray is not None
+            and search_map is not None
+        ):
+            edge_proposals = self._edge_proposals(
+                proposal_gray, proposal_map, proposal_factor
+            )
+
+        if search_gray is not None and search_map is not None and (
+            len(coarse) > 4 or (geometry_mode and edge_proposals)
+        ):
             pre_gate = []
-            pre_gate_source = coarse
-            if geometry_mode and len(coarse) > _MAX_PRE_GATE:
-                pre_gate_source = self._diverse_scale_candidates(
-                    coarse, _MAX_PRE_GATE
+            if geometry_mode:
+                vote_budget = max(
+                    1, _MAX_PRE_GATE - len(edge_proposals)
                 )
+                if len(coarse) > vote_budget:
+                    pre_gate_source = self._diverse_scale_candidates(
+                        coarse, vote_budget
+                    )
+                else:
+                    pre_gate_source = list(coarse)
+                pre_gate_source = list(pre_gate_source) + list(edge_proposals)
+            else:
+                pre_gate_source = coarse
             for candidate in pre_gate_source[:_MAX_PRE_GATE]:
                 if pre_gate_scorer == "ncc":
                     score = self._candidate_ncc(
@@ -4015,23 +4040,22 @@ class ShapeMatch(BaseTool):
                 coarse,
             )
         else:
+            coarse = list(coarse)
+            if geometry_mode:
+                coarse += list(edge_proposals)
             coarse = coarse[:_MAX_NCC_CANDIDATES]
 
-        if (
-            bool(self.params.get("edge_proposals", False))
-            and search_gray is not None
-            and search_map is not None
-        ):
-            edge_proposals = self._edge_proposals(
-                proposal_gray, proposal_map, proposal_factor
+        # Edge proposals are an independent source.  In geometry they compete
+        # in the pre-gate above; merging them after that stage used to drop the
+        # top proposal when a vote peak was nearby.  Hybrid keeps the old
+        # post-pre-gate merge.
+        if not geometry_mode and edge_proposals:
+            coarse = self._dedupe_candidates(
+                list(coarse) + edge_proposals,
+                max(8.0, min(self._template_size) * 0.15),
+                angle_tolerance=max(1.0, coarse_angle * 0.5),
+                scale_tolerance=0.05,
             )
-            if edge_proposals:
-                coarse = self._dedupe_candidates(
-                    list(coarse) + edge_proposals,
-                    max(8.0, min(self._template_size) * 0.15),
-                    angle_tolerance=max(1.0, coarse_angle * 0.5),
-                    scale_tolerance=0.05,
-                )
 
         candidates = []
         refined_centers = []
@@ -4105,20 +4129,20 @@ class ShapeMatch(BaseTool):
         if not shortlist and prepared:
             shortlist = prepared[:1]
 
-        for ncc_score, _alignment_pre, x, y, angle, scale in shortlist:
-            refined, diagnostics = self._solve_pose(
+        def solve_candidate(cx, cy, ctheta, cscale, cncc, calign):
+            return self._solve_pose(
                 gray_for_match,
                 gx,
                 gy,
                 edge_cache,
                 dt_cache,
                 gradient_cache,
-                x,
-                y,
-                angle,
-                scale,
-                ncc_score,
-                _alignment_pre,
+                cx,
+                cy,
+                ctheta,
+                cscale,
+                cncc,
+                calign,
                 theta_start,
                 theta_end,
                 scale_start,
@@ -4128,6 +4152,45 @@ class ShapeMatch(BaseTool):
                 ecc_frame=ecc_frame,
                 ecc_origin=ecc_origin,
             )
+
+        for solve_index, (
+            ncc_score, _alignment_pre, x, y, angle, scale
+        ) in enumerate(shortlist):
+            refined, diagnostics = solve_candidate(
+                x, y, angle, scale, ncc_score, _alignment_pre
+            )
+            if geometry_mode and solve_index == 0 and edge_proposals:
+                base_score = (
+                    float(refined[4]) if refined is not None else -1.0
+                )
+                if base_score < _GEOMETRY_SECOND_CHANCE_MAX:
+                    best_edge = max(
+                        edge_proposals,
+                        key=lambda item: float(item.get("peak", 0.0)),
+                    )
+                    same_pose = (
+                        abs(float(best_edge["x"]) - x) <= 2.0
+                        and abs(float(best_edge["y"]) - y) <= 2.0
+                        and abs(float(best_edge["angle"]) - angle) <= 1.0
+                        and abs(float(best_edge["scale"]) - scale) <= 0.02
+                    )
+                    if not same_pose:
+                        edge_refined, edge_diagnostics = solve_candidate(
+                            float(best_edge["x"]),
+                            float(best_edge["y"]),
+                            float(best_edge["angle"]),
+                            float(best_edge["scale"]),
+                            0.0,
+                            0.0,
+                        )
+                        if edge_refined is not None:
+                            edge_score = float(edge_refined[4])
+                            if (
+                                edge_score
+                                > base_score + _GEOMETRY_SECOND_CHANCE_MARGIN
+                            ):
+                                refined = edge_refined
+                                diagnostics = edge_diagnostics
             if refined is None:
                 if diagnostics:
                     warnings.append(diagnostics)

@@ -112,6 +112,61 @@ def test_proposal_factor_reduces_the_search_view(monkeypatch):
     assert tool._proposal_factor(4) == 1
 
 
+def test_low_confidence_geometry_uses_the_best_edge_proposal(monkeypatch):
+    scenes = {scene.name: scene for scene in scene_suite()}
+    scene = scenes["baseline"]
+    tool = _tool(scene.template)
+    tool.params["match_mode"] = "geometry"
+    edge_x = scene.cx + 40.0
+    edge_y = scene.cy + 25.0
+
+    def fake_edge_proposals(*args, **kwargs):
+        return [
+            {
+                "x": edge_x,
+                "y": edge_y,
+                "angle": 0.0,
+                "scale": 1.0,
+                "peak": 0.9,
+            }
+        ]
+
+    def fake_solve(*args, **kwargs):
+        x = float(args[6])
+        y = float(args[7])
+        angle = float(args[8])
+        scale = float(args[9])
+        near_edge = abs(x - edge_x) < 1.0 and abs(y - edge_y) < 1.0
+        score = 0.80 if near_edge else 0.20
+        return (
+            (
+                x,
+                y,
+                angle,
+                scale,
+                score,
+                "geometry",
+                None,
+                0.5 if near_edge else 0.2,
+                None,
+                [],
+            ),
+            None,
+        )
+
+    monkeypatch.setattr(tool, "_edge_proposals", fake_edge_proposals)
+    monkeypatch.setattr(tool, "_solve_pose", fake_solve)
+    tool.inputs["input image"] = VisionImage(scene.image)
+    tool.run()
+
+    assert tool.last_error is None
+    assert tool.outputs["count"] == 1
+    result = tool.outputs["results"][0]
+    assert result.score == pytest.approx(0.80)
+    assert abs(result.x - edge_x) < 1.0
+    assert abs(result.y - edge_y) < 1.0
+
+
 def test_shape_match_occlusion_and_illumination():
     scenes = {scene.name: scene for scene in scene_suite()}
     tool = _tool(scenes["baseline"].template)

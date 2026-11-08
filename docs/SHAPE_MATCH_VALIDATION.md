@@ -165,3 +165,25 @@ The full geometry-vs-hybrid verdict remains FAIL as a precision gate: the
 1.5 % thresholds.  The fused vote matched the legacy path exactly on every
 frame (0 mismatches, all pose/score deltas 0), and an in-process 100-frame A/B
 measured 56.1 ms fused vs 57.8 ms legacy.  Detections remain 0 lost / 0 extra.
+
+## Re-run 2026-11-08 (edge proposals in the geometry pre-gate)
+
+`shape2.cvj`, 1005 frames.  Edge proposals are now scored in the geometry
+pre-gate instead of being merged into the vote list first.  A geometry solve
+below 0.50 gets one second chance from the strongest edge proposal and keeps
+it only when the final score improves by at least 0.05.
+
+| | value |
+|---|---:|
+| lost / extra | 0 / 0 |
+| max px | 11.01 |
+| max angle | 2.17 deg |
+| max scale | 2.58 % |
+| geometry median | 63.2 ms |
+| hybrid median | 96.9 ms |
+
+Max translation dropped from 85.68 to 11.01 px and the gross ~80 px failures
+are gone; the worst remaining frames are 11.0, 10.3 and 8.1 px.  Geometry is
+about 5.5 % slower than the previous run.  The strict 5 px / 2 deg / 1.5 %
+precision gate still fails on angle and scale, so geometry remains the fast
+mode and hybrid the precision reference.

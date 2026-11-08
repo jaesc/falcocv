@@ -153,8 +153,14 @@ cpp/bin/       → local kernel build output (gitignored)
   old view for A/B.  On 39 real depth frames it raised detections from 16 to
   39 at `min_score=0.15` with zero false positives; the old full search view
   found 38.  The 1005-frame shape2 job already uses search factor 8, so the
-  proposal view is unchanged there; the gate reported 0 lost/extra and the
-  same 85.68 px precision outlier.
+  proposal view is unchanged there.  Edge proposals are an independent source
+  and now compete in the geometry pre-gate instead of being merged with vote
+  peaks before scoring.  When the primary geometry solve scores below 0.50,
+  the strongest edge proposal is solved as one extra hypothesis and replaces
+  it only if the final score improves by 0.05.  On the 1005-frame shape2 job
+  this cut max px 85.68 -> 11.01 with 0 lost/extra; geometry went 59.9 ->
+  63.2 ms (+5.5 %).  The gross 80 px failures are gone, but angle/scale still
+  miss the strict gate.
 - **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
   >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
   full angle/scale scan runs on the best ones plus the strongest vote peaks.
@@ -538,9 +544,10 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   coverage, ROI-bound search preprocessing and geometry mode.
 - Post-1.1.0 (2026-11-08): fused native vote (`shape_match_vote_fused`, legacy
   parity, opt-out), training noise filter, geometry edge proposals on a coarser
-  template-derived view, compact ShapeMatch settings panel with the pre-gate
-  hidden in geometry, global wheel guard, Qt 6.12 ROI spin fix, and HeightBlobs
-  visibility options mirroring Blob Detector 2D.
+  template-derived view, edge proposals competing in the geometry pre-gate
+  with a low-confidence second chance, compact ShapeMatch settings panel with
+  the pre-gate hidden in geometry, global wheel guard, Qt 6.12 ROI spin fix,
+  and HeightBlobs visibility options mirroring Blob Detector 2D.
 - ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
 - Spatial coverage is the default automatic selection.  Automatic orientation
   coverage was prototyped and rejected because it changed pose/score on a real
@@ -563,21 +570,21 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
   `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
   the Designer preview with representative data, not a live worker capture.
-- Latest verification: `742 passed, 12 skipped, 3 xfailed`; UI
+- Latest verification: `743 passed, 12 skipped, 3 xfailed`; UI
   `147 passed, 5 skipped`; the fused vote matches the legacy path exactly
   (1e-6); the 39-frame depth A/B found 39/39 true detections with zero false
-  positives; the 1005-frame shape2 gate found 0 lost/extra, exact fused/legacy
-  parity, and the same known 85.68 px geometry precision outlier.  The
-  `falcocv-1.1.0` wheel was built before this post-1.1.0 work and passed
-  `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it before
-  publishing a new wheel.  Synthetic ShapeMatch matrix:
-  0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: fix the known geometry translation precision outlier
-  (`0855.JPG`, ~85 px) or keep geometry as the fast mode; validate the coarser
-  proposal view on more small-template jobs; then validate Beckhoff ADS and
-  Siemens S7 against real hardware.  Omron and ADLINK USB-7250 hardware
-  validation are complete; their automated tests still use fakes where
-  appropriate.  Modbus/OPC UA loopback tests run with the optional `protocols`
-  extra.  Resume on another machine with `git pull origin dev`,
-  `pip install -e ".[dev,plc,protocols]"` and
+  positives.  The 1005-frame shape2 gate found 0 lost/extra, max px 11.01,
+  max angle 2.17 deg, max scale 2.58 %, geometry 63.2 ms vs hybrid 96.9 ms.
+  The gross 80 px translation failures are gone, but the strict 5 px /
+  2 deg / 1.5 % precision gate still fails.  The `falcocv-1.1.0` wheel was
+  built before this post-1.1.0 work and passed `scripts/check_wheel.py` plus
+  `scripts/wheel_smoke.py`; rebuild it before publishing a new wheel.
+  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
+- Next work: improve the remaining geometry angle/scale precision (max 2.17
+  deg / 2.58 %, max px 11.0), validate the edge second chance on more jobs,
+  then validate Beckhoff ADS and Siemens S7 against real hardware.  Omron and
+  ADLINK USB-7250 hardware validation are complete; their automated tests
+  still use fakes where appropriate.  Modbus/OPC UA loopback tests run with the
+  optional `protocols` extra.  Resume on another machine with
+  `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.
