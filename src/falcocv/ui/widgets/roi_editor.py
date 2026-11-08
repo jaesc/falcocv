@@ -46,7 +46,6 @@ class RoiEditorWidget(QGroupBox):
         def _add_spin(label, col, row):
             lbl = QLabel(label)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-size: 9px;")
             grid.addWidget(lbl, row * 2, col)
 
             if label == "A":
@@ -58,29 +57,36 @@ class RoiEditorWidget(QGroupBox):
                 spin = QDoubleSpinBox()
                 spin.setRange(-10000, 10000)
                 spin.setDecimals(1)
-            spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
-            spin.setMinimumWidth(50)
-            spin.setMaximumWidth(65)
+            spin.setMinimumWidth(80)
+            spin.setMaximumWidth(110)
             spin.setAlignment(Qt.AlignmentFlag.AlignRight)
-            spin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            spin.setStyleSheet("font-size: 9px;")
+            spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            # Qt 6.12 collapses the internal QLineEdit to 1 px when
+            # NoButtons is combined with the application stylesheet.  Keep
+            # the default buttons and hide them via QSS instead.
+            spin.setStyleSheet(
+                "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {"
+                " width: 0px; height: 0px; border: none; }"
+            )
             spin.valueChanged.connect(self._on_spin_changed)
             grid.addWidget(spin, row * 2 + 1, col)
             self.spins[["X", "Y", "W", "H", "A"].index(label)] = spin
 
         _add_spin("X", 0, 0)
         _add_spin("Y", 1, 0)
-        _add_spin("A", 2, 0)
         _add_spin("W", 0, 1)
         _add_spin("H", 1, 1)
+        _add_spin("A", 0, 2)
 
-        for c in range(3):
-            grid.setColumnMinimumWidth(c, 50)
+        for c in range(2):
+            grid.setColumnMinimumWidth(c, 80)
+            grid.setColumnStretch(c, 1)
 
         layout.addLayout(grid)
 
         # 3. Reset Button
-        self.btn_reset = QPushButton("Reset to Full Image")
+        self.btn_reset = QPushButton("Reset ROI")
+        self.btn_reset.setToolTip("Reset the ROI to the full image")
         self.btn_reset.clicked.connect(self.reset_roi)
         layout.addWidget(self.btn_reset)
 

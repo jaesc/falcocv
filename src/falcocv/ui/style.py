@@ -509,7 +509,9 @@ def disabled_css() -> str:
         QGroupBox {{ border-color: {DISABLED_BORDER}; }}
         QGroupBox::title {{ color: {DISABLED_TEXT}; }}
         QGroupBox:disabled QPushButton {{ color: {DISABLED_TEXT}; background-color: {PANEL_BG}; border: 1px solid {DISABLED_BORDER}; }}
-        QGroupBox:disabled QDoubleSpinBox {{ color: {DISABLED_TEXT}; background-color: {PANEL_BG}; border: 1px solid {DISABLED_BORDER}; }}
+        /* Disabled parameter/ROI values stay readable; the group title and
+           buttons still use DISABLED_TEXT to signal the disabled state. */
+        QGroupBox:disabled QDoubleSpinBox {{ color: {TEXT_MUTED}; background-color: {PANEL_BG}; border: 1px solid {DISABLED_BORDER}; }}
     """
 
 
@@ -563,6 +565,8 @@ def apply_qt_theme(app: QApplication):
         QDockWidget {{ background-color: {ALT_BG}; }}
         QSplitter::handle {{ background-color: {BORDER}; }}
     """)
+    from falcocv.ui.wheel_guard import install_wheel_guard
+    install_wheel_guard(app)
 
 
 COMPACT_CSS = """

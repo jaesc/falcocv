@@ -104,11 +104,10 @@ class RoiEditor3DWidget(QGroupBox):
         grid = QGridLayout(grp)
         grid.setSpacing(2)
         self._spins_2d = {}
-        labels = {"X": (0, 0), "Y": (1, 0), "A": (2, 0), "W": (0, 1), "H": (1, 1)}
+        labels = {"X": (0, 0), "Y": (1, 0), "W": (0, 1), "H": (1, 1), "A": (0, 2)}
         for label, (col, row) in labels.items():
             lbl = QLabel(label)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet("font-size: 9px;")
             grid.addWidget(lbl, row * 2, col)
 
             if label == "A":
@@ -120,16 +119,24 @@ class RoiEditor3DWidget(QGroupBox):
                 spin = QDoubleSpinBox()
                 spin.setRange(-100000, 100000)
                 spin.setDecimals(1)
-            spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
             spin.setKeyboardTracking(False)
-            spin.setMinimumWidth(50)
-            spin.setMaximumWidth(65)
+            spin.setMinimumWidth(80)
+            spin.setMaximumWidth(110)
             spin.setAlignment(Qt.AlignmentFlag.AlignRight)
-            spin.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
-            spin.setStyleSheet("font-size: 9px;")
+            spin.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            # Qt 6.12 collapses the internal QLineEdit to 1 px when
+            # NoButtons is combined with the application stylesheet.  Keep
+            # the default buttons and hide them via QSS instead.
+            spin.setStyleSheet(
+                "QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {"
+                " width: 0px; height: 0px; border: none; }"
+            )
             spin.valueChanged.connect(self._on_spin_2d_changed)
             grid.addWidget(spin, row * 2 + 1, col)
             self._spins_2d[label] = spin
+        for c in range(2):
+            grid.setColumnMinimumWidth(c, 80)
+            grid.setColumnStretch(c, 1)
         parent_layout.addWidget(grp)
 
     def _build_z_controls(self, parent_layout):
