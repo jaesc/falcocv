@@ -125,6 +125,29 @@ cpp/bin/       → local kernel build output (gitignored)
   peaks per hypothesis (up to 1024 candidates) and use up to 500 model
   features selected by the same spatial coverage + magnitude rule.  Full
   gradients, Canny and the distance map stay lazy.
+- **ShapeMatch fused vote** -> `shape_match_vote_fused` (kernel) takes the
+  int16 `cv2.spatialGradient` gx/gy and the Canny mask, computes magnitude and
+  orientation, applies the 32 px / 48-edge cap and runs the vote in one native
+  call.  Python no longer builds full-frame mag/theta arrays, calls
+  `np.nonzero` or `_cap_scene_edges`.  The legacy `shape_match_vote` entry point
+  is kept; both share `vote_from_scene_bins`, and
+  `test_shape_match_fused_vote_matches_legacy` requires exact pose/score parity
+  (1e-6).  Opt-out with `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0`; the Python path
+  falls back to the legacy vote when the loaded kernel lacks the symbol.
+  Measured: 1 MP 50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms, demo geometry
+  51.1 -> 44.2 ms, hybrid 94.3 -> 86.6 ms.  Real-data gate still pending.
+- **ShapeMatch training noise filter** -> `edge_filter_mode` (`auto`/`manual`)
+  and `edge_filter_min_area` discard small Canny components before feature
+  selection.  Auto = `max(8, min(0.10 * largest_component,
+  0.0002 * template_area))`; manual uses the explicit area, 0 disables it.
+  The applied area and counts are stored in `model_b64`; changing the mode or
+  area marks the model STALE until retrained.
+- **ShapeMatch edge proposals** -> `edge_proposals` defaults to True in
+  `geometry`: a reduced edge-map correlation proposes the top 5 NMS peaks
+  before refinement.  The edge score is proposal-only, never the final
+  confidence, and no grayscale is used.  On 39 real depth frames it raised
+  detections from 16 to 38 at `min_score=0.15` (39 at 0.08) with zero false
+  positives and <1 ms proposal cost.
 - **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
   >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
   full angle/scale scan runs on the best ones plus the strongest vote peaks.
@@ -135,7 +158,9 @@ cpp/bin/       → local kernel build output (gitignored)
   not a Sobel patch per proposal.
 - **ShapeMatch geometric pre-gate prototype** -> the per-tool
   `pre_gate_scorer` parameter defaults to `"ncc"` and is exposed in the Search
-  tab.  `"alignment"` uses the native gradient-alignment score and passed the
+  tab only while `match_mode` is `"hybrid"`; in `"geometry"` the control is
+  hidden because the native path forces gradient alignment internally.
+  `"alignment"` uses the native gradient-alignment score and passed the
   full suite; `"edge"` failed multi-instance tests and is not exposed.  The
   full scan and ECC still use grayscale, so this is not yet full illumination
   invariance.
@@ -409,6 +434,24 @@ cpp/bin/       → local kernel build output (gitignored)
   Render NCC padding with the template's median border color, never zero.
   Crop the padding before `matchTemplate` (`_render_search`); a rotated rectangle
   is centrally symmetric so the crop stays centred.
+- **ShapeMatch compact settings panel** -> the left content minimum is ~228 px
+  (was ~670).  The Search/Training tabs use two-column field grids; the preview
+  is 180 px, the `Pre-gate scorer` group is hidden in `geometry`, and the old
+  saved splitter width is reset once through
+  `ConfigManager.data["layout_revisions"]["shape_match_compact_panel"]`.  Keep
+  labels short and put explanations in tooltips.
+- **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
+  `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
+  the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.
+- **ROI editor Qt 6.12 regression** -> `QDoubleSpinBox.ButtonSymbols.NoButtons`
+  collapses the internal `QLineEdit` to 1 px with the app stylesheet.  Keep the
+  default buttons and hide the arrows with QSS.  The 2D editor uses two columns
+  and 80-110 px spins; disabled values use `TEXT_MUTED`.
+- **Height Blobs overlay visibility** -> mirrors Blob Detector 2D:
+  `show_overlays` (master), `show_search_roi`, `show_contours`,
+  `show_centroids`, `show_labels`, `copy_overlays_to_input`.  Centroids draw a
+  2D contour centroid plus the 3D tip world points; search ROI skips full-image
+  ROIs.  Defaults are True.
 - **Workflow tree rebuilds** -> `WorkflowEditor` renders its workflow in
   `__init__` (the Block config reuses an existing workflow); `WorkflowTree.set_workflow`
   builds the items before clearing and keeps a render-error row; `on_reorder`
@@ -450,12 +493,10 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
-## Current handoff (2026-11-06)
+## Current handoff (2026-11-08)
 
-- `dev` is the 1.1.0 release candidate: ShapeMatch v3, geometry validation,
-  ADLINK DASK, Modbus/OPC UA clients and servers, and the README screenshot
-  set.  `main` is still the 1.0.2 release; nothing has been pushed or published
-  for 1.1.0 yet.
+- `dev` is the active development branch and carries 1.1.0 plus this
+  post-1.1.0 work.  `main` is not touched by this push.
 - The `omron`, `beckhoff` and `siemens` drivers are implemented.  Omron has
   been validated against real hardware; Beckhoff and Siemens still use fake
   clients pending hardware validation.  The optional `plc` extra installs
@@ -488,6 +529,11 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   `fe8a135`): model v3, training mask, Canny / `min_gradient` /
   `max_features` controls, manual feature editor with brush, spatial feature
   coverage, ROI-bound search preprocessing and geometry mode.
+- Post-1.1.0 (2026-11-08): fused native vote (`shape_match_vote_fused`, legacy
+  parity, opt-out), training noise filter, geometry edge proposals, compact
+  ShapeMatch settings panel with the pre-gate hidden in geometry, global wheel
+  guard, Qt 6.12 ROI spin fix, and HeightBlobs visibility options mirroring
+  Blob Detector 2D.
 - ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
 - Spatial coverage is the default automatic selection.  Automatic orientation
   coverage was prototyped and rejected because it changed pose/score on a real
@@ -510,13 +556,18 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
   `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
   the Designer preview with representative data, not a live worker capture.
-- Latest verification: `734 passed, 8 skipped, 3 xfailed`; `falcocv self-test`
-  PASS; wheel `falcocv-1.1.0-cp313-cp313-win_amd64.whl` built and passed
-  `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`.  Synthetic ShapeMatch
-  matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: validate Beckhoff ADS and Siemens S7 against real hardware.
-  Omron and ADLINK USB-7250 hardware validation are complete; their automated
-  tests still use fakes where appropriate.  Modbus/OPC UA loopback tests run
-  with the optional `protocols` extra.  Resume on another machine with
-  `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"` and
+- Latest verification: `741 passed, 12 skipped, 3 xfailed`; UI
+  `147 passed, 5 skipped`; the fused vote matches the legacy path exactly
+  (1e-6).  The `falcocv-1.1.0` wheel was built before this post-1.1.0 work and
+  passed `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it
+  before publishing a new wheel.  Synthetic ShapeMatch matrix:
+  0.001-0.003 px, <=0.010 deg, <=0.035 %.
+- Next work: run the real-data gate for the fused vote and geometry edge
+  proposals (`scripts/validate_shape_match_modes.py`,
+  `docs/SHAPE_MATCH_VALIDATION.md`), then validate Beckhoff ADS and Siemens S7
+  against real hardware.  Omron and ADLINK USB-7250 hardware validation are
+  complete; their automated tests still use fakes where appropriate.
+  Modbus/OPC UA loopback tests run with the optional `protocols` extra.
+  Resume on another machine with `git pull origin dev`,
+  `pip install -e ".[dev,plc,protocols]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.
