@@ -82,6 +82,10 @@ class HeightBlobs3D(BaseTool):
             "sort_mode": "u",
             "sort_descending": False,
             "show_overlays": True,
+            "show_search_roi": True,
+            "show_contours": True,
+            "show_centroids": True,
+            "show_labels": True,
             "copy_overlays_to_input": True,
         }
 
@@ -439,26 +443,63 @@ class HeightBlobs3D(BaseTool):
             if element.source_tool != self.name
         ]
         if bool(self.params.get("show_overlays", True)):
+            if bool(self.params.get("show_search_roi", True)):
+                height_img, width_img = img.data.shape[:2]
+                for index, (roi_abs, _z_min, _z_max) in enumerate(
+                    self._roi_entries(img)
+                ):
+                    roi_w = float(roi_abs[2])
+                    roi_h = float(roi_abs[3])
+                    if roi_w <= 0 or roi_h <= 0:
+                        continue
+                    if roi_w >= width_img and roi_h >= height_img:
+                        continue
+                    layer.add_roi(
+                        list(roi_abs),
+                        color=(255, 128, 0),
+                        thickness=2,
+                        ref_id=f"search_roi_{index}",
+                    )
+
+            show_contours = bool(self.params.get("show_contours", True))
+            show_centroids = bool(self.params.get("show_centroids", True))
+            show_labels = bool(self.params.get("show_labels", True))
             for feature in features:
-                if feature.contour_2d:
+                if show_contours and feature.contour_2d:
                     layer.add_contour(
                         list(feature.contour_2d),
                         color=(0, 200, 255),
                         thickness=2,
                         ref_id=f"blob_{feature.index}",
                     )
-                if feature.contour_2d:
-                    x, y = feature.contour_2d[0]
-                else:
-                    x = y = 0.0
-                layer.add_text(
-                    f"{feature.index}: {feature.h:.2f}",
-                    position=(x + 4, y - 4),
-                    color=(0, 200, 255),
-                    font_scale=0.5,
-                    thickness=1,
-                )
-            if frame is not None and features:
+                if show_centroids and feature.contour_2d:
+                    contour = np.asarray(
+                        feature.contour_2d, dtype=np.float32
+                    ).reshape(-1, 1, 2)
+                    moments = cv2.moments(contour)
+                    if moments["m00"] > 0:
+                        layer.add_point(
+                            (
+                                moments["m10"] / moments["m00"],
+                                moments["m01"] / moments["m00"],
+                            ),
+                            color=(0, 0, 255),
+                            radius=5,
+                            ref_id=f"centroid_{feature.index}",
+                        )
+                if show_labels:
+                    if feature.contour_2d:
+                        x, y = feature.contour_2d[0]
+                    else:
+                        x = y = 0.0
+                    layer.add_text(
+                        f"{feature.index}: {feature.h:.2f}",
+                        position=(x + 4, y - 4),
+                        color=(0, 200, 255),
+                        font_scale=0.5,
+                        thickness=1,
+                    )
+            if show_centroids and frame is not None and features:
                 u_values = np.array([feature.u for feature in features])
                 v_values = np.array([feature.v for feature in features])
                 h_values = np.array([feature.h for feature in features])

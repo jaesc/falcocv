@@ -46,3 +46,39 @@ def test_parameter_page_fits_a_narrow_panel(qtbot):
     assert config.params_page.minimumSizeHint().width() <= 240
     page = config.tabs.widget(0)
     assert page.horizontalScrollBar().isVisible() is False
+
+
+def test_visibility_toggles_write_params(qtbot):
+    tool = HeightBlobs3D()
+    config = HeightBlobs3DConfig(tool)
+    qtbot.addWidget(config)
+
+    cases = (
+        ("chk_draw_overlays", "show_overlays"),
+        ("chk_search_roi", "show_search_roi"),
+        ("chk_contours", "show_contours"),
+        ("chk_centroids", "show_centroids"),
+        ("chk_labels", "show_labels"),
+        ("chk_copy_overlays", "copy_overlays_to_input"),
+    )
+    for attribute, key in cases:
+        checkbox = getattr(config, attribute)
+        assert checkbox.isChecked()
+        checkbox.setChecked(False)
+        assert tool.params[key] is False
+        checkbox.setChecked(True)
+        assert tool.params[key] is True
+
+
+def test_view_bar_overlay_checkbox_syncs_the_master(qtbot):
+    tool = HeightBlobs3D()
+    config = HeightBlobs3DConfig(tool)
+    qtbot.addWidget(config)
+
+    config.chk_draw_overlays.setChecked(False)
+    assert tool.params["show_overlays"] is False
+    assert not config.chk_overlays.isChecked()
+
+    config.chk_overlays.setChecked(True)
+    assert tool.params["show_overlays"] is True
+    assert config.chk_draw_overlays.isChecked()

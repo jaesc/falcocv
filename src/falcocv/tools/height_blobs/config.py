@@ -274,24 +274,64 @@ class HeightBlobs3DConfig(QWidget):
         order_layout.addWidget(self.chk_desc)
         parent_layout.addWidget(order)
 
-        overlays = QGroupBox("Overlays")
-        overlays_layout = QVBoxLayout(overlays)
-        self.chk_draw_overlays = QCheckBox("Show overlays")
+        visibility = QGroupBox("Visibility")
+        visibility_layout = QVBoxLayout(visibility)
+        self.chk_draw_overlays = QCheckBox("Show Overlays")
         self.chk_draw_overlays.setChecked(
             bool(self.tool.params.get("show_overlays", True))
         )
         self.chk_draw_overlays.toggled.connect(self._on_show_overlays)
-        overlays_layout.addWidget(self.chk_draw_overlays)
+        visibility_layout.addWidget(self.chk_draw_overlays)
+        self.chk_search_roi = QCheckBox("Show Search ROI")
+        self.chk_search_roi.setToolTip(
+            "Draw the 2D footprint of each search ROI on the output image"
+        )
+        self.chk_search_roi.setChecked(
+            bool(self.tool.params.get("show_search_roi", True))
+        )
+        self.chk_search_roi.toggled.connect(
+            lambda checked: self._set_param("show_search_roi", bool(checked))
+        )
+        visibility_layout.addWidget(self.chk_search_roi)
+        self.chk_contours = QCheckBox("Show Boundaries")
+        self.chk_contours.setToolTip("Draw the contour of each blob")
+        self.chk_contours.setChecked(
+            bool(self.tool.params.get("show_contours", True))
+        )
+        self.chk_contours.toggled.connect(
+            lambda checked: self._set_param("show_contours", bool(checked))
+        )
+        visibility_layout.addWidget(self.chk_contours)
+        self.chk_centroids = QCheckBox("Show Centroids")
+        self.chk_centroids.setToolTip(
+            "Draw the blob centroid in 2D and the measured tip in 3D"
+        )
+        self.chk_centroids.setChecked(
+            bool(self.tool.params.get("show_centroids", True))
+        )
+        self.chk_centroids.toggled.connect(
+            lambda checked: self._set_param("show_centroids", bool(checked))
+        )
+        visibility_layout.addWidget(self.chk_centroids)
+        self.chk_labels = QCheckBox("Show Labels")
+        self.chk_labels.setToolTip("Draw the blob index and height")
+        self.chk_labels.setChecked(
+            bool(self.tool.params.get("show_labels", True))
+        )
+        self.chk_labels.toggled.connect(
+            lambda checked: self._set_param("show_labels", bool(checked))
+        )
+        visibility_layout.addWidget(self.chk_labels)
         self.chk_copy_overlays = QCheckBox("Copy overlays")
         self.chk_copy_overlays.setToolTip(
-            "Copy the blob contours and tip markers to the input image"
+            "Copy the blob overlays to the input image"
         )
         self.chk_copy_overlays.setChecked(
             bool(self.tool.params.get("copy_overlays_to_input", True))
         )
         self.chk_copy_overlays.toggled.connect(self._on_copy_overlays)
-        overlays_layout.addWidget(self.chk_copy_overlays)
-        parent_layout.addWidget(overlays)
+        visibility_layout.addWidget(self.chk_copy_overlays)
+        parent_layout.addWidget(visibility)
 
     def _build_results(self, parent_layout):
         group = QGroupBox("Results")

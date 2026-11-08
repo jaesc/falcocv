@@ -226,3 +226,71 @@ def test_binary_mask_matches_the_detected_pins():
     mask = tool.outputs["binary mask"]
     assert mask is not None
     assert int(np.count_nonzero(mask.data)) > 0
+
+
+def _overlay_tool(**params):
+    depth = np.full((HEIGHT, WIDTH), BASE_Z, dtype=np.float32)
+    _disc(depth, 60, 60, 4, BASE_Z + 2.0)
+    image = VisionImage(
+        depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0
+    )
+    tool = HeightBlobs3D()
+    tool.set_input("input image", image)
+    tool.set_input("reference plane", _plane())
+    tool.params["rois"] = [
+        {"roi": [10.0, 10.0, 100.0, 80.0, 0.0],
+         "z_min": 0.0, "z_max": 1.0}
+    ]
+    for key, value in params.items():
+        tool.params[key] = value
+    tool.run()
+    return tool
+
+
+def _blob_overlays(tool, element_type=None):
+    from falcocv.core.overlay_layer import OverlayType
+
+    layer = tool.outputs["output image"].get_overlay_layer("default")
+    elements = [
+        element for element in layer.elements
+        if element.source_tool == tool.name
+    ]
+    if element_type is not None:
+        elements = [
+            element for element in elements
+            if element.element_type == element_type
+        ]
+    return elements
+
+
+def test_overlay_visibility_options_filter_elements():
+    from falcocv.core.overlay_layer import OverlayType
+
+    baseline = _overlay_tool()
+    types = {element.element_type for element in _blob_overlays(baseline)}
+    assert {
+        OverlayType.ROI,
+        OverlayType.CONTOUR,
+        OverlayType.POINT,
+        OverlayType.TEXT,
+        OverlayType.WORLD_POINTS,
+    } <= types
+
+    no_roi = _overlay_tool(show_search_roi=False)
+    assert not _blob_overlays(no_roi, OverlayType.ROI)
+    assert _blob_overlays(no_roi, OverlayType.CONTOUR)
+
+    no_contours = _overlay_tool(show_contours=False)
+    assert not _blob_overlays(no_contours, OverlayType.CONTOUR)
+    assert _blob_overlays(no_contours, OverlayType.TEXT)
+
+    no_centroids = _overlay_tool(show_centroids=False)
+    assert not _blob_overlays(no_centroids, OverlayType.POINT)
+    assert not _blob_overlays(no_centroids, OverlayType.WORLD_POINTS)
+
+    no_labels = _overlay_tool(show_labels=False)
+    assert not _blob_overlays(no_labels, OverlayType.TEXT)
+    assert _blob_overlays(no_labels, OverlayType.CONTOUR)
+
+    no_overlays = _overlay_tool(show_overlays=False)
+    assert _blob_overlays(no_overlays) == []
