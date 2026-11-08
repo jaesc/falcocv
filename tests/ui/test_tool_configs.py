@@ -130,13 +130,13 @@ def test_shape_match_preview_has_fixed_square_size(qtbot):
     qtbot.wait(150)
 
     viewer = widget.template_viewer
-    assert viewer.width() == 250
-    assert viewer.height() == 250
+    assert viewer.width() == 180
+    assert viewer.height() == 180
 
     widget.content_layout.setSizes([700, 500])
     qtbot.wait(150)
-    assert viewer.width() == 250
-    assert viewer.height() == 250
+    assert viewer.width() == 180
+    assert viewer.height() == 180
 
     dialog.close()
 

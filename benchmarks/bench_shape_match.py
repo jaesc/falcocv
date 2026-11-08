@@ -102,6 +102,7 @@ def _time_tool(tool, image, repeats=5):
 def _profile_phases(tool, image):
     names = (
         "_kernel_coarse",
+        "_kernel_coarse_fused",
         "_coarse_pose",
         "_ncc_angle_scan",
         "_ncc_scale_scan",

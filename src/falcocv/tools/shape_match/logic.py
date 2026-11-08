@@ -14,6 +14,7 @@ import base64
 import hashlib
 import io
 import math
+import os
 import uuid
 
 import cv2
@@ -44,6 +45,18 @@ except ImportError:
         _kernel_icp = None
         _kernel_score = None
         _kernel_vote = None
+
+try:
+    from _falco_kernel import (
+        shape_match_vote_fused as _kernel_vote_fused,
+    )
+except ImportError:
+    try:
+        from falcocv._falco_kernel import (
+            shape_match_vote_fused as _kernel_vote_fused,
+        )
+    except ImportError:
+        _kernel_vote_fused = None
 
 try:
     from _falco_kernel import (
@@ -115,6 +128,9 @@ _MAX_REFINE = 16
 _MAX_NCC_CANDIDATES = 10
 _MAX_NCC_SCANS = 4
 _MAX_PRE_GATE = 20
+_MAX_EDGE_PROPOSALS = 5
+_EDGE_PROPOSAL_MIN_SCORE = 0.05
+_EDGE_PROPOSAL_NMS_FRACTION = 0.25
 # Pre-gate scores close to the best are worth a full scan.  A small floor
 # prevents a noisy pre-gate from collapsing the shortlist.
 _ADAPTIVE_PRE_GATE_MARGIN = 0.05
@@ -141,6 +157,14 @@ _VOTE_TARGET_TEMPLATE_PX = 96
 _VOTE_MAX_FACTOR = 4
 _VOTE_EDGE_CELL = 32
 _VOTE_MIN_PEAK = 0.02
+
+# Training-only noise filter.  Small Canny components are speckle, not shape
+# structure.  Auto keeps components at least 10 % of the largest component,
+# capped by a small fraction of the template area so a long border cannot
+# discard every internal edge.
+_NOISE_FILTER_MIN_COMPONENT_PX = 8
+_NOISE_FILTER_LARGEST_FRACTION = 0.10
+_NOISE_FILTER_TEMPLATE_FRACTION = 0.0002
 
 # NCC angle/scale scans run on a reduced view of the search ROI.  The factor is
 # derived from the template size so the template keeps enough detail for a
@@ -209,10 +233,13 @@ class ShapeMatch(BaseTool):
             "max_matches": 1,
             "match_mode": "geometry",
             "pre_gate_scorer": "ncc",
+            "edge_proposals": True,
             "max_features": 800,
             "edge_low": 50,
             "edge_high": 150,
             "min_gradient": 0.0,
+            "edge_filter_mode": "auto",
+            "edge_filter_min_area": 0,
             "origin_x": 0.0,
             "origin_y": 0.0,
             "show_search_roi": True,
@@ -277,6 +304,11 @@ class ShapeMatch(BaseTool):
         self._model_candidate_count = 0
         self._model_edge_low = _EDGE_LOW
         self._model_edge_high = _EDGE_HIGH
+        self._model_edge_filter_mode = "auto"
+        self._model_edge_filter_min_area = 0
+        self._model_edge_filter_area = 0
+        self._model_edge_filter_removed = 0
+        self._model_edge_filter_total = 0
         self._train_mask_ignored_fraction = 0.0
 
     # ------------------------------------------------------------------
@@ -321,6 +353,8 @@ class ShapeMatch(BaseTool):
             int(self.params.get("edge_high", _EDGE_HIGH)),
             round(float(self.params.get("min_gradient", 0.0)), 6),
             int(self.params.get("max_features", 800)),
+            str(self.params.get("edge_filter_mode", "auto")),
+            int(self.params.get("edge_filter_min_area", 0)),
             str(self.params.get("train_image_token") or ""),
             self._mask_digest(),
         )
@@ -449,7 +483,7 @@ class ShapeMatch(BaseTool):
         )
         return warped[y1:y2, x1:x2]
 
-    def _validate_training_params(self) -> tuple[int, int, float, int]:
+    def _validate_training_params(self) -> tuple[int, int, float, int, str, int]:
         low_value = self.params.get("edge_low", _EDGE_LOW)
         high_value = self.params.get("edge_high", _EDGE_HIGH)
         try:
@@ -487,7 +521,78 @@ class ShapeMatch(BaseTool):
                 f"max_features must be between {_MIN_FEATURES} and "
                 f"{_MAX_FEATURES_LIMIT} (got {max_features})."
             )
-        return low, high, min_gradient, max_features
+
+        filter_mode = str(
+            self.params.get("edge_filter_mode", "auto")
+        ).lower()
+        if filter_mode not in ("auto", "manual"):
+            raise ValueError(
+                "edge_filter_mode must be 'auto' or 'manual' "
+                f"(got {filter_mode!r})."
+            )
+        try:
+            min_area_float = float(
+                self.params.get("edge_filter_min_area", 0)
+            )
+        except (TypeError, ValueError):
+            raise ValueError(
+                "edge_filter_min_area must be an integer >= 0."
+            )
+        if not min_area_float.is_integer() or min_area_float < 0:
+            raise ValueError(
+                "edge_filter_min_area must be an integer >= 0."
+            )
+        min_area = int(min_area_float)
+        return (
+            low, high, min_gradient, max_features,
+            filter_mode, min_area,
+        )
+
+    @staticmethod
+    def _filter_training_edges(
+        mask: np.ndarray,
+        width: int,
+        height: int,
+        mode: str,
+        manual_area: int,
+    ) -> tuple[np.ndarray, int, int, int]:
+        """Discard small edge components before feature selection.
+
+        Returns ``(filtered_mask, applied_area, removed, total)``.  A zero
+        ``applied_area`` means the filter was disabled or would remove so much
+        that training could not reach the minimum feature count.
+        """
+        binary = (mask > 0).astype(np.uint8)
+        total, labels, stats, _ = cv2.connectedComponentsWithStats(binary, 8)
+        total_components = max(0, int(total) - 1)
+        if total_components == 0:
+            return mask, 0, 0, 0
+
+        areas = stats[1:, cv2.CC_STAT_AREA]
+        if mode == "manual":
+            min_area = max(0, int(manual_area))
+        else:
+            largest = int(areas.max())
+            min_area = max(
+                _NOISE_FILTER_MIN_COMPONENT_PX,
+                int(round(min(
+                    _NOISE_FILTER_LARGEST_FRACTION * largest,
+                    _NOISE_FILTER_TEMPLATE_FRACTION * width * height,
+                ))),
+            )
+        if min_area <= 0:
+            return mask, 0, 0, total_components
+
+        keep_ids = np.flatnonzero(areas >= min_area) + 1
+        removed = total_components - int(keep_ids.size)
+        if keep_ids.size == 0:
+            return mask, 0, 0, total_components
+        keep_lookup = np.zeros(int(total), dtype=bool)
+        keep_lookup[keep_ids] = True
+        filtered = np.where(keep_lookup[labels], mask, 0).astype(np.uint8)
+        if int((filtered > 0).sum()) < _MIN_FEATURES:
+            return mask, 0, 0, total_components
+        return filtered, int(min_area), int(removed), total_components
 
     @staticmethod
     def _select_spatial_features(
@@ -600,7 +705,10 @@ class ShapeMatch(BaseTool):
     def _build_model(
         self, image: np.ndarray, mask: np.ndarray | None = None
     ) -> None:
-        low, high, min_gradient, max_features = self._validate_training_params()
+        (
+            low, high, min_gradient, max_features,
+            filter_mode, filter_area,
+        ) = self._validate_training_params()
         gray = self._gray(image)
         height, width = gray.shape[:2]
 
@@ -619,9 +727,9 @@ class ShapeMatch(BaseTool):
         edges = cv2.Canny(gray, low, high)
         edges[~keep] = 0
 
-        ys, xs = np.nonzero(edges)
-        canny_count = int(xs.size)
+        canny_count = int((edges > 0).sum())
         canny_fallback = False
+        candidate_mask = edges
         if canny_count < _CANNY_FALLBACK_MIN_EDGES:
             masked_mag = mag[keep]
             if masked_mag.size == 0:
@@ -629,9 +737,26 @@ class ShapeMatch(BaseTool):
             threshold = float(
                 np.percentile(masked_mag, _CANNY_FALLBACK_PERCENTILE)
             )
-            ys, xs = np.nonzero((mag >= threshold) & keep)
+            candidate_mask = (
+                ((mag >= threshold) & keep).astype(np.uint8) * 255
+            )
             canny_fallback = True
 
+        (
+            candidate_mask,
+            filter_applied_area,
+            filter_removed,
+            filter_total,
+        ) = self._filter_training_edges(
+            candidate_mask, width, height, filter_mode, filter_area
+        )
+        self._model_edge_filter_mode = filter_mode
+        self._model_edge_filter_min_area = int(filter_area)
+        self._model_edge_filter_area = int(filter_applied_area)
+        self._model_edge_filter_removed = int(filter_removed)
+        self._model_edge_filter_total = int(filter_total)
+
+        ys, xs = np.nonzero(candidate_mask)
         if xs.size == 0:
             raise ValueError(
                 "Template has no usable edges after masking."
@@ -670,7 +795,7 @@ class ShapeMatch(BaseTool):
         self._model_mag = values / total
         self._model_manual = np.zeros(self._model_x.size, dtype=np.uint8)
         self._manual_edit = False
-        self._template_edges = edges
+        self._template_edges = candidate_mask
         self._model_canny_fallback = canny_fallback
         self._model_canny_count = canny_count
         self._model_candidate_count = candidate_count
@@ -822,6 +947,11 @@ class ShapeMatch(BaseTool):
             self._model_candidate_count,
             self._model_edge_low,
             self._model_edge_high,
+            self._model_edge_filter_mode,
+            self._model_edge_filter_min_area,
+            self._model_edge_filter_area,
+            self._model_edge_filter_removed,
+            self._model_edge_filter_total,
             list(self.params.get("template_size", [0, 0])),
             self.outputs.get("trained", False),
         )
@@ -855,6 +985,11 @@ class ShapeMatch(BaseTool):
                 self._model_candidate_count,
                 self._model_edge_low,
                 self._model_edge_high,
+                self._model_edge_filter_mode,
+                self._model_edge_filter_min_area,
+                self._model_edge_filter_area,
+                self._model_edge_filter_removed,
+                self._model_edge_filter_total,
                 template_size,
                 trained,
             ) = previous_state
@@ -953,7 +1088,18 @@ class ShapeMatch(BaseTool):
             threshold = float(
                 np.percentile(masked_mag, _CANNY_FALLBACK_PERCENTILE)
             )
-            ys, xs = np.nonzero((mag >= threshold) & keep)
+            candidate_mask = (
+                ((mag >= threshold) & keep).astype(np.uint8) * 255
+            )
+            if int(getattr(self, "_model_edge_filter_area", 0)) > 0:
+                candidate_mask, _, _, _ = self._filter_training_edges(
+                    candidate_mask,
+                    gray.shape[1],
+                    gray.shape[0],
+                    "manual",
+                    int(self._model_edge_filter_area),
+                )
+            ys, xs = np.nonzero(candidate_mask)
         else:
             ys, xs = np.nonzero(self._template_edges)
 
@@ -1181,6 +1327,11 @@ class ShapeMatch(BaseTool):
         self._model_candidate_count = 0
         self._model_edge_low = _EDGE_LOW
         self._model_edge_high = _EDGE_HIGH
+        self._model_edge_filter_mode = "auto"
+        self._model_edge_filter_min_area = 0
+        self._model_edge_filter_area = 0
+        self._model_edge_filter_removed = 0
+        self._model_edge_filter_total = 0
         self.params.update(
             {
                 "model_b64": None,
@@ -1261,6 +1412,21 @@ class ShapeMatch(BaseTool):
             candidate_count=np.array(
                 [int(self._model_candidate_count)], dtype=np.int32
             ),
+            edge_filter_mode=np.array(
+                [str(self._model_edge_filter_mode)], dtype="U16"
+            ),
+            edge_filter_min_area=np.array(
+                [int(self._model_edge_filter_min_area)], dtype=np.int32
+            ),
+            edge_filter_area=np.array(
+                [int(self._model_edge_filter_area)], dtype=np.int32
+            ),
+            edge_filter_removed=np.array(
+                [int(self._model_edge_filter_removed)], dtype=np.int32
+            ),
+            edge_filter_total=np.array(
+                [int(self._model_edge_filter_total)], dtype=np.int32
+            ),
         )
         self.params["model_b64"] = base64.b64encode(buffer.getvalue()).decode("ascii")
 
@@ -1320,6 +1486,31 @@ class ShapeMatch(BaseTool):
             self._model_canny_fallback = bool(int(data["canny_fallback"][0]))
             self._model_canny_count = int(data["canny_count"][0])
             self._model_candidate_count = int(data["candidate_count"][0])
+            self._model_edge_filter_mode = (
+                str(data["edge_filter_mode"][0])
+                if "edge_filter_mode" in data.files
+                else str(self.params.get("edge_filter_mode", "auto"))
+            )
+            self._model_edge_filter_min_area = (
+                int(data["edge_filter_min_area"][0])
+                if "edge_filter_min_area" in data.files
+                else int(self.params.get("edge_filter_min_area", 0))
+            )
+            self._model_edge_filter_area = (
+                int(data["edge_filter_area"][0])
+                if "edge_filter_area" in data.files
+                else 0
+            )
+            self._model_edge_filter_removed = (
+                int(data["edge_filter_removed"][0])
+                if "edge_filter_removed" in data.files
+                else 0
+            )
+            self._model_edge_filter_total = (
+                int(data["edge_filter_total"][0])
+                if "edge_filter_total" in data.files
+                else 0
+            )
             if "manual" in data.files:
                 manual = np.asarray(data["manual"], dtype=np.uint8).reshape(-1)
                 if manual.size != self._model_x.size:
@@ -1352,6 +1543,16 @@ class ShapeMatch(BaseTool):
                 int(data["edge_high"][0]),
                 round(float(data["min_gradient"][0]), 6),
                 int(data["max_features"][0]),
+                (
+                    str(data["edge_filter_mode"][0])
+                    if "edge_filter_mode" in data.files
+                    else str(self.params.get("edge_filter_mode", "auto"))
+                ),
+                (
+                    int(data["edge_filter_min_area"][0])
+                    if "edge_filter_min_area" in data.files
+                    else int(self.params.get("edge_filter_min_area", 0))
+                ),
                 token,
                 mask_digest,
             )
@@ -1595,6 +1796,23 @@ class ShapeMatch(BaseTool):
             dy = offset(response[y - 1, x], response[y, x], response[y + 1, x])
         return dx, dy
 
+    @staticmethod
+    def _kernel_candidates(result):
+        candidates = []
+        for x, y, angle, scale, votes in zip(
+            result["x"], result["y"], result["angle"], result["scale"], result["votes"]
+        ):
+            candidates.append(
+                {
+                    "x": float(x),
+                    "y": float(y),
+                    "angle": float(angle),
+                    "scale": float(scale),
+                    "peak": float(votes),
+                }
+            )
+        return candidates
+
     def _kernel_coarse(self, mag, theta, scene_edges, angles, scales,
                        model_scale_x=1.0, model_scale_y=1.0):
         if _kernel_vote is None:
@@ -1630,20 +1848,123 @@ class ShapeMatch(BaseTool):
             return []
         if "error" in result:
             raise RuntimeError(f"shape_match_vote failed: {result['error']}")
-        candidates = []
-        for x, y, angle, scale, votes in zip(
-            result["x"], result["y"], result["angle"], result["scale"], result["votes"]
+        return self._kernel_candidates(result)
+
+    def _kernel_coarse_fused(self, gx, gy, scene_edges, angles, scales,
+                             model_scale_x=1.0, model_scale_y=1.0):
+        if _kernel_vote_fused is None:
+            raise RuntimeError(
+                "ShapeMatch requires the native _falco_kernel extension. "
+                "Build it with build_kernel.bat or install the wheel."
+            )
+        if self._vote_model_x.size == 0:
+            raise ValueError("ShapeMatch model has no voting features; retrain.")
+        try:
+            result = _kernel_vote_fused(
+                scene_gx=np.ascontiguousarray(gx, dtype=np.int16),
+                scene_gy=np.ascontiguousarray(gy, dtype=np.int16),
+                scene_mask=np.ascontiguousarray(scene_edges, dtype=np.uint8),
+                model_x=np.ascontiguousarray(
+                    self._vote_model_x / model_scale_x, dtype=np.float32
+                ),
+                model_y=np.ascontiguousarray(
+                    self._vote_model_y / model_scale_y, dtype=np.float32
+                ),
+                model_theta=self._vote_model_theta,
+                model_mag=self._vote_model_mag,
+                angles=np.ascontiguousarray(angles, dtype=np.float32),
+                scales=np.ascontiguousarray(scales, dtype=np.float32),
+                bins=32,
+                min_scene_mag=5.0,
+                peaks_per_hypothesis=_VOTE_PEAKS_PER_HYPOTHESIS,
+                max_candidates=_MAX_KERNEL_CANDIDATES,
+                edge_cell=_VOTE_EDGE_CELL,
+                edge_quota=_VOTE_EDGE_QUOTA,
+            )
+        except Exception as exc:
+            raise RuntimeError(f"shape_match_vote_fused failed: {exc}") from exc
+        if not result:
+            return []
+        if "error" in result:
+            raise RuntimeError(f"shape_match_vote_fused failed: {result['error']}")
+        return self._kernel_candidates(result)
+
+    def _edge_proposals(self, search_gray, search_map):
+        """Full-search correlation on reduced edge maps.
+
+        This is a proposal stage only: the raw edge-correlation score is used
+        to pick peaks, never as the final match confidence.  Candidates are
+        returned in search-ROI coordinates, at the nominal model orientation
+        and scale; the normal geometry refinement scans angle/scale locally.
+        """
+        if (
+            self._template_edges is None
+            or self._search_template_gray is None
+            or search_gray is None
+            or search_map is None
         ):
-            candidates.append(
+            return []
+        if search_gray.dtype != np.uint8 or self._template_edges.size == 0:
+            return []
+        template_h, template_w = self._search_template_gray.shape[:2]
+        if template_w < 4 or template_h < 4:
+            return []
+        if (
+            template_w > search_gray.shape[1]
+            or template_h > search_gray.shape[0]
+        ):
+            return []
+        template_edges = cv2.resize(
+            self._template_edges,
+            (template_w, template_h),
+            interpolation=cv2.INTER_AREA,
+        )
+        scene_edges = cv2.Canny(
+            search_gray,
+            int(self._model_edge_low),
+            int(self._model_edge_high),
+        )
+        response = cv2.matchTemplate(
+            scene_edges, template_edges, cv2.TM_CCOEFF_NORMED
+        )
+        if response.size == 0:
+            return []
+
+        scale_x, scale_y, origin_x, origin_y = search_map
+        if abs(scale_x) < 1e-9 or abs(scale_y) < 1e-9:
+            return []
+
+        radius = max(
+            3,
+            int(round(
+                min(template_w, template_h) * _EDGE_PROPOSAL_NMS_FRACTION
+            )),
+        )
+        work = response.copy()
+        proposals = []
+        for _ in range(_MAX_EDGE_PROPOSALS):
+            _, score, _, location = cv2.minMaxLoc(work)
+            if score < _EDGE_PROPOSAL_MIN_SCORE:
+                break
+            x, y = location
+            dx, dy = self._subpixel_peak(response, x, y)
+            center_x = x + template_w / 2.0 + dx
+            center_y = y + template_h / 2.0 + dy
+            proposals.append(
                 {
-                    "x": float(x),
-                    "y": float(y),
-                    "angle": float(angle),
-                    "scale": float(scale),
-                    "peak": float(votes),
+                    "x": (center_x - origin_x) / scale_x,
+                    "y": (center_y - origin_y) / scale_y,
+                    "angle": 0.0,
+                    "scale": 1.0,
+                    "peak": float(score),
                 }
             )
-        return candidates
+            x0 = max(0, x - radius)
+            y0 = max(0, y - radius)
+            x1 = min(work.shape[1], x + radius + 1)
+            y1 = min(work.shape[0], y + radius + 1)
+            work[y0:y1, x0:x1] = -1.0
+        return proposals
 
     @staticmethod
     def _dedupe_candidates(candidates, min_distance,
@@ -3477,20 +3798,28 @@ class ShapeMatch(BaseTool):
             int(self._model_edge_low),
             int(self._model_edge_high),
         )
-        edge_y, edge_x = np.nonzero(vote_edges)
-        vote_mag = np.zeros(vote_gray.shape, dtype=np.float32)
-        if edge_y.size:
-            vote_mag[edge_y, edge_x] = np.hypot(
-                vote_gx[edge_y, edge_x].astype(np.float32),
-                vote_gy[edge_y, edge_x].astype(np.float32),
-            )
-        vote_edges = self._cap_scene_edges(vote_mag, vote_edges)
-        edge_y, edge_x = np.nonzero(vote_edges)
-        vote_theta = np.zeros(vote_gray.shape, dtype=np.float32)
-        if edge_y.size:
-            vote_theta[edge_y, edge_x] = np.arctan2(
-                vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
-            )
+        use_fused_vote = (
+            _kernel_vote is not None
+            and _kernel_vote_fused is not None
+            and vote_gx.dtype == np.int16
+            and os.environ.get("FALCOCV_SHAPE_MATCH_FUSED_VOTE", "1") != "0"
+        )
+        vote_mag = vote_theta = None
+        if not use_fused_vote:
+            edge_y, edge_x = np.nonzero(vote_edges)
+            vote_mag = np.zeros(vote_gray.shape, dtype=np.float32)
+            if edge_y.size:
+                vote_mag[edge_y, edge_x] = np.hypot(
+                    vote_gx[edge_y, edge_x].astype(np.float32),
+                    vote_gy[edge_y, edge_x].astype(np.float32),
+                )
+            vote_edges = self._cap_scene_edges(vote_mag, vote_edges)
+            edge_y, edge_x = np.nonzero(vote_edges)
+            vote_theta = np.zeros(vote_gray.shape, dtype=np.float32)
+            if edge_y.size:
+                vote_theta[edge_y, edge_x] = np.arctan2(
+                    vote_gy[edge_y, edge_x], vote_gx[edge_y, edge_x]
+                )
 
         # Public angle range: positive = clockwise in the image frame.  The
         # crop is straightened by ``roi_angle``, so the crop-relative range is
@@ -3525,15 +3854,26 @@ class ShapeMatch(BaseTool):
 
         factor_x = 1.0 / vote_map[0]
         factor_y = 1.0 / vote_map[1]
-        coarse = self._kernel_coarse(
-            vote_mag,
-            vote_theta,
-            vote_edges,
-            angles,
-            scales,
-            model_scale_x=factor_x,
-            model_scale_y=factor_y,
-        )
+        if use_fused_vote:
+            coarse = self._kernel_coarse_fused(
+                vote_gx,
+                vote_gy,
+                vote_edges,
+                angles,
+                scales,
+                model_scale_x=factor_x,
+                model_scale_y=factor_y,
+            )
+        else:
+            coarse = self._kernel_coarse(
+                vote_mag,
+                vote_theta,
+                vote_edges,
+                angles,
+                scales,
+                model_scale_x=factor_x,
+                model_scale_y=factor_y,
+            )
         vx_scale, vy_scale, vx_origin, vy_origin = vote_map
         for candidate in coarse:
             candidate["x"] = (candidate["x"] - vx_origin) / vx_scale
@@ -3628,6 +3968,20 @@ class ShapeMatch(BaseTool):
             )
         else:
             coarse = coarse[:_MAX_NCC_CANDIDATES]
+
+        if (
+            bool(self.params.get("edge_proposals", False))
+            and search_gray is not None
+            and search_map is not None
+        ):
+            edge_proposals = self._edge_proposals(search_gray, search_map)
+            if edge_proposals:
+                coarse = self._dedupe_candidates(
+                    list(coarse) + edge_proposals,
+                    max(8.0, min(self._template_size) * 0.15),
+                    angle_tolerance=max(1.0, coarse_angle * 0.5),
+                    scale_tolerance=0.05,
+                )
 
         candidates = []
         refined_centers = []

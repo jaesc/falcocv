@@ -4,10 +4,11 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QGridLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -16,11 +17,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QTimer, Qt
 
+from falcocv.core.config import ConfigManager
 from falcocv.core.vision_image import VisionImage
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.style import SUCCESS, WARNING, disabled_css
 from falcocv.ui.tool_config_helpers import (
-    add_fixture_axis_row,
     add_record_header,
     make_record_selector,
     set_fixture_axes_enabled,
@@ -76,6 +77,16 @@ class ShapeMatchConfig(QWidget):
         self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.right_panel)
 
+        # The pre-compact layout forced a ~670 px panel and saved that width.
+        # Reset the saved ShapeMatch splitter once so the compact layout opens
+        # at its natural width.  Later user resizes keep working normally.
+        config = ConfigManager()
+        revisions = config.data.setdefault("layout_revisions", {})
+        if not revisions.get("shape_match_compact_panel"):
+            config.set_tool_splitter("ShapeMatch", [])
+            revisions["shape_match_compact_panel"] = True
+            config.save()
+
         configure_params_splitter(
             self.content_layout, self.left_scroll, self.right_panel, "ShapeMatch"
         )
@@ -116,6 +127,54 @@ class ShapeMatchConfig(QWidget):
         self.refresh_ui()
 
     # ------------------------------------------------------------------
+    # Layout helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _field(label, widget):
+        """Compact field: caption above the control (HeightBlobs style)."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(1)
+        layout.addWidget(QLabel(label))
+        layout.addWidget(widget)
+        return container
+
+    @classmethod
+    def _field_grid(cls, entries, columns=2):
+        """Two-column grid of compact fields; keeps the panel narrow."""
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
+        for index, (label, widget) in enumerate(entries):
+            grid.addWidget(
+                cls._field(label, widget), index // columns, index % columns
+            )
+        return container
+
+    @staticmethod
+    def _compact_combo(combo, minimum_contents_length=12, minimum_width=140):
+        """Keep the combo minimum width small while letting it expand."""
+        combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        combo.setMinimumContentsLength(minimum_contents_length)
+        combo.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        combo.setMinimumWidth(minimum_width)
+
+    @staticmethod
+    def _compact_spin(spin, minimum_width=90):
+        """Let the layout ignore the spin's wide size hint."""
+        spin.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        spin.setMinimumWidth(minimum_width)
+
+    # ------------------------------------------------------------------
     # Tabs
     # ------------------------------------------------------------------
     def _build_training_tab(self):
@@ -123,7 +182,8 @@ class ShapeMatchConfig(QWidget):
         layout = QVBoxLayout(panel)
         layout.addWidget(self.train_roi_editor)
 
-        capture = QPushButton("Capture Train Image")
+        capture = QPushButton("Capture Image")
+        capture.setToolTip("Capture the current input as the training image.")
         capture.clicked.connect(self._on_capture)
         layout.addWidget(capture)
 
@@ -138,43 +198,69 @@ class ShapeMatchConfig(QWidget):
         features_group = QGroupBox("Feature Extraction")
         features_layout = QVBoxLayout(features_group)
 
-        edge_row = QHBoxLayout()
-        edge_row.addWidget(QLabel("Canny low:"))
         self.spin_edge_low = QSpinBox()
         self.spin_edge_low.setRange(0, 254)
         self.spin_edge_low.setValue(int(self.tool.params.get("edge_low", 50)))
-        edge_row.addWidget(self.spin_edge_low)
-        edge_row.addWidget(QLabel("high:"))
+        self.spin_edge_low.setToolTip("Canny lower threshold.")
+        self._compact_spin(self.spin_edge_low)
         self.spin_edge_high = QSpinBox()
         self.spin_edge_high.setRange(1, 255)
         self.spin_edge_high.setValue(int(self.tool.params.get("edge_high", 150)))
-        edge_row.addWidget(self.spin_edge_high)
-        features_layout.addLayout(edge_row)
-
-        gradient_row = QHBoxLayout()
-        gradient_row.addWidget(QLabel("Min gradient:"))
+        self.spin_edge_high.setToolTip("Canny upper threshold.")
+        self._compact_spin(self.spin_edge_high)
         self.spin_min_gradient = QDoubleSpinBox()
         self.spin_min_gradient.setRange(0.0, 5000.0)
         self.spin_min_gradient.setDecimals(1)
         self.spin_min_gradient.setSingleStep(5.0)
+        self.spin_min_gradient.setMaximumWidth(110)
         self.spin_min_gradient.setValue(
             float(self.tool.params.get("min_gradient", 0.0))
         )
-        gradient_row.addWidget(self.spin_min_gradient)
-        gradient_row.addStretch()
-        features_layout.addLayout(gradient_row)
-
-        features_row = QHBoxLayout()
-        features_row.addWidget(QLabel("Max features:"))
+        self._compact_spin(self.spin_min_gradient)
         self.spin_max_features = QSpinBox()
         self.spin_max_features.setRange(20, 5000)
         self.spin_max_features.setSingleStep(50)
         self.spin_max_features.setValue(
             int(self.tool.params.get("max_features", 800))
         )
-        features_row.addWidget(self.spin_max_features)
-        features_row.addStretch()
-        features_layout.addLayout(features_row)
+        self._compact_spin(self.spin_max_features)
+        self.combo_edge_filter = QComboBox()
+        self.combo_edge_filter.addItem("Auto", "auto")
+        self.combo_edge_filter.addItem("Manual", "manual")
+        self.combo_edge_filter.setToolTip(
+            "Auto: discard edge components below 10 % of the largest one, "
+            "capped by the template area. Manual: use the area below."
+        )
+        self._compact_combo(self.combo_edge_filter, 8, 90)
+        self.spin_edge_filter_area = QSpinBox()
+        self.spin_edge_filter_area.setRange(0, 10000)
+        self.spin_edge_filter_area.setSingleStep(5)
+        self.spin_edge_filter_area.setSuffix(" px")
+        self.spin_edge_filter_area.setToolTip(
+            "Manual: discard Canny components smaller than this area. "
+            "0 disables the filter."
+        )
+        self._compact_spin(self.spin_edge_filter_area)
+        features_layout.addWidget(
+            self._field_grid(
+                (
+                    ("Low", self.spin_edge_low),
+                    ("High", self.spin_edge_high),
+                    ("Gradient", self.spin_min_gradient),
+                    ("Features", self.spin_max_features),
+                    ("Filter", self.combo_edge_filter),
+                    ("Min area", self.spin_edge_filter_area),
+                )
+            )
+        )
+
+        self.label_edge_filter = QLabel("Small edge components are ignored.")
+        self.label_edge_filter.setWordWrap(True)
+        self.label_edge_filter.setToolTip(
+            "Auto: 10 % of the largest edge component, capped by the "
+            "template area. Manual: minimum component area; 0 disables it."
+        )
+        features_layout.addWidget(self.label_edge_filter)
 
         self.label_features = QLabel("")
         self.label_features.setWordWrap(True)
@@ -190,14 +276,13 @@ class ShapeMatchConfig(QWidget):
         self.label_mask = QLabel("Mask: none")
         self.label_mask.setWordWrap(True)
         mask_layout.addWidget(self.label_mask)
-        mask_row = QHBoxLayout()
+        mask_row = QVBoxLayout()
         self.btn_edit_mask = QPushButton("Edit Mask...")
         self.btn_edit_mask.clicked.connect(self._on_edit_mask)
         self.btn_clear_mask = QPushButton("Clear Mask")
         self.btn_clear_mask.clicked.connect(self._on_clear_mask)
         mask_row.addWidget(self.btn_edit_mask)
         mask_row.addWidget(self.btn_clear_mask)
-        mask_row.addStretch()
         mask_layout.addLayout(mask_row)
         layout.addWidget(mask_group)
 
@@ -208,27 +293,37 @@ class ShapeMatchConfig(QWidget):
             self.spin_max_features,
         ):
             widget.valueChanged.connect(self._on_training_param_changed)
+        self.combo_edge_filter.currentIndexChanged.connect(
+            self._on_edge_filter_mode_changed
+        )
+        self.spin_edge_filter_area.valueChanged.connect(
+            self._on_training_param_changed
+        )
 
         origin_group = QGroupBox("Tool Origin Offset")
         origin_layout = QVBoxLayout(origin_group)
-        origin_row = QHBoxLayout()
         self.spin_ox = QDoubleSpinBox()
         self.spin_ox.setRange(-10000.0, 10000.0)
         self.spin_ox.setDecimals(2)
+        self.spin_ox.setMaximumWidth(110)
         self.spin_ox.setValue(float(self.tool.params.get("origin_x", 0.0)))
+        self._compact_spin(self.spin_ox)
         self.spin_oy = QDoubleSpinBox()
         self.spin_oy.setRange(-10000.0, 10000.0)
         self.spin_oy.setDecimals(2)
+        self.spin_oy.setMaximumWidth(110)
         self.spin_oy.setValue(float(self.tool.params.get("origin_y", 0.0)))
+        self._compact_spin(self.spin_oy)
         self.spin_ox.valueChanged.connect(self._on_origin_changed)
         self.spin_oy.valueChanged.connect(self._on_origin_changed)
-        origin_row.addWidget(QLabel("X:"))
-        origin_row.addWidget(self.spin_ox)
-        origin_row.addWidget(QLabel("Y:"))
-        origin_row.addWidget(self.spin_oy)
-        origin_layout.addLayout(origin_row)
+        origin_layout.addWidget(
+            self._field_grid((("X", self.spin_ox), ("Y", self.spin_oy)))
+        )
 
-        self.btn_pick_origin = QPushButton("Pick Origin Point (Click on Template)")
+        self.btn_pick_origin = QPushButton("Pick Origin")
+        self.btn_pick_origin.setToolTip(
+            "Click a point on the template preview to set the origin offset."
+        )
         self.btn_pick_origin.setCheckable(True)
         self.btn_pick_origin.clicked.connect(self._on_pick_origin_clicked)
         origin_layout.addWidget(self.btn_pick_origin)
@@ -237,7 +332,7 @@ class ShapeMatchConfig(QWidget):
         preview_group = QGroupBox("Shape Preview")
         preview_layout = QVBoxLayout(preview_group)
         self.template_viewer = ImageViewer()
-        self.template_viewer.setFixedSize(250, 250)
+        self.template_viewer.setFixedSize(180, 180)
         preview_layout.addWidget(self.template_viewer)
         layout.addWidget(preview_group)
         layout.addStretch()
@@ -253,6 +348,7 @@ class ShapeMatchConfig(QWidget):
         self.spin_score = QDoubleSpinBox()
         self.spin_score.setRange(0.05, 1.0)
         self.spin_score.setSingleStep(0.05)
+        self.spin_score.setMaximumWidth(110)
         self.spin_score.setValue(float(self.tool.params.get("min_score", 0.45)))
         self.spin_score.valueChanged.connect(lambda value: self._set_param("min_score", value))
         confidence_layout.addWidget(QLabel("Confidence"))
@@ -260,10 +356,12 @@ class ShapeMatchConfig(QWidget):
         layout.addWidget(confidence_group)
 
         angle_group = QGroupBox("Angle Range")
-        angle_layout = QHBoxLayout(angle_group)
+        angle_layout = QVBoxLayout(angle_group)
         self.spin_angle_start = QDoubleSpinBox()
         self.spin_angle_start.setRange(-180.0, 180.0)
         self.spin_angle_start.setDecimals(2)
+        self.spin_angle_start.setMaximumWidth(110)
+        self._compact_spin(self.spin_angle_start)
         self.spin_angle_start.setToolTip(
             "Positive angles rotate clockwise in the image frame, "
             "like ROI/fixture angles."
@@ -275,6 +373,8 @@ class ShapeMatchConfig(QWidget):
         self.spin_angle_end = QDoubleSpinBox()
         self.spin_angle_end.setRange(-180.0, 180.0)
         self.spin_angle_end.setDecimals(2)
+        self.spin_angle_end.setMaximumWidth(110)
+        self._compact_spin(self.spin_angle_end)
         self.spin_angle_end.setToolTip(
             "Positive angles rotate clockwise in the image frame, "
             "like ROI/fixture angles."
@@ -283,18 +383,24 @@ class ShapeMatchConfig(QWidget):
         self.spin_angle_end.valueChanged.connect(
             lambda value: self._set_param("angle_end", value)
         )
-        angle_layout.addWidget(QLabel("Min:"))
-        angle_layout.addWidget(self.spin_angle_start)
-        angle_layout.addWidget(QLabel("Max:"))
-        angle_layout.addWidget(self.spin_angle_end)
+        angle_layout.addWidget(
+            self._field_grid(
+                (
+                    ("Min", self.spin_angle_start),
+                    ("Max", self.spin_angle_end),
+                )
+            )
+        )
         layout.addWidget(angle_group)
 
         scale_group = QGroupBox("Scale Range")
-        scale_layout = QHBoxLayout(scale_group)
+        scale_layout = QVBoxLayout(scale_group)
         self.spin_scale_start = QDoubleSpinBox()
         self.spin_scale_start.setRange(0.05, 5.0)
         self.spin_scale_start.setDecimals(3)
         self.spin_scale_start.setSingleStep(0.01)
+        self.spin_scale_start.setMaximumWidth(110)
+        self._compact_spin(self.spin_scale_start)
         self.spin_scale_start.setValue(float(self.tool.params.get("scale_start", 0.9)))
         self.spin_scale_start.valueChanged.connect(
             lambda value: self._set_param("scale_start", value)
@@ -303,47 +409,27 @@ class ShapeMatchConfig(QWidget):
         self.spin_scale_end.setRange(0.05, 5.0)
         self.spin_scale_end.setDecimals(3)
         self.spin_scale_end.setSingleStep(0.01)
+        self.spin_scale_end.setMaximumWidth(110)
+        self._compact_spin(self.spin_scale_end)
         self.spin_scale_end.setValue(float(self.tool.params.get("scale_end", 1.1)))
         self.spin_scale_end.valueChanged.connect(
             lambda value: self._set_param("scale_end", value)
         )
-        scale_layout.addWidget(QLabel("Min:"))
-        scale_layout.addWidget(self.spin_scale_start)
-        scale_layout.addWidget(QLabel("Max:"))
-        scale_layout.addWidget(self.spin_scale_end)
+        scale_layout.addWidget(
+            self._field_grid(
+                (
+                    ("Min", self.spin_scale_start),
+                    ("Max", self.spin_scale_end),
+                )
+            )
+        )
         layout.addWidget(scale_group)
-
-        pre_gate_group = QGroupBox("Pre-gate scorer")
-        pre_gate_layout = QVBoxLayout(pre_gate_group)
-        self.combo_pre_gate = QComboBox()
-        self.combo_pre_gate.addItem("Grayscale NCC (stable)", "ncc")
-        self.combo_pre_gate.addItem(
-            "Gradient alignment (prototype)", "alignment"
-        )
-        index = self.combo_pre_gate.findData(
-            str(self.tool.params.get("pre_gate_scorer", "ncc"))
-        )
-        self.combo_pre_gate.setCurrentIndex(index if index >= 0 else 0)
-        self.combo_pre_gate.setToolTip(
-            "Candidate ranking before the full NCC scan. "
-            "Grayscale NCC uses appearance; gradient alignment uses only "
-            "scene/model gradients. Alignment is a prototype pending "
-            "real-job validation."
-        )
-        self.combo_pre_gate.currentIndexChanged.connect(
-            self._on_pre_gate_changed
-        )
-        pre_gate_layout.addWidget(QLabel("Candidate ranking"))
-        pre_gate_layout.addWidget(self.combo_pre_gate)
-        layout.addWidget(pre_gate_group)
 
         mode_group = QGroupBox("Matching mode")
         mode_layout = QVBoxLayout(mode_group)
         self.combo_match_mode = QComboBox()
         self.combo_match_mode.addItem("Hybrid (NCC/ECC)", "hybrid")
-        self.combo_match_mode.addItem(
-            "Geometry only (prototype)", "geometry"
-        )
+        self.combo_match_mode.addItem("Geometry only", "geometry")
         mode_index = self.combo_match_mode.findData(
             str(self.tool.params.get("match_mode", "geometry"))
         )
@@ -355,18 +441,58 @@ class ShapeMatchConfig(QWidget):
             "Geometry only uses edge distance + gradient alignment + ICP; "
             "experimental and under validation."
         )
+        self._compact_combo(self.combo_match_mode, 12)
         self.combo_match_mode.currentIndexChanged.connect(
             self._on_match_mode_changed
         )
-        mode_layout.addWidget(QLabel("Verification"))
         mode_layout.addWidget(self.combo_match_mode)
         layout.addWidget(mode_group)
+
+        # Only meaningful in Hybrid: Geometry forces the gradient alignment
+        # pre-gate internally, so the selector is hidden in that mode.
+        self.pre_gate_group = QGroupBox("Pre-gate scorer")
+        pre_gate_layout = QVBoxLayout(self.pre_gate_group)
+        self.combo_pre_gate = QComboBox()
+        self.combo_pre_gate.addItem("Grayscale NCC", "ncc")
+        self.combo_pre_gate.addItem("Gradient alignment", "alignment")
+        index = self.combo_pre_gate.findData(
+            str(self.tool.params.get("pre_gate_scorer", "ncc"))
+        )
+        self.combo_pre_gate.setCurrentIndex(index if index >= 0 else 0)
+        self.combo_pre_gate.setToolTip(
+            "Candidate ranking before the full NCC scan. "
+            "Grayscale NCC uses appearance; gradient alignment uses only "
+            "scene/model gradients (prototype pending real-job validation)."
+        )
+        self._compact_combo(self.combo_pre_gate, 14)
+        self.combo_pre_gate.currentIndexChanged.connect(
+            self._on_pre_gate_changed
+        )
+        pre_gate_layout.addWidget(self.combo_pre_gate)
+        layout.addWidget(self.pre_gate_group)
+
+        proposals_group = QGroupBox("Search proposals")
+        proposals_layout = QVBoxLayout(proposals_group)
+        self.chk_edge_proposals = QCheckBox("Edge search")
+        self.chk_edge_proposals.setChecked(
+            bool(self.tool.params.get("edge_proposals", False))
+        )
+        self.chk_edge_proposals.setToolTip(
+            "Add the strongest peaks from a reduced edge-map correlation "
+            "search before refinement. Edge-based; no grayscale."
+        )
+        self.chk_edge_proposals.toggled.connect(
+            lambda checked: self._set_param("edge_proposals", checked)
+        )
+        proposals_layout.addWidget(self.chk_edge_proposals)
+        layout.addWidget(proposals_group)
 
         results_group = QGroupBox("Expected Results")
         results_layout = QVBoxLayout(results_group)
         self.spin_max_matches = QSpinBox()
         self.spin_max_matches.setRange(0, 100)
         self.spin_max_matches.setSpecialValueText("All")
+        self.spin_max_matches.setMaximumWidth(110)
         self.spin_max_matches.setValue(int(self.tool.params.get("max_matches", 1)))
         self.spin_max_matches.setToolTip(
             "Maximum number of matches to return (0 = all). "
@@ -375,19 +501,40 @@ class ShapeMatchConfig(QWidget):
         self.spin_max_matches.valueChanged.connect(
             lambda value: self._set_param("max_matches", value)
         )
-        results_layout.addWidget(QLabel("Number of matches (0 = All)"))
+        label_matches = QLabel("Matches")
+        label_matches.setToolTip("Maximum number of matches (0 = all)")
+        results_layout.addWidget(label_matches)
         results_layout.addWidget(self.spin_max_matches)
-        self.chk_fixture = QCheckBox("Act as Fixture (Anchor)")
+        self.chk_fixture = QCheckBox("Fixture")
+        self.chk_fixture.setToolTip(
+            "Use this result as the fixture anchor for downstream tools."
+        )
         self.chk_fixture.setChecked(bool(self.tool.params.get("act_as_fixture", False)))
         self.chk_fixture.toggled.connect(
             lambda checked: self._set_param("act_as_fixture", checked)
         )
         results_layout.addWidget(self.chk_fixture)
-        self.fixture_axes = add_fixture_axis_row(
-            results_layout,
-            self.tool,
-            on_change=lambda key, value: self._set_param(key, value),
-        )
+        self.fixture_axes = []
+        axes_grid = QGridLayout()
+        axes_grid.setContentsMargins(0, 0, 0, 0)
+        axes_grid.setHorizontalSpacing(6)
+        axes_grid.setVerticalSpacing(2)
+        for index, (key, text) in enumerate(
+            (
+                ("fixture_use_x", "X"),
+                ("fixture_use_y", "Y"),
+                ("fixture_use_angle", "Angle"),
+            )
+        ):
+            box = QCheckBox(text)
+            box.setChecked(bool(self.tool.params.get(key, True)))
+            box.setToolTip(f"Use the matched {text.lower()} as fixture.")
+            box.toggled.connect(
+                lambda checked, k=key: self._set_param(k, bool(checked))
+            )
+            axes_grid.addWidget(box, index // 2, index % 2)
+            self.fixture_axes.append(box)
+        results_layout.addLayout(axes_grid)
         set_fixture_axes_enabled(
             self.fixture_axes, self.chk_fixture.isChecked()
         )
@@ -399,7 +546,7 @@ class ShapeMatchConfig(QWidget):
         layout.addWidget(results_group)
 
         self.spin_min_results = add_min_results_group(
-            layout, self.tool, "Minimum matches:", 100, "matches"
+            layout, self.tool, "Min matches:", 100, "matches"
         )
 
         visibility_group = QGroupBox("Visibility")
@@ -409,13 +556,18 @@ class ShapeMatchConfig(QWidget):
         self.chk_overlays.toggled.connect(lambda checked: self._on_overlays_toggled(checked))
         visibility_layout.addWidget(self.chk_overlays)
         for key, label in (
-            ("show_search_roi", "Show Search Region"),
-            ("show_found_region", "Show Found Region"),
-            ("show_found_origin", "Show Found Origin"),
-            ("show_labels", "Show Labels"),
-            ("copy_overlays_to_input", "Copy overlays to input image"),
+            ("show_search_roi", "Search ROI"),
+            ("show_found_region", "Found ROI"),
+            ("show_found_origin", "Origin"),
+            ("show_labels", "Labels"),
+            ("copy_overlays_to_input", "Copy overlays"),
         ):
             check = QCheckBox(label)
+            if key == "copy_overlays_to_input":
+                check.setToolTip(
+                    "Copy this tool's overlays to the input image so "
+                    "downstream tools can draw on them."
+                )
             check.setChecked(bool(self.tool.params.get(key, True)))
             check.toggled.connect(
                 lambda checked, k=key: self._set_param(k, checked)
@@ -444,9 +596,9 @@ class ShapeMatchConfig(QWidget):
             self.combo_pre_gate.blockSignals(True)
             self.combo_pre_gate.setCurrentIndex(index)
             self.combo_pre_gate.blockSignals(False)
-        self.combo_pre_gate.setEnabled(
-            str(self.tool.params.get("match_mode", "geometry")) != "geometry"
-        )
+        geometry = str(self.tool.params.get("match_mode", "geometry")) == "geometry"
+        self.combo_pre_gate.setEnabled(not geometry)
+        self.pre_gate_group.setVisible(not geometry)
 
     def _on_match_mode_changed(self, _index=None):
         value = self.combo_match_mode.currentData()
@@ -461,6 +613,13 @@ class ShapeMatchConfig(QWidget):
             self.combo_match_mode.blockSignals(True)
             self.combo_match_mode.setCurrentIndex(index)
             self.combo_match_mode.blockSignals(False)
+
+    def _sync_edge_proposals_control(self):
+        checked = bool(self.tool.params.get("edge_proposals", False))
+        if checked != self.chk_edge_proposals.isChecked():
+            self.chk_edge_proposals.blockSignals(True)
+            self.chk_edge_proposals.setChecked(checked)
+            self.chk_edge_proposals.blockSignals(False)
 
     def _on_origin_changed(self):
         self.tool.params["origin_x"] = float(self.spin_ox.value())
@@ -504,7 +663,33 @@ class ShapeMatchConfig(QWidget):
         self.tool.params["edge_high"] = int(self.spin_edge_high.value())
         self.tool.params["min_gradient"] = float(self.spin_min_gradient.value())
         self.tool.params["max_features"] = int(self.spin_max_features.value())
+        self.tool.params["edge_filter_mode"] = str(
+            self.combo_edge_filter.currentData() or "auto"
+        )
+        self.tool.params["edge_filter_min_area"] = int(
+            self.spin_edge_filter_area.value()
+        )
         self.tool.mark_dirty()
+
+    def _on_edge_filter_mode_changed(self):
+        self._update_edge_filter_controls()
+        self._on_training_param_changed()
+
+    def _update_edge_filter_controls(self):
+        manual = self.combo_edge_filter.currentData() == "manual"
+        self.spin_edge_filter_area.setEnabled(manual)
+        if manual:
+            area = int(self.spin_edge_filter_area.value())
+            if area > 0:
+                self.label_edge_filter.setText(
+                    f"Ignore components below {area} px."
+                )
+            else:
+                self.label_edge_filter.setText("Noise filter disabled.")
+        else:
+            self.label_edge_filter.setText(
+                "Auto: 10 % of the largest component."
+            )
 
     def _sync_training_controls(self):
         self._syncing_training = True
@@ -517,6 +702,15 @@ class ShapeMatchConfig(QWidget):
             self.spin_max_features.setValue(
                 int(self.tool.params.get("max_features", 800))
             )
+            mode = str(
+                self.tool.params.get("edge_filter_mode", "auto")
+            ).lower()
+            index = self.combo_edge_filter.findData(mode)
+            self.combo_edge_filter.setCurrentIndex(index if index >= 0 else 0)
+            self.spin_edge_filter_area.setValue(
+                int(self.tool.params.get("edge_filter_min_area", 0))
+            )
+            self._update_edge_filter_controls()
         finally:
             self._syncing_training = False
 
@@ -639,6 +833,7 @@ class ShapeMatchConfig(QWidget):
         self._sync_training_controls()
         self._sync_match_mode_control()
         self._sync_pre_gate_control()
+        self._sync_edge_proposals_control()
         self.tool.refresh_stale_state()
         self._update_mask_status()
         self.btn_edit_features.setEnabled(
@@ -739,9 +934,21 @@ class ShapeMatchConfig(QWidget):
         low = int(getattr(self.tool, "_model_edge_low", 50))
         high = int(getattr(self.tool, "_model_edge_high", 150))
         canny = int(getattr(self.tool, "_model_canny_count", 0))
-        text = f"{count} features · Canny {low}/{high} · {canny} edges"
+        text = f"{count} features | Canny {low}/{high} | {canny} edges"
         if getattr(self.tool, "_model_canny_fallback", False):
-            text += " · fallback: top 10 % Sobel"
+            text += " | fallback: top 10 % Sobel"
+        filter_area = int(getattr(self.tool, "_model_edge_filter_area", 0))
+        filter_removed = int(
+            getattr(self.tool, "_model_edge_filter_removed", 0)
+        )
+        filter_total = int(getattr(self.tool, "_model_edge_filter_total", 0))
+        if filter_area > 0:
+            text += (
+                f" | noise filter {filter_area} px "
+                f"({filter_removed}/{filter_total} removed)"
+            )
+        else:
+            text += " | noise filter off"
         self.label_features.setText(text)
 
     def _update_template_preview(self):
@@ -751,7 +958,7 @@ class ShapeMatchConfig(QWidget):
             return
 
         height, width = source.shape[:2]
-        scale = min(250.0 / width, 250.0 / height, 2.0)
+        scale = min(180.0 / width, 180.0 / height, 2.0)
         thumb_w = max(1, int(round(width * scale)))
         thumb_h = max(1, int(round(height * scale)))
         interpolation = (

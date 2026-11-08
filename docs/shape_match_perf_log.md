@@ -888,6 +888,18 @@ Status:
     TemplateMatch, max 85 px on one frame).  Details in
     `docs/SHAPE_MATCH_VALIDATION.md`.  Geometry stays the fast mode; hybrid
     remains the precision reference.
+12. Fused gradient -> edge-cap -> vote (2026-11-07, experimental branch;
+    Ryzen 7 5800H, 8C/16T) -
+    **done and kept for review**: `shape_match_vote_fused` takes the int16
+    `spatialGradient` output and the Canny mask, computes magnitude/theta,
+    applies the fixed 32 px / 48-edge cap and runs the vote in one kernel call.
+    Python no longer builds full-frame magnitude/theta arrays or calls
+    `np.nonzero` / `_cap_scene_edges`.  Synthetic medians: 480x360
+    19.1 -> 14.8 ms, 1 MP 50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms, fixed
+    scale 14.2 -> 11.2 ms.  Demo: hybrid 94.3 -> 86.6 ms, geometry
+    51.1 -> 44.2 ms.  Pose/score parity exact on the demo and synthetic
+    suite; full suite 725 passed.  The fused path is opt-out with
+    `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0` until the real-data gate is run.
 
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.

@@ -85,18 +85,21 @@ def test_pre_gate_selector_writes_tool_param(qtbot):
 
     assert config.combo_match_mode.currentData() == "geometry"
     assert not config.combo_pre_gate.isEnabled()
+    assert config.pre_gate_group.isHidden()
 
     hybrid_index = config.combo_match_mode.findData("hybrid")
     assert hybrid_index >= 0
     config.combo_match_mode.setCurrentIndex(hybrid_index)
     assert tool.params["match_mode"] == "hybrid"
     assert config.combo_pre_gate.isEnabled()
+    assert not config.pre_gate_group.isHidden()
 
     geometry_index = config.combo_match_mode.findData("geometry")
     assert geometry_index >= 0
     config.combo_match_mode.setCurrentIndex(geometry_index)
     assert tool.params["match_mode"] == "geometry"
     assert not config.combo_pre_gate.isEnabled()
+    assert config.pre_gate_group.isHidden()
 
 
 def test_preview_renders_features_at_display_resolution(qtbot):
@@ -352,3 +355,53 @@ def test_feature_editor_uses_candidate_and_feature_colors(qtbot):
 
     dialog._set_mode("pan")
     assert dialog.viewer._brush_cursor is None
+
+def test_noise_filter_controls_write_params(qtbot):
+    tool = ShapeMatch()
+    config = ShapeMatchConfig(tool)
+    qtbot.addWidget(config)
+
+    assert config.combo_edge_filter.currentData() == "auto"
+    assert not config.spin_edge_filter_area.isEnabled()
+
+    config.combo_edge_filter.setCurrentIndex(
+        config.combo_edge_filter.findData("manual")
+    )
+    assert config.spin_edge_filter_area.isEnabled()
+    config.spin_edge_filter_area.setValue(54)
+    assert tool.params["edge_filter_mode"] == "manual"
+    assert tool.params["edge_filter_min_area"] == 54
+
+    config.combo_edge_filter.setCurrentIndex(
+        config.combo_edge_filter.findData("auto")
+    )
+    assert not config.spin_edge_filter_area.isEnabled()
+    assert tool.params["edge_filter_mode"] == "auto"
+
+def test_edge_proposals_checkbox_writes_param(qtbot):
+    tool = ShapeMatch()
+    config = ShapeMatchConfig(tool)
+    qtbot.addWidget(config)
+
+    assert config.chk_edge_proposals.isChecked()
+    config.chk_edge_proposals.setChecked(False)
+    assert tool.params["edge_proposals"] is False
+    config.chk_edge_proposals.setChecked(True)
+    assert tool.params["edge_proposals"] is True
+
+
+def test_settings_panel_is_compact_and_fits_saved_width(qtbot):
+    tool = ShapeMatch()
+    config = ShapeMatchConfig(tool)
+    qtbot.addWidget(config)
+    config.resize(1200, 800)
+    config.show()
+    qtbot.wait(50)
+
+    # Regression guard: the old layout demanded ~670 px and forced a wide
+    # panel with a horizontal scrollbar.  HeightBlobs 3D is the reference.
+    assert config.left_panel.minimumSizeHint().width() <= 300
+
+    config.left_scroll.setFixedWidth(293)
+    qtbot.wait(20)
+    assert config.left_scroll.horizontalScrollBar().maximum() == 0

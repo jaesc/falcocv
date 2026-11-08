@@ -76,6 +76,27 @@ def test_shape_match_baseline_rotation_and_scale():
     assert abs(result.scale - combo.scale) / combo.scale <= 0.002
 
 
+def test_shape_match_fused_vote_matches_legacy(monkeypatch):
+    import falcocv.tools.shape_match.logic as shape_logic
+
+    if getattr(shape_logic, "_kernel_vote_fused", None) is None:
+        pytest.skip("fused vote kernel not available")
+
+    scenes = {scene.name: scene for scene in scene_suite()}
+    scene = scenes["combo"]
+    tool = _tool(scene.template)
+
+    monkeypatch.setenv("FALCOCV_SHAPE_MATCH_FUSED_VOTE", "0")
+    legacy = _run(tool, scene.image)
+    monkeypatch.setenv("FALCOCV_SHAPE_MATCH_FUSED_VOTE", "1")
+    fused = _run(tool, scene.image)
+
+    for field in ("x", "y", "angle", "scale", "score"):
+        assert getattr(fused, field) == pytest.approx(
+            getattr(legacy, field), abs=1e-6
+        )
+
+
 def test_shape_match_occlusion_and_illumination():
     scenes = {scene.name: scene for scene in scene_suite()}
     tool = _tool(scenes["baseline"].template)
@@ -922,3 +943,63 @@ def test_shape_match_spatial_dedupe_matches_bruteforce():
     slow = bruteforce(candidates, 60.0, 5.0, 0.05)
     assert [(c["x"], c["y"]) for c in fast] == [(c["x"], c["y"]) for c in slow]
 
+def test_edge_noise_filter_auto_and_manual():
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    cv2.rectangle(mask, (10, 10), (60, 60), 255, 1)
+    mask[80, 20] = 255
+    mask[85, 30] = 255
+
+    filtered, area, removed, total = ShapeMatch._filter_training_edges(
+        mask, 100, 100, "auto", 0
+    )
+    assert total >= 3
+    assert area > 0
+    assert removed >= 2
+    assert filtered[80, 20] == 0
+    assert filtered[10, 10] > 0
+
+    unfiltered, area0, removed0, _ = ShapeMatch._filter_training_edges(
+        mask, 100, 100, "manual", 0
+    )
+    assert area0 == 0
+    assert removed0 == 0
+    assert np.array_equal(unfiltered, mask)
+
+
+def test_noise_filter_is_saved_and_marks_model_stale():
+    rng = np.random.default_rng(0)
+    image = np.zeros((120, 240), dtype=np.uint8)
+    cv2.rectangle(image, (20, 20), (220, 90), 255, 2)
+    image[rng.random(image.shape) > 0.985] = 255
+
+    tool = ShapeMatch()
+    tool.params.update(
+        {
+            "edge_low": 50,
+            "edge_high": 150,
+            "min_gradient": 0.0,
+            "max_features": 200,
+            "edge_filter_mode": "auto",
+            "match_mode": "geometry",
+        }
+    )
+    tool._static_train_image = image
+    tool.params["train_roi"] = [0, 0, 240, 120, 0]
+    tool.train_pattern()
+
+    assert tool._model_edge_filter_area > 0
+    assert tool._model_edge_filter_removed > 0
+    assert tool._model_edge_filter_total >= tool._model_edge_filter_removed
+    assert tool.params.get("model_b64")
+
+    restored = ShapeMatch()
+    restored.params.update(tool.params)
+    restored._restore_state_from_params()
+    assert restored._model_edge_filter_mode == "auto"
+    assert restored._model_edge_filter_area == tool._model_edge_filter_area
+    assert restored._model_edge_filter_removed == tool._model_edge_filter_removed
+    assert not restored.refresh_stale_state()
+
+    restored.params["edge_filter_mode"] = "manual"
+    restored.params["edge_filter_min_area"] = 30
+    assert restored.refresh_stale_state()

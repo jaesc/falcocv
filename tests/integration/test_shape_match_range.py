@@ -207,3 +207,17 @@ def test_template_match_range_training_and_fixture():
     assert output.data is scene
     assert np.isclose(output.x, result.x)
     assert np.isclose(output.y, result.y)
+
+def test_edge_proposals_keep_range_geometry_detection():
+    template = _template()
+    scene = _scene(template)
+    tool = _tool(template)
+    tool.params["edge_proposals"] = True
+    tool.inputs["input image"] = VisionImage(scene)
+    tool.run()
+
+    assert tool.last_error is None
+    assert tool.outputs["count"] == 1
+    result = tool.outputs["results"][0]
+    assert abs(result.x - 220.0) < 2.0
+    assert abs(result.y - 170.0) < 2.0
