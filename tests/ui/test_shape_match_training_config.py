@@ -72,34 +72,16 @@ def test_training_controls_write_params_and_show_status(qtbot):
     assert tool.is_model_stale
 
 
-def test_pre_gate_selector_writes_tool_param(qtbot):
+def test_matching_mode_controls_are_removed(qtbot):
     tool = ShapeMatch()
     config = ShapeMatchConfig(tool)
     qtbot.addWidget(config)
 
-    assert config.combo_pre_gate.currentData() == "ncc"
-    index = config.combo_pre_gate.findData("alignment")
-    assert index >= 0
-    config.combo_pre_gate.setCurrentIndex(index)
-    assert tool.params["pre_gate_scorer"] == "alignment"
-
-    assert config.combo_match_mode.currentData() == "geometry"
-    assert not config.combo_pre_gate.isEnabled()
-    assert config.pre_gate_group.isHidden()
-
-    hybrid_index = config.combo_match_mode.findData("hybrid")
-    assert hybrid_index >= 0
-    config.combo_match_mode.setCurrentIndex(hybrid_index)
-    assert tool.params["match_mode"] == "hybrid"
-    assert config.combo_pre_gate.isEnabled()
-    assert not config.pre_gate_group.isHidden()
-
-    geometry_index = config.combo_match_mode.findData("geometry")
-    assert geometry_index >= 0
-    config.combo_match_mode.setCurrentIndex(geometry_index)
-    assert tool.params["match_mode"] == "geometry"
-    assert not config.combo_pre_gate.isEnabled()
-    assert config.pre_gate_group.isHidden()
+    assert not hasattr(config, "combo_match_mode")
+    assert not hasattr(config, "combo_pre_gate")
+    assert not hasattr(config, "pre_gate_group")
+    assert "match_mode" not in tool.params
+    assert "pre_gate_scorer" not in tool.params
 
 
 def test_preview_renders_features_at_display_resolution(qtbot):

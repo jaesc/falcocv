@@ -91,20 +91,25 @@ cpp/bin/       → local kernel build output (gitignored)
   0 after cloud generation.
 - **3D camera** → default isometric camera `azimuth=45°, elevation=30°`.
 
-- **ShapeMatch solvers** -> the native kernel is required; there is no Python
-  coarse fallback. Alignment >=0.90 uses the ECC solver; lower alignment uses the
-  explicit occlusion solver. ECC failure in the 0.90-0.98 band reclassifies to
-  occlusion; >=0.98 is rejected with a warning. Results carry `solver`,
-  `ncc_score`, `visible_fraction`, `ecc_cc` and `warnings`.
-- **ShapeMatch model** -> `model_b64` stores features, edges, gray and color
-  templates. Training ROI is fixture-relative and supports rotation. Do not add
-  TemplateMatch-only parameters (`angle_step`, `scale_step`, `use_pyramid`, ...).
-- **ShapeMatch training model v3** -> `model_b64` is v3 only; v2 models are
-  rejected and must be retrained. The model stores the training mask and
-  `edge_low`/`edge_high`/`min_gradient`/`max_features`. Changing any of those,
-  the training ROI, or the training image marks the model **STALE** and blocks
-  matching until retrained. The Canny→top-10 % Sobel fallback is allowed but
-  shown in the training status.
+- **ShapeMatch scope** -> edge/shape matching only.  Hybrid (NCC/ECC) was
+  removed; grayscale matching belongs to TemplateMatch.  There is no mode
+  switch, no grayscale fallback and no legacy model compatibility.
+- **ShapeMatch solver** -> the native kernel is required; there is no Python
+  coarse fallback.  The fused vote proposes poses; edge distance, gradient
+  alignment and ICP refine them, including occluded parts.  Results carry
+  `solver="geometry"`, `visible_fraction` and `warnings`; `ncc_score` and
+  `ecc_cc` were removed.
+- **ShapeMatch model v4** -> `model_b64` is v4 only; v3 and older are rejected
+  and must be retrained.  It stores features, `edges`, manual flags, the mask,
+  edge/filter parameters, training ROI/token and Canny metadata, but **not**
+  `gray`/`color`.  Preview and the manual feature editor regenerate them from
+  `train_image_b64` + `train_roi` via `_ensure_preview_templates()`; matching
+  never needs grayscale.  Training ROI is fixture-relative and supports
+  rotation.  Do not add TemplateMatch-only parameters (`angle_step`,
+  `scale_step`, `use_pyramid`, ...).
+- **ShapeMatch training model** -> changing any training parameter, ROI, mask or
+  training image marks the model **STALE** and blocks matching until retrained.
+  The Canny→top-10 % Sobel fallback is allowed but shown in the training status.
 - **ShapeMatch feature coverage** -> automatic training seeds one feature per
   active 32 px cell, then fills the remaining `max_features` budget by gradient
   magnitude with an adaptive per-cell cap (`ceil(2 * budget / active_cells)`).
@@ -125,89 +130,62 @@ cpp/bin/       → local kernel build output (gitignored)
   peaks per hypothesis (up to 1024 candidates) and use up to 500 model
   features selected by the same spatial coverage + magnitude rule.  Full
   gradients, Canny and the distance map stay lazy.
-- **ShapeMatch fused vote** -> `shape_match_vote_fused` (kernel) takes the
-  int16 `cv2.spatialGradient` gx/gy and the Canny mask, computes magnitude and
-  orientation, applies the 32 px / 48-edge cap and runs the vote in one native
-  call.  Python no longer builds full-frame mag/theta arrays, calls
-  `np.nonzero` or `_cap_scene_edges`.  The legacy `shape_match_vote` entry point
-  is kept; both share `vote_from_scene_bins`, and
-  `test_shape_match_fused_vote_matches_legacy` requires exact pose/score parity
-  (1e-6).  Opt-out with `FALCOCV_SHAPE_MATCH_FUSED_VOTE=0`; the Python path
-  falls back to the legacy vote when the loaded kernel lacks the symbol.
-  Measured: 1 MP 50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms, demo geometry
-  51.1 -> 44.2 ms, hybrid 94.3 -> 86.6 ms.  The 39-frame depth A/B and the
-  1005-frame shape2 gate passed with exact parity (0 mismatches); an
-  in-process 100-frame A/B measured 56.1 ms fused vs 57.8 ms legacy.
+- **ShapeMatch fused vote** -> `shape_match_vote_fused` is the only vote entry
+  point.  It takes the int16 `cv2.spatialGradient` gx/gy and the Canny mask,
+  computes magnitude/orientation, applies the 32 px / 48-edge cap and runs the
+  vote in one native call.  The legacy `shape_match_vote` binding, the Python
+  coarse vote, `_cap_scene_edges` and the
+  `FALCOCV_SHAPE_MATCH_FUSED_VOTE` opt-out were removed.  Measured: 1 MP
+  50.9 -> 35.2 ms, 2.7 MP 104.1 -> 59.8 ms.
 - **ShapeMatch training noise filter** -> `edge_filter_mode` (`auto`/`manual`)
   and `edge_filter_min_area` discard small Canny components before feature
   selection.  Auto = `max(8, min(0.10 * largest_component,
   0.0002 * template_area))`; manual uses the explicit area, 0 disables it.
   The applied area and counts are stored in `model_b64`; changing the mode or
   area marks the model STALE until retrained.
-- **ShapeMatch edge proposals** -> `edge_proposals` defaults to True in
-  `geometry`: a reduced edge-map correlation proposes the top 5 NMS peaks
-  before refinement.  The edge score is proposal-only, never the final
-  confidence, and no grayscale is used.  The proposal view uses a factor
-  derived from the template (`min_template // 32`, never finer than the search
-  view, capped at 8x); `FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR=search` restores the
-  old view for A/B.  On 39 real depth frames it raised detections from 16 to
-  39 at `min_score=0.15` with zero false positives; the old full search view
-  found 38.  The 1005-frame shape2 job already uses search factor 8, so the
-  proposal view is unchanged there.  Edge proposals are an independent source
-  and now compete in the geometry pre-gate instead of being merged with vote
-  peaks before scoring.  When the primary geometry solve scores below 0.50,
-  the strongest edge proposal is solved as one extra hypothesis and replaces
-  it only if the final score improves by 0.05.  On the 1005-frame shape2 job
-  this cut max px 85.68 -> 11.01 with 0 lost/extra; geometry went 59.9 ->
-  63.2 ms (+5.5 %).  The gross 80 px failures are gone, but angle/scale still
-  miss the strict gate.
-- **ShapeMatch search stage** -> two-stage NCC on a reduced view (template
-  >=48 px, max 8x): one single-pose correlation ranks every proposal, then the
-  full angle/scale scan runs on the best ones plus the strongest vote peaks.
-  The pre-gate is capped at 20 proposals and the full scan at 4 angle/scale
-  proposals; a score-margin cutoff keeps close competitors and at least two
-  candidates. Candidates whose NCC is below `_MIN_NCC` are rejected before
-  alignment/solver. The alignment score uses one cached full-ROI gradient pair,
-  not a Sobel patch per proposal.
-- **ShapeMatch geometric pre-gate prototype** -> the per-tool
-  `pre_gate_scorer` parameter defaults to `"ncc"` and is exposed in the Search
-  tab only while `match_mode` is `"hybrid"`; in `"geometry"` the control is
-  hidden because the native path forces gradient alignment internally.
-  `"alignment"` uses the native gradient-alignment score and passed the
-  full suite; `"edge"` failed multi-instance tests and is not exposed.  The
-  full scan and ECC still use grayscale, so this is not yet full illumination
-  invariance.
-- **ShapeMatch geometry-only mode** -> the per-tool `match_mode` parameter
-  defaults to `"geometry"`; `"hybrid"` remains selectable as a legacy fallback.
-  Geometry skips `matchTemplate` and ECC, using edge distance, gradient
-  alignment and ICP.  Existing jobs with an explicit `"hybrid"` value keep it,
-  and jobs that predate the field migrate to `"hybrid"` on load (including the
-  current `test1`/demo jobs until their tools are changed).  After score-sorting
-  the geometry shortlist it matches every hybrid detection on `test1` and adds
-  one Shape Match_2 image.  Geometry refinement now uses a local edge/distance window
-  when it is much smaller than the ROI, and the native kernel batches
+- **ShapeMatch edge proposals** -> `edge_proposals` defaults to True: a reduced
+  edge-map correlation proposes the top 5 NMS peaks before refinement.  The
+  edge score is proposal-only, never the final confidence, and no grayscale is
+  used.  The proposal view uses a factor derived from the template
+  (`min_template // 32`, never finer than the search view, capped at 8x);
+  `FALCOCV_SHAPE_MATCH_PROPOSAL_FACTOR=search` restores the old view for A/B.
+  Edge proposals are an independent source and compete in the geometry
+  pre-gate.  When the primary solve scores below 0.50, the strongest edge
+  proposal is solved as one extra hypothesis and replaces it only if the final
+  score improves by 0.05.
+- **ShapeMatch search stage** -> gradient alignment ranks the proposals in the
+  geometry pre-gate (native `shape_match_score`, one cached full-ROI gradient
+  pair).  The pre-gate is capped at 20 proposals; the score-margin cutoff keeps
+  close competitors and at least two candidates, then up to `_MAX_PRE_GATE_SCANS`
+  (4) are shortlisted plus the top vote peaks as a safety net, capped by
+  `_MAX_COARSE_CANDIDATES` (10).  For `max_matches > 1` the pre-gate also keeps
+  the best candidate per spatially distinct region and the shortlist removes
+  pre-refine duplicates; a bigger ROI or `max_matches` must never lose the
+  overall best match.  The solver runs on `limit` (or `limit + 1` when the
+  best pre-score is below 0.85) candidates, capped at `_MAX_SOLVE` (12), and
+  the final results are ranked by the measured score.
+- **ShapeMatch geometry refinement** -> refinement uses a local edge/distance
+  window when it is much smaller than the ROI; the native kernel batches
   fixed-angle/scale translation scoring plus angle/scale axis scans.  Full
   geometry gradients use `cv2.spatialGradient` on `uint8` (exactly equivalent
-  to the two Sobel calls and faster).  The native ICP computes its distance-map
-  derivatives internally (`shape_match_icp_from_dt`), avoiding Python Sobel
-  calls while keeping the old entry point.  With the rebuilt kernel, the latest
-  `test1` medians were `Shape Match_1` 50.9 vs 70.7 ms, `Shape Match_0`
-  68.9 vs 72.8 ms and `Shape Match_2` 100.7 vs 92.6 ms (timings are noisy).
-  Pose deltas are still up to ~7 px / ~2 deg / ~1.5 %, so it remains
-  experimental.  The production gate ran on 1005 real frames: detection parity
-  (0 lost, 0 extra) and -31 % time, but translation is less precise than hybrid
-  (median 1.00 vs 0.65 px against the job's TemplateMatch, one 85 px failure).
-  Geometry stays the fast mode; hybrid is the precision reference.  Re-run
-  `scripts/validate_shape_match_modes.py` before changing that verdict.
-  The Python path falls back to the generic score when the loaded kernel
-  predates `shape_match_score_translations`/`shape_match_score_axis`, and to
-  the old ICP path when it predates `shape_match_icp_from_dt`.
+  to two Sobel calls and faster).  The native ICP computes its distance-map
+  derivatives internally (`shape_match_icp_from_dt`).  Do not reintroduce
+  grayscale NCC/ECC matching here.
+- **ShapeMatch precision** -> 1005 frames vs TemplateMatch: 0 lost / 0 extra,
+  median 0.901 px, max 5.535 px / 1.162 deg / 2.065 % scale, 9/1005 strict
+  failures (2 translation, 7 scale).  The 7 scale rows are dominated by the
+  reference reporting exactly 1.0 while the edge-alignment score prefers
+  ShapeMatch's 0.979-0.985.  The gate is
+  `scripts/validate_shape_match_reference.py`, procedure in
+  `docs/SHAPE_MATCH_VALIDATION.md`; do not widen the thresholds to make it pass.
 - **ShapeMatch staged translation grid** -> the widest translation search runs a
-  coarse grid and then refines around its maximum.  The coarse step must be an
-  integer multiple of the fine step; otherwise the refined poses leave the
-  lattice of the single full grid and the result changes.  With the multiple the
-  staged search is bit-identical (pose delta 0 on the synthetic suite and on the
-  job A/B) and drops 221 -> 161 poses per solve.
+  coarse grid and then a fine pass around its maximum.  The coarse step must be
+  an integer multiple of the fine step, and the **coarse pass must return a grid
+  point** (`subpixel=False`) so the fine grid stays on the original lattice; a
+  coarse parabola moves the fine grid off-lattice and biases the pose by up to
+  ~0.3 px.  The final `_dt_scan_xy` fits a per-axis parabola and a last 0.5 px
+  translation scan runs after the occlusion/ICP pass.  On the synthetic
+  subpixel matrix the std is 0.008 px / 0.021 deg / 0.0002 scale.
 - **Kernel A/B measurement** -> rebuilding between measurements moved the
   baseline by 13 % on this machine.  Compare native changes inside one binary
   (extra flag or a second exported function), never across builds.
@@ -430,27 +408,18 @@ cpp/bin/       → local kernel build output (gitignored)
   Coarse views are cropped from a pyramid anchored to the frame origin so the
   same scene region always uses the same pixels.  Pre-refine dedupe is
   pose-aware (position + angle + scale); merging by position alone can discard
-  the correct scale before the NCC scan sees it.  Never stop refining early on
-  `max_matches`; rank the measured candidates by final score.
+  the correct scale before the solver sees it.  Never stop refining early on
+  `max_matches`; rank the measured candidates by final score.  With
+  `max_matches > 1` the pre-gate must keep spatially distinct candidates and
+  still append the strongest vote peaks.
 - **ShapeMatch ROI-bound preprocessing** -> for an axis-aligned `uint8` ROI,
-  the search converts only a frame-aligned gray block covering the ROI plus an
-  ECC halo.  The block origin must be a common multiple of the vote, search and
-  ECC pyramid factors.  Rotated ROIs and non-`uint8` inputs keep the older
+  the search converts only a frame-aligned gray block covering the ROI plus a
+  search halo.  The block origin must be a common multiple of the vote, search
+  and proposal factors.  Rotated ROIs and non-`uint8` inputs keep the older
   full-frame fallback.
-- **ShapeMatch ECC** -> two levels: affine ECC on a reduced view (factor <=2)
-  then a rendered NCC translation at full resolution.  The reduced pass must
-  undo its resampling with `template_scale`/`scene_scale`/`scene_offset`;
-  without that correction the reported scale drifts by up to 0.65 %.  Small
-  templates (factor 1) keep the full-resolution affine + polish path.
-- **ShapeMatch padding** -> the rotated template's padding diagonal must be even,
-  otherwise its center lands between pixels and translation is biased by ~0.5 px.
-  Render NCC padding with the template's median border color, never zero.
-  Crop the padding before `matchTemplate` (`_render_search`); a rotated rectangle
-  is centrally symmetric so the crop stays centred.
 - **ShapeMatch compact settings panel** -> the left content minimum is ~228 px
   (was ~670).  The Search/Training tabs use two-column field grids; the preview
-  is 180 px, the `Pre-gate scorer` group is hidden in `geometry`, and the old
-  saved splitter width is reset once through
+  is 180 px and the old saved splitter width is reset once through
   `ConfigManager.data["layout_revisions"]["shape_match_compact_panel"]`.  Keep
   labels short and put explanations in tooltips.
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
@@ -539,16 +508,22 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   `hmi_servers.mappings`.  **View > Reset all views** restores defaults in the
   main window and HMI Designer.
 - ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
-  `fe8a135`): model v3, training mask, Canny / `min_gradient` /
-  `max_features` controls, manual feature editor with brush, spatial feature
-  coverage, ROI-bound search preprocessing and geometry mode.
-- Post-1.1.0 (2026-11-08): fused native vote (`shape_match_vote_fused`, legacy
-  parity, opt-out), training noise filter, geometry edge proposals on a coarser
-  template-derived view, edge proposals competing in the geometry pre-gate
-  with a low-confidence second chance, compact ShapeMatch settings panel with
-  the pre-gate hidden in geometry, global wheel guard, Qt 6.12 ROI spin fix,
-  and HeightBlobs visibility options mirroring Blob Detector 2D.
-- ShapeMatch v2 models are rejected on purpose; 1.0.2 jobs must be retrained.
+  `fe8a135`): training mask, Canny / `min_gradient` / `max_features` controls,
+  manual feature editor with brush, spatial feature coverage, ROI-bound search
+  preprocessing and the first geometry mode.
+- Post-1.1.0 (2026-11-08): **geometry-only model v4**.  Hybrid/NCC/ECC, the
+  `match_mode`/`pre_gate_scorer` controls, the Python coarse vote and the legacy
+  `shape_match_vote` binding were removed.  The fused native vote is the only
+  vote path.  The model drops serialized `gray`/`color`; previews regenerate
+  from `train_image_b64` + `train_roi`.  Validation jobs (`depth.cvj`,
+  `shape2.cvj`, `shape2_validation.cvj`) and `examples/demo_inspection.cvj`
+  were retrained to v4; the demo's `min_score` moved 0.6 -> 0.55 because the
+  geometry score on its NG frame is 0.569.  Also included: training noise
+  filter, edge proposals on a coarser template-derived view, edge proposals in
+  the geometry pre-gate with a low-confidence second chance, compact ShapeMatch
+  settings panel, global wheel guard, Qt 6.12 ROI spin fix, and HeightBlobs
+  visibility options mirroring Blob Detector 2D.
+- ShapeMatch v2 and v3 models are rejected on purpose; retrain old jobs.
 - Spatial coverage is the default automatic selection.  Automatic orientation
   coverage was prototyped and rejected because it changed pose/score on a real
   job; do not reintroduce it without the benchmark gate.
@@ -561,30 +536,33 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   pose-lane batching, Levenberg-Marquardt and the alignment polish were tried
   and reverted; each is recorded with numbers in
   `docs/shape_match_perf_log.md` under "What did not work".
-- Geometry mode passed on detections and speed (1005 real frames, 0 lost,
-  0 extra, -31 %) but failed on precision (median 1.00 vs 0.65 px against the
-  job's TemplateMatch, one 85 px failure).  Geometry stays a fast mode; hybrid
-  is the precision reference.  Gate: `scripts/validate_shape_match_modes.py`,
-  procedure in `docs/SHAPE_MATCH_VALIDATION.md`.
+- ShapeMatch is geometry-only; TemplateMatch is the grayscale reference.  The
+  latest 1005-frame gate: 0 lost / 0 extra, median 0.901 px, max 5.535 px /
+  1.162 deg / 2.065 % scale, 9/1005 strict failures (2 translation, 7 scale).
+  The 7 scale rows are a TemplateMatch reference limitation: it reports exactly
+  1.0 while the edge-alignment score prefers ShapeMatch's 0.979-0.985.  Gate:
+  `scripts/validate_shape_match_reference.py`, procedure in
+  `docs/SHAPE_MATCH_VALIDATION.md`.
 - README screenshots are generated by `scripts/capture_readme_screenshots.py`
   into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
   `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
   the Designer preview with representative data, not a live worker capture.
-- Latest verification: `743 passed, 12 skipped, 3 xfailed`; UI
-  `147 passed, 5 skipped`; the fused vote matches the legacy path exactly
-  (1e-6); the 39-frame depth A/B found 39/39 true detections with zero false
-  positives.  The 1005-frame shape2 gate found 0 lost/extra, max px 11.01,
-  max angle 2.17 deg, max scale 2.58 %, geometry 63.2 ms vs hybrid 96.9 ms.
-  The gross 80 px translation failures are gone, but the strict 5 px /
-  2 deg / 1.5 % precision gate still fails.  The `falcocv-1.1.0` wheel was
-  built before this post-1.1.0 work and passed `scripts/check_wheel.py` plus
-  `scripts/wheel_smoke.py`; rebuild it before publishing a new wheel.
-  Synthetic ShapeMatch matrix: 0.001-0.003 px, <=0.010 deg, <=0.035 %.
-- Next work: improve the remaining geometry angle/scale precision (max 2.17
-  deg / 2.58 %, max px 11.0), validate the edge second chance on more jobs,
-  then validate Beckhoff ADS and Siemens S7 against real hardware.  Omron and
-  ADLINK USB-7250 hardware validation are complete; their automated tests
-  still use fakes where appropriate.  Modbus/OPC UA loopback tests run with the
-  optional `protocols` extra.  Resume on another machine with
-  `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"` and
+- Latest verification: `742 passed, 12 skipped, 3 xfailed`; UI
+  `147 passed, 5 skipped`; the 39-frame depth job still finds 39/39 true
+  detections with zero false positives.  The 1005-frame geometry-vs-TemplateMatch
+  gate found 0 lost/extra, max px 5.535, max angle 1.162 deg, max scale
+  2.065 %, geometry 60.7 ms vs TemplateMatch 406.5 ms.  The strict 5 px /
+  2 deg / 1.5 % gate still fails on 2 translation and 7 scale rows; the scale
+  rows are dominated by the TemplateMatch reference reporting exactly 1.0.
+  The `falcocv-1.1.0` wheel was built before this post-1.1.0 work and passed
+  `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it before
+  publishing a new wheel.  Synthetic ShapeMatch matrix after the subpixel
+  parabola: 0.008 px / 0.021 deg / 0.0002 scale std.
+- Next work: review the two >5 px translation frames (`0867`, `0957`) and the
+  TemplateMatch scale reference (it always reports 1.0), then validate Beckhoff
+  ADS and Siemens S7 against real hardware.  Omron and ADLINK USB-7250 hardware
+  validation are complete; their automated tests still use fakes where
+  appropriate.  Modbus/OPC UA loopback tests run with the optional `protocols`
+  extra.  Resume on another machine with `git pull origin dev`,
+  `pip install -e ".[dev,plc,protocols]"` and
   `pytest -q --ignore=tests/test_trainer_equivalence.py`.

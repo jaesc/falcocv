@@ -928,6 +928,42 @@ Status:
     8.1 px; the gross 80 px failures are gone.  The edge-based geometry mode
     still does not pass the strict 5 px / 2 deg / 1.5 % precision gate.
 
+15. Geometry-only + model v4 (2026-11-08, `experiment/geometry-only-v4`) -
+    **done and kept**: hybrid mode, the NCC/ECC path, the Python coarse vote,
+    `_cap_scene_edges` and the legacy `shape_match_vote` kernel entry point were
+    removed.  The fused vote is the only vote path.  Model v4 drops the
+    serialized `gray` (464,640 B) and `color` (1,393,664 B) arrays; previews are
+    regenerated from `train_image_b64` + `train_roi` on demand, and v3 models
+    are rejected.  The model stays at 800 features.
+    - Staged translation lattice: the coarse pass now returns a grid point
+      (`subpixel=False`) so the fine grid stays on the original lattice.  The
+      coarse parabola previously moved the fine grid off-lattice and biased
+      the pose by up to ~0.3 px.
+    - `_dt_scan_xy` now fits a per-axis parabola on the final sample.  On the
+      synthetic subpixel matrix the std dropped from 0.153 px to 0.008 px;
+      angle 0.041 -> 0.021 deg; scale 0.00055 -> 0.00020.
+    - A final 0.5 px translation scan runs after the occlusion/ICP pass.  A
+      best-pose score tracker with an early break was tried and reverted: it
+      left angle errors up to 0.3 deg because the near-optimum angle gain was
+      below the score epsilon.
+    - Multi-instance shortlist: the pre-gate keeps spatially distinct
+      candidates for `max_matches > 1` and still appends the top vote peaks as
+      a safety net.  `_two_part_scene` now returns 2/2 matches with
+      `max_matches=2` and `max_matches=0`; before the fix it returned 1/2.
+    - 1005-frame `shape2_validation.cvj` against the TemplateMatch reference:
+      0 lost / 0 extra, median 0.901 px, p90 2.031, p99 3.342, max 5.535 px,
+      max angle 1.162 deg, max scale 2.065 %, 9/1005 strict failures (2 px,
+      0 angle, 7 scale), 60.7 ms vs TemplateMatch 406.5 ms.  The previous
+      geometry-vs-hybrid numbers were 16 strict failures / 6.996 px / 1.223 deg
+      / 2.057 %.  The 7 scale rows are dominated by TemplateMatch reporting
+      exactly 1.0 while the edge-alignment score prefers ShapeMatch's
+      0.979-0.985; `0867`/`0957` are the two >5 px frames.
+    - Full suite after the refactor: 742 passed, 12 skipped, 3 xfailed.
+      `examples/demo_inspection.cvj` was retrained to v4 and its `min_score`
+      moved from 0.6 to 0.55 because the geometry score on the NG frame is
+      0.569 (the old hybrid score was above 0.6).  This is a demo-job migration,
+      not a product threshold change.
+
 Out of scope for this phase: workflow-level parallel execution, Fast mode,
 changing core count heuristics, or changing runtime edge/factor hypotheses.
 

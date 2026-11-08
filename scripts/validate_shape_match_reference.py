@@ -1,18 +1,20 @@
-"""Validate ShapeMatch geometry mode against the hybrid reference.
+"""Validate ShapeMatch geometry against a TemplateMatch reference.
 
-Runs the same job twice per image, once forcing ``match_mode="geometry"`` and
-once forcing ``"hybrid"``, then compares detections and poses.  Geometry is the
-default for new tools but is still marked experimental, so this is the gate it
-has to pass before the mode can be considered consolidated.
+Runs the job once per image and compares every ShapeMatch detection with the
+TemplateMatch detection in the same workflow.  TemplateMatch is the grayscale
+precision reference; ShapeMatch must stay within the pose gate without losing
+or adding detections.
 
 Usage:
-    python scripts/validate_shape_match_modes.py --job job.cvj --images ./frames
-    python scripts/validate_shape_match_modes.py --job job.cvj --images ./frames \\
+    python scripts/validate_shape_match_reference.py --job job.cvj --images ./frames
+    python scripts/validate_shape_match_reference.py --job job.cvj --images ./frames \\
         --limit 20 --json report.json
-    python scripts/validate_shape_match_modes.py --job job.cvj --images ./frames \\
-        --max-px 5 --max-angle 2 --max-scale-pct 1.5
+    python scripts/validate_shape_match_reference.py --job job.cvj --images ./frames \\
+        --reference "Template Match_Ref" --max-px 5 --max-angle 2 \\
+        --max-scale-pct 1.5
 
-Exit code is 1 when a detection is lost or a pose delta exceeds its threshold.
+Exit code is 1 when a detection is lost/added or a pose delta exceeds its
+threshold.
 """
 
 from __future__ import annotations
@@ -35,9 +37,9 @@ from falcocv.core.workflow import Workflow  # noqa: E402
 from falcocv.core.workflow_controller import WorkflowController  # noqa: E402
 from falcocv.tools.image_loader.logic import ImageLoader  # noqa: E402
 from falcocv.tools.shape_match.logic import ShapeMatch  # noqa: E402
+from falcocv.tools.template_match.logic import TemplateMatch  # noqa: E402
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp"}
-MATCH_MODES = ("hybrid", "geometry")
 
 
 @dataclass
@@ -53,6 +55,7 @@ class Detection:
 @dataclass
 class ToolReport:
     name: str
+    reference: str
     frames: int = 0
     errors: int = 0
     lost: int = 0
@@ -60,12 +63,14 @@ class ToolReport:
     max_px: float = 0.0
     max_angle: float = 0.0
     max_scale_pct: float = 0.0
-    hybrid_ms: list[float] = field(default_factory=list)
     geometry_ms: list[float] = field(default_factory=list)
+    reference_ms: list[float] = field(default_factory=list)
     worst: list[tuple[str, float, float, float]] = field(default_factory=list)
+    rows: list[dict] = field(default_factory=list)
 
     def summary(self) -> dict:
         return {
+            "reference": self.reference,
             "frames": self.frames,
             "errors": self.errors,
             "lost": self.lost,
@@ -73,11 +78,11 @@ class ToolReport:
             "max_px": round(self.max_px, 4),
             "max_angle": round(self.max_angle, 4),
             "max_scale_pct": round(self.max_scale_pct, 4),
-            "hybrid_ms": round(statistics.median(self.hybrid_ms), 3)
-            if self.hybrid_ms
-            else None,
             "geometry_ms": round(statistics.median(self.geometry_ms), 3)
             if self.geometry_ms
+            else None,
+            "reference_ms": round(statistics.median(self.reference_ms), 3)
+            if self.reference_ms
             else None,
             "worst": [
                 {
@@ -107,7 +112,7 @@ def _image_paths(folder: Path, pattern: str | None, limit: int | None):
     return files
 
 
-def _detections(tool: ShapeMatch) -> list[Detection]:
+def _detections(tool) -> list[Detection]:
     results = tool.outputs.get("results") or []
     return [
         Detection(
@@ -123,23 +128,21 @@ def _detections(tool: ShapeMatch) -> list[Detection]:
 
 
 def _match(reference: list[Detection], candidate: list[Detection], max_px: float):
-    """Greedy nearest-pose matching between the two runs."""
-    pairs: list[tuple[int, int, float]] = []
+    """Greedy nearest-pose matching between reference and candidate."""
     used_reference: set[int] = set()
     used_candidate: set[int] = set()
+    pairs: list[tuple[int, int, float]] = []
     distances = sorted(
         (
-            (
-                math.hypot(
-                    candidate[i].x - reference[j].x,
-                    candidate[i].y - reference[j].y,
-                ),
-                i,
-                j,
-            )
-            for i in range(len(candidate))
-            for j in range(len(reference))
+            math.hypot(
+                candidate[i].x - reference[j].x,
+                candidate[i].y - reference[j].y,
+            ),
+            i,
+            j,
         )
+        for i in range(len(candidate))
+        for j in range(len(reference))
     )
     for distance, index, reference_index in distances:
         if distance > max_px:
@@ -164,11 +167,21 @@ def _angle_delta(left: float, right: float) -> float:
     return abs((left - right + 180.0) % 360.0 - 180.0)
 
 
-def _run(workflow, controller, loader, tools, image: Path, mode: str):
+def _pose_tuple(detection: Detection | None):
+    if detection is None:
+        return None
+    return [
+        float(detection.x),
+        float(detection.y),
+        float(detection.angle),
+        float(detection.scale),
+        float(detection.score),
+    ]
+
+
+def _run(workflow, controller, loader, image: Path, tools):
     loader.params["mode"] = "File"
     loader.params["file_path"] = str(image)
-    for tool in tools:
-        tool.params["match_mode"] = mode
     for tool in workflow.tools:
         tool.last_error = None
     controller.run(advance=False)
@@ -188,8 +201,12 @@ def main(argv=None) -> int:
     parser.add_argument("--images", required=True, help="Folder with frames")
     parser.add_argument("--pattern", help="Glob inside --images (default: image suffixes)")
     parser.add_argument("--limit", type=int, help="Only the first N frames")
+    parser.add_argument(
+        "--reference",
+        help="TemplateMatch tool name; default: the only trained TemplateMatch",
+    )
     parser.add_argument("--match-px", type=float, default=200.0,
-                        help="Max distance to pair two detections (default 200)")
+                        help="Max distance to pair a reference detection (default 200)")
     parser.add_argument("--max-px", type=float, default=5.0)
     parser.add_argument("--max-angle", type=float, default=2.0)
     parser.add_argument("--max-scale-pct", type=float, default=1.5)
@@ -207,13 +224,30 @@ def main(argv=None) -> int:
 
     workflow = Workflow()
     JobManager().load_job(workflow, args.job)
-    tools = [
+    geometry_tools = [
         tool
         for tool in workflow.tools
         if isinstance(tool, ShapeMatch) and tool.is_trained
     ]
-    if not tools:
+    if not geometry_tools:
         parser.error("the job has no trained ShapeMatch tool")
+    references = [
+        tool
+        for tool in workflow.tools
+        if isinstance(tool, TemplateMatch) and tool.is_trained
+    ]
+    if not references:
+        parser.error("the job has no trained TemplateMatch reference")
+    if args.reference:
+        references = [tool for tool in references if tool.name == args.reference]
+        if not references:
+            parser.error(f"TemplateMatch reference not found: {args.reference}")
+    if len(references) > 1:
+        parser.error(
+            "the job has several TemplateMatch tools; choose one with --reference"
+        )
+    reference_tool = references[0]
+
     loaders = [tool for tool in workflow.tools if isinstance(tool, ImageLoader)]
     if not loaders:
         parser.error("the job needs an Image Loader to feed the frames")
@@ -222,7 +256,9 @@ def main(argv=None) -> int:
         for _source, _output, destination, input_name in workflow.connections
         if input_name == "input image"
     }
-    missing_input = [tool.name for tool in tools if tool.name not in connected]
+    missing_input = [
+        tool.name for tool in geometry_tools if tool.name not in connected
+    ]
     if missing_input:
         parser.error(
             "ShapeMatch tool(s) without an 'input image' connection: "
@@ -235,43 +271,61 @@ def main(argv=None) -> int:
     controller = WorkflowController(workflow)
     controller.set_scheduler(lambda callback: callback())
 
-    reports = {tool.name: ToolReport(name=tool.name) for tool in tools}
+    tools = list(geometry_tools) + [reference_tool]
+    reports = {
+        tool.name: ToolReport(name=tool.name, reference=reference_tool.name)
+        for tool in geometry_tools
+    }
     failures: list[str] = []
 
     for image in images:
-        runs: dict[str, dict[str, ShapeMatch]] = {}
-        for mode in MATCH_MODES:
-            runs[mode] = _run(
-                workflow, controller, loader, tools, image, mode
-            )
-        for tool in tools:
+        runs = _run(workflow, controller, loader, image, tools)
+        reference_detections, reference_ms, reference_error = runs[
+            reference_tool.name
+        ]
+        for tool in geometry_tools:
             report = reports[tool.name]
             report.frames += 1
-            geometry = runs["geometry"][tool.name]
-            hybrid = runs["hybrid"][tool.name]
-            report.geometry_ms.append(geometry[1])
-            report.hybrid_ms.append(hybrid[1])
-            if geometry[2] or hybrid[2]:
+            geometry_detections, geometry_ms, geometry_error = runs[tool.name]
+            report.geometry_ms.append(geometry_ms)
+            report.reference_ms.append(reference_ms)
+            if geometry_error or reference_error:
                 report.errors += 1
                 failures.append(
-                    f"{image.name}/{tool.name}: {geometry[2] or hybrid[2]}"
+                    f"{image.name}/{tool.name}: "
+                    f"{geometry_error or reference_error}"
+                )
+                report.rows.append(
+                    {
+                        "image": image.name,
+                        "px": None,
+                        "angle": None,
+                        "scale_pct": None,
+                        "geo": None,
+                        "tm": None,
+                        "error": geometry_error or reference_error,
+                    }
                 )
                 continue
-            hybrid_detections = hybrid[0]
-            geometry_detections = geometry[0]
             pairs, lost, extra = _match(
-                hybrid_detections, geometry_detections, args.match_px
+                reference_detections, geometry_detections, args.match_px
             )
             report.lost += len(lost)
             report.extra += len(extra)
             if lost:
                 failures.append(
-                    f"{image.name}/{tool.name}: lost {len(lost)} hybrid "
+                    f"{image.name}/{tool.name}: lost {len(lost)} reference "
                     "detection(s)"
                 )
-            for candidate_index, reference_index, _ in pairs:
+            if extra:
+                failures.append(
+                    f"{image.name}/{tool.name}: {len(extra)} extra "
+                    "ShapeMatch detection(s)"
+                )
+            if pairs:
+                candidate_index, reference_index, _ = pairs[0]
                 candidate = geometry_detections[candidate_index]
-                reference = hybrid_detections[reference_index]
+                reference = reference_detections[reference_index]
                 px = math.hypot(
                     candidate.x - reference.x, candidate.y - reference.y
                 )
@@ -283,6 +337,16 @@ def main(argv=None) -> int:
                 report.max_angle = max(report.max_angle, angle)
                 report.max_scale_pct = max(report.max_scale_pct, scale)
                 report.worst.append((image.name, px, angle, scale))
+                report.rows.append(
+                    {
+                        "image": image.name,
+                        "px": px,
+                        "angle": angle,
+                        "scale_pct": scale,
+                        "geo": _pose_tuple(candidate),
+                        "tm": _pose_tuple(reference),
+                    }
+                )
                 if not args.no_gate:
                     if px > args.max_px:
                         failures.append(
@@ -299,18 +363,34 @@ def main(argv=None) -> int:
                             f"{image.name}/{tool.name}: dscale {scale:.3f}% > "
                             f"{args.max_scale_pct}"
                         )
+            else:
+                report.rows.append(
+                    {
+                        "image": image.name,
+                        "px": None,
+                        "angle": None,
+                        "scale_pct": None,
+                        "geo": None,
+                        "tm": _pose_tuple(
+                            reference_detections[0]
+                            if reference_detections
+                            else None
+                        ),
+                    }
+                )
             if not args.no_gate:
                 for detection in geometry_detections:
                     if detection.solver != "geometry":
                         failures.append(
-                            f"{image.name}/{tool.name}: geometry mode "
-                            f"reported solver '{detection.solver}'"
+                            f"{image.name}/{tool.name}: ShapeMatch reported "
+                            f"solver '{detection.solver}'"
                         )
 
     loader.params["file_path"] = original_file
     loader.params["mode"] = original_mode
 
     print(f"job:        {args.job}")
+    print(f"reference:  {reference_tool.name}")
     print(f"frames:     {len(images)}")
     print(
         f"thresholds: dpx<={args.max_px} dang<={args.max_angle} deg "
@@ -318,29 +398,31 @@ def main(argv=None) -> int:
     )
     header = (
         f"{'tool':16s} {'lost':>5s} {'extra':>6s} {'dpx':>8s} {'dang':>8s} "
-        f"{'dscale%':>9s} {'hybrid ms':>10s} {'geom ms':>8s}"
+        f"{'dscale%':>9s} {'shape ms':>10s} {'ref ms':>8s}"
     )
     print("")
     print(header)
     print("-" * len(header))
-    for tool in tools:
+    for tool in geometry_tools:
         report = reports[tool.name]
-        hybrid_ms = (
-            statistics.median(report.hybrid_ms) if report.hybrid_ms else 0.0
-        )
         geometry_ms = (
             statistics.median(report.geometry_ms)
             if report.geometry_ms
             else 0.0
         )
+        reference_ms = (
+            statistics.median(report.reference_ms)
+            if report.reference_ms
+            else 0.0
+        )
         print(
             f"{report.name:16s} {report.lost:5d} {report.extra:6d} "
             f"{report.max_px:8.3f} {report.max_angle:8.3f} "
-            f"{report.max_scale_pct:9.3f} {hybrid_ms:10.1f} "
-            f"{geometry_ms:8.1f}"
+            f"{report.max_scale_pct:9.3f} {geometry_ms:10.1f} "
+            f"{reference_ms:8.1f}"
         )
     print("")
-    for tool in tools:
+    for tool in geometry_tools:
         report = reports[tool.name]
         worst = sorted(report.worst, key=lambda item: item[1], reverse=True)[:3]
         for image_name, px, angle, scale in worst:
@@ -362,6 +444,7 @@ def main(argv=None) -> int:
             json.dumps(
                 {
                     "job": args.job,
+                    "reference": reference_tool.name,
                     "images": len(images),
                     "thresholds": {
                         "px": args.max_px,
@@ -373,6 +456,11 @@ def main(argv=None) -> int:
                         name: report.summary()
                         for name, report in reports.items()
                     },
+                    "rows": [
+                        row
+                        for report in reports.values()
+                        for row in report.rows
+                    ],
                     "failures": failures,
                     "verdict": verdict,
                 },

@@ -17,6 +17,7 @@ from pathlib import Path
 import cv2
 
 from falcocv.core.job_manager import JobManager
+from falcocv.core.vision_image import VisionImage
 from falcocv.core.workflow import Workflow
 from falcocv.tools.blob_detector.logic import BlobDetector
 from falcocv.tools.image_loader.logic import ImageLoader
@@ -48,8 +49,8 @@ def build() -> Workflow:
     )
 
     matcher = ShapeMatch("Shape Match")
-    matcher._static_train_image = reference.copy()
-    matcher._static_train_fixture = {"x": 0.0, "y": 0.0, "angle": 0.0}
+    matcher.inputs["input image"] = VisionImage(reference)
+    matcher.save_train_image()
     matcher.params.update(
         {
             "train_roi": [CX - PART_W / 2 - MARGIN, CY - PART_H / 2 - MARGIN,
@@ -59,7 +60,7 @@ def build() -> Workflow:
             "angle_end": 25.0,
             "scale_start": 0.92,
             "scale_end": 1.08,
-            "min_score": 0.60,
+            "min_score": 0.55,
             "max_matches": 1,
             "max_features": 800,
             "act_as_fixture": True,

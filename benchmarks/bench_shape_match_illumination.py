@@ -154,15 +154,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scene", choices=("480", "5mp"), default="480")
     parser.add_argument("--rounds", type=int, default=3)
-    parser.add_argument(
-        "--variants",
-        default="ncc,alignment,edge,geometry",
-        help="comma-separated pre-gate variants (geometry is a match mode)",
-    )
     args = parser.parse_args(argv)
 
     template, base_image, truth = _scene(args.scene)
-    variants = [item.strip() for item in args.variants.split(",") if item.strip()]
+    variants = ("geometry",)
     transforms = (
         "identity",
         "bright+30",
@@ -194,12 +189,6 @@ def main(argv=None) -> int:
         image = _transform(base_image, transform)
         for name in variants:
             tool = tools[name]
-            if name == "geometry":
-                tool.params["match_mode"] = "geometry"
-                tool.params["pre_gate_scorer"] = "alignment"
-            else:
-                tool.params["match_mode"] = "hybrid"
-                tool.params["pre_gate_scorer"] = name
             tool.inputs["input image"] = VisionImage(image)
             tool.run()  # warm
             for _ in range(args.rounds):

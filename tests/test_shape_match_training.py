@@ -54,7 +54,10 @@ def test_model_roundtrip_keeps_mask_thresholds_and_version():
 
     raw = base64.b64decode(loaded.params["model_b64"])
     with np.load(io.BytesIO(raw), allow_pickle=False) as model:
-        assert int(model["version"][0]) == MODEL_VERSION == 3
+        assert int(model["version"][0]) == MODEL_VERSION == 4
+        assert "gray" not in model.files
+        assert "color" not in model.files
+        assert "edges" in model.files
         assert "mask" in model.files
         assert "train_image_token" in model.files
 
@@ -190,7 +193,8 @@ def _manual_tool():
         for x in range(30, 570, 35):
             cv2.rectangle(image, (x, y), (x + 18, y + 18), (255, 255, 255), -1)
     tool = ShapeMatch()
-    tool._static_train_image = image
+    tool.inputs["input image"] = VisionImage(image)
+    tool.save_train_image()
     tool.params["train_roi"] = [0, 0, 600, 400, 0]
     tool.params["max_features"] = 800
     tool.train_pattern()

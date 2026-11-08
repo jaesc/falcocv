@@ -34,7 +34,6 @@ def _tool(template: np.ndarray) -> ShapeMatch:
             "scale_end": 1.0,
             "min_score": 0.2,
             "max_matches": 1,
-            "match_mode": "geometry",
             "act_as_fixture": True,
             "show_search_roi": False,
             "show_found_region": False,
@@ -81,18 +80,17 @@ def test_shape_match_range_output_keeps_source_and_sets_fixture():
     assert np.isclose(output.angle, result.angle)
 
 
-def test_shape_match_range_hybrid_uses_normalized_roi():
+def test_shape_match_range_uses_normalized_roi():
     template = _template()
     scene = _scene(template)
     tool = _tool(template)
-    tool.params["match_mode"] = "hybrid"
     tool.inputs["input image"] = VisionImage(scene)
     tool.run()
 
     assert tool.last_error is None
     assert tool.outputs["count"] == 1
     result = tool.outputs["results"][0]
-    assert result.solver == "ecc"
+    assert result.solver == "geometry"
     assert abs(result.x - 220.0) < 2.0
     assert abs(result.y - 170.0) < 2.0
 

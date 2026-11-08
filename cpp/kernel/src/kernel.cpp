@@ -956,113 +956,6 @@ static py::dict vote_from_scene_bins(
     return result;
 }
 
-// ????????????????????????????? ShapeMatch vote ?????????????????????????????
-//
-// Sparse orientation-bin voting for ShapeMatch.  The Python layer extracts
-// scene gradients/edges and model features; this kernel only performs the
-// hypothesis voting and local-peak extraction.
-py::dict shape_match_vote_impl(
-    py::array_t<float, py::array::c_style | py::array::forcecast> scene_mag,
-    py::array_t<float, py::array::c_style | py::array::forcecast> scene_theta,
-    py::array_t<uint8_t, py::array::c_style | py::array::forcecast> scene_mask,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
-    py::array_t<float, py::array::c_style | py::array::forcecast> angles,
-    py::array_t<float, py::array::c_style | py::array::forcecast> scales,
-    int bins,
-    float min_scene_mag,
-    int peaks_per_hypothesis,
-    int max_candidates)
-{
-    auto mag_buf = scene_mag.request();
-    auto theta_buf = scene_theta.request();
-    auto mask_buf = scene_mask.request();
-    auto mx_buf = model_x.request();
-    auto my_buf = model_y.request();
-    auto mt_buf = model_theta.request();
-    auto mm_buf = model_mag.request();
-    auto angle_buf = angles.request();
-    auto scale_buf = scales.request();
-
-    if (mag_buf.ndim != 2 || theta_buf.ndim != 2 || mask_buf.ndim != 2) {
-        throw std::runtime_error("scene arrays must be 2D");
-    }
-    if (mx_buf.ndim != 1 || my_buf.ndim != 1 || mt_buf.ndim != 1 ||
-        mm_buf.ndim != 1 || angle_buf.ndim != 1 || scale_buf.ndim != 1) {
-        throw std::runtime_error("model and hypothesis arrays must be 1D");
-    }
-
-    const int height = static_cast<int>(mag_buf.shape[0]);
-    const int width = static_cast<int>(mag_buf.shape[1]);
-    const auto* mag = static_cast<const float*>(mag_buf.ptr);
-    const auto* theta = static_cast<const float*>(theta_buf.ptr);
-    const auto* mask = static_cast<const uint8_t*>(mask_buf.ptr);
-    const int n_model = static_cast<int>(mx_buf.shape[0]);
-    if (n_model == 0 || angle_buf.shape[0] == 0 || scale_buf.shape[0] == 0) {
-        return py::dict();
-    }
-    const auto* mx = static_cast<const float*>(mx_buf.ptr);
-    const auto* my = static_cast<const float*>(my_buf.ptr);
-    const auto* mt = static_cast<const float*>(mt_buf.ptr);
-    const auto* mm = static_cast<const float*>(mm_buf.ptr);
-    const auto* angle_values = static_cast<const float*>(angle_buf.ptr);
-    const auto* scale_values = static_cast<const float*>(scale_buf.ptr);
-
-    const int K = std::max(1, bins);
-    const float kPi = 3.14159265358979323846f;
-    const float two_pi = 2.0f * kPi;
-    const int n_angles = static_cast<int>(angle_buf.shape[0]);
-    const int n_scales = static_cast<int>(scale_buf.shape[0]);
-
-    // Bucket scene edge pixels by gradient orientation.
-    std::vector<std::vector<std::pair<int, int>>> scene_bins(K);
-    for (int y = 0; y < height; ++y) {
-        const int row = y * width;
-        for (int x = 0; x < width; ++x) {
-            const int index = row + x;
-            if (!mask[index] || mag[index] <= min_scene_mag) continue;
-            int bin = static_cast<int>(std::floor((theta[index] + kPi) / two_pi * K));
-            bin %= K;
-            if (bin < 0) bin += K;
-            scene_bins[bin].emplace_back(x, y);
-        }
-    }
-
-    return vote_from_scene_bins(
-        scene_bins, width, height,
-        mx, my, mt, mm, n_model,
-        angle_values, scale_values, n_angles, n_scales,
-        K, peaks_per_hypothesis, max_candidates);
-}
-
-py::dict safe_shape_match_vote(
-    py::array_t<float, py::array::c_style | py::array::forcecast> scene_mag,
-    py::array_t<float, py::array::c_style | py::array::forcecast> scene_theta,
-    py::array_t<uint8_t, py::array::c_style | py::array::forcecast> scene_mask,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_x,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_y,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_theta,
-    py::array_t<float, py::array::c_style | py::array::forcecast> model_mag,
-    py::array_t<float, py::array::c_style | py::array::forcecast> angles,
-    py::array_t<float, py::array::c_style | py::array::forcecast> scales,
-    int bins,
-    float min_scene_mag,
-    int peaks_per_hypothesis,
-    int max_candidates)
-{
-    try {
-        return shape_match_vote_impl(scene_mag, scene_theta, scene_mask,
-                                     model_x, model_y, model_theta, model_mag,
-                                     angles, scales, bins, min_scene_mag,
-                                     peaks_per_hypothesis, max_candidates);
-    } catch (const std::exception& e) {
-        return py::dict("error"_a = e.what());
-    } catch (...) {
-        return py::dict("error"_a = "unknown native error");
-    }
-}
 
 // Fused gradient -> edge-cap -> orientation-bin vote.  The Python layer used
 // to build full-frame magnitude/theta arrays and a capped edge mask before
@@ -2088,12 +1981,6 @@ PYBIND11_MODULE(_falco_kernel, m) {
           py::arg("target_points") = 1000000, py::arg("zero_as_invalid") = true,
           py::arg("colormap") = "", py::arg("compute_bbox") = false);
     m.def("plane_fit", &safe_plane_fit, py::arg("input"));
-    m.def("shape_match_vote", &safe_shape_match_vote,
-          py::arg("scene_mag"), py::arg("scene_theta"), py::arg("scene_mask"),
-          py::arg("model_x"), py::arg("model_y"), py::arg("model_theta"), py::arg("model_mag"),
-          py::arg("angles"), py::arg("scales"), py::arg("bins") = 32,
-          py::arg("min_scene_mag") = 5.0f, py::arg("peaks_per_hypothesis") = 3,
-          py::arg("max_candidates") = 64);
     m.def("shape_match_vote_fused", &safe_shape_match_vote_fused,
           py::arg("scene_gx"), py::arg("scene_gy"), py::arg("scene_mask"),
           py::arg("model_x"), py::arg("model_y"), py::arg("model_theta"), py::arg("model_mag"),

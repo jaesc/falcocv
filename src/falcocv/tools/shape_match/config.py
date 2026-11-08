@@ -425,52 +425,6 @@ class ShapeMatchConfig(QWidget):
         )
         layout.addWidget(scale_group)
 
-        mode_group = QGroupBox("Matching mode")
-        mode_layout = QVBoxLayout(mode_group)
-        self.combo_match_mode = QComboBox()
-        self.combo_match_mode.addItem("Hybrid (NCC/ECC)", "hybrid")
-        self.combo_match_mode.addItem("Geometry only", "geometry")
-        mode_index = self.combo_match_mode.findData(
-            str(self.tool.params.get("match_mode", "geometry"))
-        )
-        self.combo_match_mode.setCurrentIndex(
-            mode_index if mode_index >= 0 else 0
-        )
-        self.combo_match_mode.setToolTip(
-            "Hybrid uses grayscale NCC/ECC verification. "
-            "Geometry only uses edge distance + gradient alignment + ICP; "
-            "experimental and under validation."
-        )
-        self._compact_combo(self.combo_match_mode, 12)
-        self.combo_match_mode.currentIndexChanged.connect(
-            self._on_match_mode_changed
-        )
-        mode_layout.addWidget(self.combo_match_mode)
-        layout.addWidget(mode_group)
-
-        # Only meaningful in Hybrid: Geometry forces the gradient alignment
-        # pre-gate internally, so the selector is hidden in that mode.
-        self.pre_gate_group = QGroupBox("Pre-gate scorer")
-        pre_gate_layout = QVBoxLayout(self.pre_gate_group)
-        self.combo_pre_gate = QComboBox()
-        self.combo_pre_gate.addItem("Grayscale NCC", "ncc")
-        self.combo_pre_gate.addItem("Gradient alignment", "alignment")
-        index = self.combo_pre_gate.findData(
-            str(self.tool.params.get("pre_gate_scorer", "ncc"))
-        )
-        self.combo_pre_gate.setCurrentIndex(index if index >= 0 else 0)
-        self.combo_pre_gate.setToolTip(
-            "Candidate ranking before the full NCC scan. "
-            "Grayscale NCC uses appearance; gradient alignment uses only "
-            "scene/model gradients (prototype pending real-job validation)."
-        )
-        self._compact_combo(self.combo_pre_gate, 14)
-        self.combo_pre_gate.currentIndexChanged.connect(
-            self._on_pre_gate_changed
-        )
-        pre_gate_layout.addWidget(self.combo_pre_gate)
-        layout.addWidget(self.pre_gate_group)
-
         proposals_group = QGroupBox("Search proposals")
         proposals_layout = QVBoxLayout(proposals_group)
         self.chk_edge_proposals = QCheckBox("Edge search")
@@ -583,36 +537,6 @@ class ShapeMatchConfig(QWidget):
     def _set_param(self, key, value):
         self.tool.params[key] = value
         self._exec_timer.start()
-
-    def _on_pre_gate_changed(self, _index=None):
-        value = self.combo_pre_gate.currentData()
-        if value is not None:
-            self._set_param("pre_gate_scorer", str(value))
-
-    def _sync_pre_gate_control(self):
-        value = str(self.tool.params.get("pre_gate_scorer", "ncc"))
-        index = self.combo_pre_gate.findData(value)
-        if index >= 0 and index != self.combo_pre_gate.currentIndex():
-            self.combo_pre_gate.blockSignals(True)
-            self.combo_pre_gate.setCurrentIndex(index)
-            self.combo_pre_gate.blockSignals(False)
-        geometry = str(self.tool.params.get("match_mode", "geometry")) == "geometry"
-        self.combo_pre_gate.setEnabled(not geometry)
-        self.pre_gate_group.setVisible(not geometry)
-
-    def _on_match_mode_changed(self, _index=None):
-        value = self.combo_match_mode.currentData()
-        if value is not None:
-            self._set_param("match_mode", str(value))
-            self._sync_pre_gate_control()
-
-    def _sync_match_mode_control(self):
-        value = str(self.tool.params.get("match_mode", "geometry"))
-        index = self.combo_match_mode.findData(value)
-        if index >= 0 and index != self.combo_match_mode.currentIndex():
-            self.combo_match_mode.blockSignals(True)
-            self.combo_match_mode.setCurrentIndex(index)
-            self.combo_match_mode.blockSignals(False)
 
     def _sync_edge_proposals_control(self):
         checked = bool(self.tool.params.get("edge_proposals", False))
@@ -831,8 +755,6 @@ class ShapeMatchConfig(QWidget):
             return
 
         self._sync_training_controls()
-        self._sync_match_mode_control()
-        self._sync_pre_gate_control()
         self._sync_edge_proposals_control()
         self.tool.refresh_stale_state()
         self._update_mask_status()
@@ -952,6 +874,7 @@ class ShapeMatchConfig(QWidget):
         self.label_features.setText(text)
 
     def _update_template_preview(self):
+        self.tool._ensure_preview_templates()
         source = self.tool._template_color
         if source is None:
             self.template_viewer.set_image(None)

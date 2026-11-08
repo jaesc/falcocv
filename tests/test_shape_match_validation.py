@@ -8,7 +8,7 @@ for _path in (ROOT / "scripts", ROOT / "src"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from validate_shape_match_modes import Detection, _match  # noqa: E402
+from validate_shape_match_reference import Detection, _match  # noqa: E402
 
 
 def _detection(x, y, angle=0.0, scale=1.0):

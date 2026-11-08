@@ -1956,10 +1956,11 @@ TOOL_HELP["Shape Match"] = {
     "name": "Shape Match",
     "category": "Vision Tools",
     "purpose": (
-        "Gradient-orientation shape matching for rotation, scale and translation. "
-        "The native kernel proposes hypotheses, NCC/ECC refines fully visible "
-        "parts, and a gradient/ICP solver handles occlusion. The score is the "
-        "fraction of template gradient mass matched by the image."
+        "Edge/shape matching for rotation, scale and translation. The native "
+        "kernel proposes hypotheses from scene edges, then edge distance, "
+        "gradient alignment and ICP refine the pose. The score is the fraction "
+        "of template gradient mass matched by the image. Use Template Match "
+        "when grayscale appearance is the discriminator."
     ),
     "inputs": [
         {"name": "input image", "type": "VisionImage / ndarray",
@@ -1976,7 +1977,7 @@ TOOL_HELP["Shape Match"] = {
          "description": "Candidate rejection and solver warnings."},
         {"name": "results", "type": "ToolResults[ShapeMatchResult]",
          "description": "Matches with x, y, angle, scale, score, solver, "
-                        "ncc_score, visible_fraction, ecc_cc and warnings."},
+                        "visible_fraction and warnings."},
     ],
     "params": [
         {"name": "train_roi", "default": "[0, 0, 0, 0, 0]",
@@ -2007,15 +2008,6 @@ TOOL_HELP["Shape Match"] = {
          "description": "Canny high hysteresis threshold used when training and matching."},
         {"name": "min_gradient", "default": "0",
          "description": "Minimum Sobel gradient magnitude for a selected feature. 0 keeps every Canny edge."},
-        {"name": "match_mode", "default": "geometry",
-         "description": "Verification path. 'geometry' uses edge distance, "
-                        "gradient alignment and ICP (about 30 % faster); "
-                        "'hybrid' uses grayscale NCC/ECC and is the precision "
-                        "reference."},
-        {"name": "pre_gate_scorer", "default": "ncc",
-         "description": "Candidate ranking before the full scan. 'ncc' uses "
-                        "grayscale correlation; 'alignment' uses gradients only "
-                        "and is a prototype."},
         {"name": "origin_x", "default": "0",
          "description": "Reported origin X relative to the template center. "
                         "0 = template center."},
@@ -2047,10 +2039,10 @@ TOOL_HELP["Shape Match"] = {
         "Capture a train image, draw the Training ROI (rotation supported), and "
         "press Train ShapeMatch. The Shape Preview shows the template edges, "
         "selected feature points and their gradient orientation. Matching "
-        "requires the native <code>_falco_kernel</code> extension. Hybrid mode "
-        "uses ECC for fully visible parts and the occlusion solver otherwise. "
-        "Geometry mode finds the same parts, is about 30 % faster, but its "
-        "translation is less precise; pick hybrid when pose accuracy matters."
+        "requires the native <code>_falco_kernel</code> extension and uses only "
+        "edges: the fused vote proposes poses, then edge distance, gradient "
+        "alignment and ICP refine them, including occluded parts. Use Template "
+        "Match when grayscale appearance is the discriminator."
     ),
     "see_also": ["Template Match", "Measurement"],
 }

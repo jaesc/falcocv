@@ -274,6 +274,7 @@ class ShapeMatchFeatureEditorDialog(QDialog):
     # Display
     # ------------------------------------------------------------------
     def _build_display(self):
+        self.tool._ensure_preview_templates()
         source = self.tool._template_color
         if source is None:
             raise ValueError("ShapeMatch has no template image.")

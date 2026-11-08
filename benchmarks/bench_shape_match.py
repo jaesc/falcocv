@@ -101,25 +101,19 @@ def _time_tool(tool, image, repeats=5):
 
 def _profile_phases(tool, image):
     names = (
-        "_kernel_coarse",
         "_kernel_coarse_fused",
-        "_coarse_pose",
-        "_ncc_angle_scan",
-        "_ncc_scale_scan",
-        "_ncc_translate",
-        "_local_alignment",
-        "_ecc_refine",
         "_occlusion_refine",
         "_dt_score",
+        "_dt_scan_axis",
+        "_dt_scan_xy",
+        "_dt_scan_xy_staged",
+        "_alignment_score",
         "_icp_refine",
     )
     timings = {name.lstrip("_"): 0.0 for name in names}
-    timings["matchTemplate"] = 0.0
     calls = {name.lstrip("_"): 0 for name in names}
-    calls["matchTemplate"] = 0
 
     originals = {name: getattr(tool, name) for name in names}
-    original_match = cv2.matchTemplate
 
     def wrap(name, original):
         def wrapper(*args, **kwargs):
@@ -133,14 +127,12 @@ def _profile_phases(tool, image):
 
     for name in names:
         setattr(tool, name, wrap(name.lstrip("_"), originals[name]))
-    cv2.matchTemplate = wrap("matchTemplate", original_match)
     try:
         tool.inputs["input image"] = VisionImage(image)
         start = time.perf_counter()
         tool.run()
         total = (time.perf_counter() - start) * 1000.0
     finally:
-        cv2.matchTemplate = original_match
         for name, original in originals.items():
             setattr(tool, name, original)
 
