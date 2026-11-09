@@ -24,7 +24,10 @@ file tracks concrete, actionable tasks only.
 
 ## Metrology (M1 / M2)
 
-- [ ] `LineFit` / `CircleFit` and caliper chaining on the existing fixture system
+- [x] `LineFit` / `CircleFit` with a ROI caliper array as the default source
+  (parallel line calipers / inward radial circle calipers) and robust fitting
+- [x] Points mode: overlay points and contour vertices (no `input points`
+  port)
 - [ ] Calibration and millimetre units for measurement results
 
 ## HMI Designer

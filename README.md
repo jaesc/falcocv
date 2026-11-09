@@ -26,8 +26,8 @@ operator dashboards.
   order is the contract and connections feed each tool's inputs. Jobs are
   saved as `.cvj` files.
 - **Vision toolset** — acquisition, image enhancement, segmentation, template
-  and shape matching, code reading, measurement, deep-learning inspection and
-  3D analysis.
+  and shape matching, code reading, measurement, line/circle fitting,
+  deep-learning inspection and 3D analysis.
 - **Depth + 3D** - depth/range loading, the native `.fcd` LZ4 container,
   point clouds, plane fitting and a 3D viewer with world-space overlays. See
   [`docs/DEPTH_FORMATS.md`](docs/DEPTH_FORMATS.md) and
@@ -43,9 +43,9 @@ operator dashboards.
 - **HMI designer + web server** — design operator dashboards, deploy them to a
   FastAPI server and open them from any browser.
 - **Communications runtime** — generic devices and tags in the `.hmi` project,
-  editable from the HMI Designer, with local and live signal monitors, a dummy
-  driver with simulated signals, Omron, Beckhoff ADS, Siemens S7 and ADLINK
-  DASK I/O drivers, plus Modbus TCP and OPC UA clients and server runtimes.
+  editable from the HMI Designer, with local and live signal monitors, Omron,
+  Beckhoff ADS, Siemens S7 and ADLINK DASK I/O drivers, plus Modbus TCP and
+  OPC UA clients and server runtimes.
   Drafts can be saved with missing fields; Deploy and Signal Monitor require a
   complete configuration. See [`docs/COMMS.md`](docs/COMMS.md).
 - **Persistent workspace** — window geometry, dock placement, splitter sizes

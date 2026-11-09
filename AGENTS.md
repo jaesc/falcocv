@@ -248,8 +248,10 @@ cpp/bin/       → local kernel build output (gitignored)
   Structural errors still block saving.
   `HMIProject.start_runtime()` creates the `CommsManager`, injects
   `context['comms']`, and `stop_runtime()` disconnects it.  The worker starts runtime before the HMI script and stops the script
-  before the devices.  The first driver is `dummy`; tag definitions live in
-  `.hmi` while runtime values and statuses stay runtime-only.  Future
+  before the devices.  `dummy` is an internal test/legacy driver: it stays
+  registered and accepted in `.hmi`, but `available_drivers()` hides it from
+  the designer selector.  Tag definitions live in `.hmi` while runtime values
+  and statuses stay runtime-only.  Future
   TCP/Modbus/PLC drivers implement `DeviceDriver` and register in
   `comms/drivers/__init__.py`; widgets must read `TagStore`, never a driver.
   `DeviceDriver.read_many` / `write_many` are optional batching hooks: the
@@ -353,6 +355,13 @@ cpp/bin/       → local kernel build output (gitignored)
   `.cvj` load without importing `falcocv.tools`.  `tests/test_port_types.py`
   additionally requires every tool's image/plane ports in
   `GOLDEN_IMAGE_PORTS`, or an entry in `DYNAMIC_PORT_TOOLS` with the reason.
+- **Tool categories** -> toolbox/help groups describe the tool's role, never
+  the data dimension: `Acquisition`, `Processing`, `Inspection`, `3D`,
+  `Machine Learning`, `Logic` (plus data-only `HMI` in help).  Filters,
+  Template/Shape Match and the fit tools accept 2D, depth and range images, so
+  they are not "2D" tools; only point-cloud/plane tools belong in `3D`.
+  `group=` in `@register_tool`, `GROUP_ORDER`/`TOOL_ORDER` and the help
+  `category` must agree; `tests/ui/test_toolbox.py` guards the groups.
 - **Workflow port types** -> every tool declares its image, plane and structured
   result ports as class attributes (`input_port_types` / `output_port_types`
   with `IMAGE` / `PLANE` / `RESULTS`); unlisted ports are `ANY`.  Never infer a
@@ -431,6 +440,25 @@ cpp/bin/       → local kernel build output (gitignored)
   is 180 px and the old saved splitter width is reset once through
   `ConfigManager.data["layout_revisions"]["shape_match_compact_panel"]`.  Keep
   labels short and put explanations in tooltips.
+- **LineFit/CircleFit sources** -> the default source is a **caliper array
+  driven by the tool ROI**: line calipers are parallel, one point per station
+  along the ROI's local U axis scanning across V; circle calipers are radial
+  around the ROI centre, start at the caliper ring and scan inwards or
+  outwards (`caliper_direction`) from it.  Caliper
+  points are already inside the ROI, so the ROI only filters the points mode.
+  Points mode reads visible POINT overlays and contour/polygon vertices; there
+  is no `input points` port.  Edges use the same subpixel math as Edge
+  Detection (DoG profile + parabolic peak).
+- **LineFit/CircleFit outlier rejection** -> RANSAC ranks candidate models by
+  the **median** residual (least median of squares), the inlier cutoff comes
+  from the residual MAD, and `max_outlier_percent` (default 20, 0 = no cap)
+  caps how many points the fit may ignore.  More rejected points than that
+  set `cap_exceeded`; the tool then reports an error instead of publishing a
+  fit computed from points it was not allowed to discard.  Never derive the
+  cutoff from the contaminated least-squares fit, and never force-trim a
+  clean mask down to `n - allowed`: with 2 of 9 calipers on a second edge a
+  2.5x-median cutoff kept all 9 points and the line drifted to -3.3 deg with
+  RMS 10.3 px.  Rejected points must stay visible (Show Outliers).
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
   `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
   the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.
