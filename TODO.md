@@ -1,13 +1,11 @@
 # FalcoCV — TODO
 
-Status: 1.1.0 released; `dev` carries the post-1.1.0 work. Phases and closed
+Status: 1.2.0 released; `dev` carries the post-1.2.0 work. Phases and closed
 decisions live in [`plans/falcocv-plan-v2.md`](plans/falcocv-plan-v2.md); this
 file tracks concrete, actionable tasks only.
 
 ## Before publishing the next release
 
-- [ ] Rebuild the wheel: the `falcocv-1.1.0` wheel predates the geometry-only
-  ShapeMatch, the communications work and the async execution service.
 - [ ] Run the manual checklist in [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md).
 - [ ] Publish following [`docs/RELEASING.md`](docs/RELEASING.md). Bump only
   `src/falcocv/version.py`; `pyproject.toml` reads the version dynamically.

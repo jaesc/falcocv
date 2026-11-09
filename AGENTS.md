@@ -521,8 +521,8 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 
 ## Current handoff (2026-11-09)
 
-- `dev` is the active development branch: 1.1.0 plus the post-1.1.0 work.
-  `main` stays at the 1.1.0 release until the next version is published.
+- `1.2.0` is the current release; `main` and `dev` both point at tag
+  `v1.2.0`.  `dev` continues as the active development branch.
 - **Async GUI execution** -> `WorkflowEditor` and `ToolRunControls` RUN/AUTO go
   through `ui/execution_service.py` (one QThread per editor); never call
   `controller.run()` from the GUI thread.  `ToolSignal` suspends
@@ -552,8 +552,8 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - **Docs**: `docs/OVERLAYS.md` owns the overlay ownership/propagation rules;
   `ARCHITECTURE.md` is the reference for endpoints, formats and config keys.
   Workflow order is an ordered pipeline (see the pitfall above).
-- Latest verification: `774 passed, 8 skipped, 3 xfailed`; UI `169 passed,
-  5 skipped`; the 39-frame depth job finds 39/39 true detections with no false
+- Latest verification: `893 passed, 8 skipped, 3 xfailed`; the 39-frame
+  depth job finds 39/39 true detections with no false
   positives.  The 1005-frame geometry-vs-TemplateMatch gate: 0 lost/extra,
   max 5.535 px / 1.162 deg / 2.065 % scale; the strict 5 px / 2 deg / 1.5 %
   gate still fails on 2 translation and 7 scale rows (both reference-limited).
@@ -561,7 +561,6 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   Geometry 60.7 ms vs TemplateMatch 406.5 ms.
 - Next work: review frames `0867` and `0957` (>5 px) and the TemplateMatch
   scale reference (always 1.0); validate Beckhoff ADS and Siemens S7 on real
-  hardware; rebuild the wheel (the 1.1.0 wheel predates the post-release work)
-  and run `docs/SMOKE_TEST.md` before publishing.
+  hardware; run `docs/SMOKE_TEST.md` on release hardware.
 - Resume with `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"`
   and `pytest -q --ignore=tests/test_trainer_equivalence.py`.
