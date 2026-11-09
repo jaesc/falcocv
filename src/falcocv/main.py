@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
         save_window_layout(self, "main")
         self.config.set_editor_splitter(self.editor.splitter.sizes())
         self.config.set_toolbox_visible(self.toolbox_dock.isVisible())
-        self.editor.controller.run_loop_stop()
+        self.editor.shutdown()
         self._web_stop()
         super().closeEvent(event)
 
@@ -686,6 +686,11 @@ class MainWindow(QMainWindow):
         """Mark the job as having unsaved changes (skip during workflow execution)."""
         if self.editor.controller.state in (ControllerState.RUNNING, ControllerState.LOOPING):
             return
+        # Resuming tool signals after a run refreshes open config dialogs;
+        # those refreshes must not mark the job as modified.
+        engine = getattr(self.editor, "engine", None)
+        if engine is not None and engine.is_finishing:
+            return
         self._modified = True
         self.update_title()
 
@@ -745,6 +750,17 @@ class MainWindow(QMainWindow):
 
     def _cleanup_workflow(self, keep_cameras=None):
         keep_cameras = keep_cameras or set()
+        # Deploy / new job must not disconnect a camera while a worker is
+        # still using it.  Pause the loop and wait for the current run.
+        editor = getattr(self, "editor", None)
+        engine = getattr(editor, "engine", None) if editor is not None else None
+        if engine is not None:
+            engine.stop_loop()
+            if not engine.wait_idle(5000):
+                print(
+                    "[MainWindow] workflow still running during cleanup",
+                    file=sys.stderr,
+                )
         for tool in self.workflow.tools:
             if hasattr(tool, "_config_window") and tool._config_window:
                 try:
@@ -881,6 +897,11 @@ def main():
 
     from PyQt6.QtWidgets import QApplication
     app = QApplication(sys.argv)
+
+    # Tool signals can be emitted from worker threads; route UI callbacks to
+    # the GUI thread before any config widget connects to them.
+    from falcocv.ui.tool_signal_dispatcher import install_tool_signal_dispatcher
+    install_tool_signal_dispatcher()
 
     icon_path = _app_icon_path()
     if icon_path:

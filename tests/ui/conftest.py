@@ -24,6 +24,21 @@ main_module.Toolbox = Toolbox
 main_module.JobConfigDialog = JobConfigDialog
 
 
+@pytest.fixture(autouse=True)
+def _tool_signal_dispatcher(qapp):
+    """Install the GUI-thread dispatcher and stop editor workers after a test."""
+    from falcocv.ui.tool_signal_dispatcher import install_tool_signal_dispatcher
+
+    install_tool_signal_dispatcher()
+    yield
+    for widget in qapp.allWidgets():
+        if isinstance(widget, WorkflowEditor):
+            try:
+                widget.shutdown()
+            except Exception:
+                pass
+
+
 @pytest.fixture
 def main_window(qtbot, monkeypatch):
     """A real MainWindow with the web server and modal save prompt disabled."""

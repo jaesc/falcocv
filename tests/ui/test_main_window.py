@@ -78,6 +78,24 @@ def test_image_loader_filters_blob_pipeline(main_window, qtbot, tmp_path):
     assert blob.outputs["count"] == 3
 
 
+def test_async_run_does_not_mark_job_modified(main_window, qtbot, tmp_path):
+    window = main_window
+    image_path = _synthetic_image(tmp_path / "blobs.png")
+    window.editor.handle_add_tool("ImageLoader")
+    loader = _tool_by_type(window.workflow, "ImageLoader")
+    loader.params.update({"mode": "File", "file_path": str(image_path)})
+    window._modified = False
+
+    with qtbot.waitSignal(
+        window.editor.engine.workflow_finished, timeout=5000
+    ):
+        window.editor.run_workflow(advance=False)
+    qtbot.wait(30)
+
+    assert window.workflow.last_error is None
+    assert window._modified is False
+
+
 def test_block_config_restores_active_editor(main_window, qtbot):
     window = main_window
     from falcocv.ui.widgets.toolbox import Toolbox

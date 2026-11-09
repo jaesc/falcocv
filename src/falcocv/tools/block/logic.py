@@ -23,7 +23,10 @@ class Block(BaseTool):
 
     def run(self, advance=False):
         self.workflow.engine_context = self.engine_context
-        self.workflow.run(advance=advance)
+        self.workflow.run(
+            advance=advance,
+            observer=getattr(self, "_run_observer", None),
+        )
         if self.workflow.last_error:
             raise RuntimeError(self.workflow.last_error)
 

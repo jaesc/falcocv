@@ -139,16 +139,36 @@ src/falcocv/ui/   ──── PyQt6 only ────────────�
 ### 4.2 Injected scheduler
 
 ```python
-# core/workflow_controller.py
-controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
+# web/controller_adapter.py
+self._controller.set_scheduler(lambda cb: self._loop.call_soon(cb))
 ```
 
 - `WorkflowController` (pure Python) does not know Qt.
 - It receives an abstract scheduler via callback.
-- On desktop: `QTimer.singleShot(0, ...)`.
-- In tests: `lambda fn: fn()` (synchronous).
+- The web adapter uses `asyncio`; tests use `lambda fn: fn()` (synchronous).
+- The desktop editor no longer runs the controller on the GUI thread; it uses
+  the execution service below.
 
-### 4.3 Tool registry vs factory
+### 4.3 GUI execution service
+
+`ui/execution_service.py` owns one `QThread` per `WorkflowEditor`.  Run, Step,
+Run Loop and the per-tool RUN/AUTO controls are serialised through it, so a
+tool never executes on the GUI thread.
+
+- `ToolSignal` (`core/tool_base.py`) can suspend `data_changed` /
+  `structure_changed` during a run and resume them once on the GUI thread.
+- `ui/tool_signal_dispatcher.py` marshals any remaining tool signal emitted
+  from a helper thread (TemplateMatch cache, camera preview) to the GUI.
+- Structural workflow edits are blocked while the engine is busy; parameter
+  edits remain available.
+- The workflow tree freezes its status column while a run is active and
+  refreshes it once at the end.  The live timing state is still cleared at
+  start, but loop runs keep the previous times visible instead of flashing
+  empty.
+- `MainWindow._mark_modified` ignores the post-run signal resume through
+  `engine.is_finishing`.
+
+### 4.4 Tool registry vs factory
 
 `core/tool_registry.py` exposes two APIs:
 

@@ -45,6 +45,14 @@ class Workflow:
         tool = self.get_tool(tool_name)
         return tool.get_output(output_name) if tool else None
 
+    def iter_tools_recursive(self):
+        """Yield this workflow's tools and the tools inside every Block."""
+        for tool in self.tools:
+            yield tool
+            child = getattr(tool, "workflow", None)
+            if child is not None:
+                yield from child.iter_tools_recursive()
+
     def remove_tool(self, tool):
         if tool in self.tools:
             self.tools.remove(tool)
@@ -115,7 +123,18 @@ class Workflow:
             if child is not None:
                 child.clear_run_data()
 
-    def run(self, advance=False):
+    @staticmethod
+    def _notify(observer, event, tool):
+        """Send a progress event without letting a UI error break the run."""
+        if observer is None:
+            return
+        try:
+            observer(event, tool)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def run(self, advance=False, observer=None):
         import time
         start_ns = time.perf_counter_ns()
         self.reset_execution_status()
@@ -142,6 +161,9 @@ class Workflow:
 
             # 3. Execute if enabled
             if getattr(tool, 'enabled', True):
+                self._notify(observer, "tool_started", tool)
+                # Block.run forwards this observer to its nested workflow.
+                tool._run_observer = observer
                 try:
                     tool.execute(advance=advance)
                 except Exception as e:
@@ -154,6 +176,9 @@ class Workflow:
                     if self.stop_on_error:
                         break
                     continue
+                finally:
+                    tool._run_observer = None
+                    self._notify(observer, "tool_finished", tool)
             else:
                 # Disabled tools do not execute and should not provide stale outputs
                 for output_name in list(tool.outputs.keys()):

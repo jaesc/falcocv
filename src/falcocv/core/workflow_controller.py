@@ -38,7 +38,7 @@ class WorkflowController:
         if self._state == ControllerState.IDLE:
             self._set_state(ControllerState.DIRTY)
 
-    def run(self, advance=False):
+    def run(self, advance=False, observer=None):
         if self._running:
             return
         self._running = True
@@ -47,7 +47,7 @@ class WorkflowController:
         self._set_state(ControllerState.RUNNING)
         self.execution_started.emit()
         try:
-            self.workflow.run(advance=advance)
+            self.workflow.run(advance=advance, observer=observer)
             self.last_execution_time_ms = self.workflow.last_execution_time_ms
             self.last_error = self.workflow.last_error
         finally:

@@ -475,7 +475,7 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
-## Current handoff (2026-11-08)
+## Current handoff (2026-11-09)
 
 - `dev` is the active development branch and carries 1.1.0 plus this
   post-1.1.0 work.  `main` is not touched by this push.
@@ -547,8 +547,25 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
   into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
   `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
   the Designer preview with representative data, not a live worker capture.
-- Latest verification: `742 passed, 12 skipped, 3 xfailed`; UI
-  `147 passed, 5 skipped`; the 39-frame depth job still finds 39/39 true
+- **Async GUI execution (2026-11-09)** -> `WorkflowEditor` runs workflows and
+  `ToolRunControls` RUN/AUTO through `ui/execution_service.py` (one QThread per
+  editor).  Never call `controller.run()` from the GUI thread.  `ToolSignal` in
+  `core/tool_base.py` suspends `data_changed` / `structure_changed` during a run
+  and coalesces one resume; `ui/tool_signal_dispatcher.py` marshals any
+  remaining worker-thread emission to the GUI.  Structural edits
+  (add/delete/reorder/paste) are blocked while busy; parameter edits stay
+  enabled.  The workflow tree freezes its status column during a run and
+  refreshes it once at the end, so loop runs keep the previous tool times
+  visible instead of flashing empty.  A process-wide lock serialises nested
+  Block editors.  `MainWindow._mark_modified` ignores the post-run resume via
+  `engine.is_finishing`.  Tests: `tests/ui/test_execution_service.py`,
+  `tests/ui/test_tool_signal_dispatcher.py`,
+  `tests/ui/test_workflow_editor_async.py`.
+- First-run parity is **not** addressed by the async service; it needs a
+  separate per-tool warm-up pass (ONNX sessions, template caches, first image
+  decode).
+- Latest verification: `774 passed, 8 skipped, 3 xfailed`; UI
+  `169 passed, 5 skipped`; the 39-frame depth job still finds 39/39 true
   detections with zero false positives.  The 1005-frame geometry-vs-TemplateMatch
   gate found 0 lost/extra, max px 5.535, max angle 1.162 deg, max scale
   2.065 %, geometry 60.7 ms vs TemplateMatch 406.5 ms.  The strict 5 px /

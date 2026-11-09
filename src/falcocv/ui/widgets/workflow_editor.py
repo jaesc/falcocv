@@ -3,7 +3,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QStackedWidget, 
                              QSplitter, QComboBox, QLabel, QSpinBox, QLineEdit,
                              QCheckBox, QMenu, QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPointF, QPoint, QRect
+from PyQt6.QtCore import Qt, pyqtSignal, QPointF, QPoint, QRect
 from PyQt6.QtGui import QIcon, QPainter, QPixmap, QPen, QBrush, QPolygonF, QColor
 from falcocv.ui.widgets.viewer import ImageViewer
 try:
@@ -15,7 +15,8 @@ from falcocv.ui.widgets.toolbox import Toolbox
 from falcocv.ui.style import ALT_BG, ARROW_COLOR, BORDER, FOOTER_BG, HIGHLIGHT, PANEL_BG, SUCCESS, TEXT, TEXT_MUTED, WARNING
 from falcocv.core.workflow import Workflow
 from falcocv.core.tool_registry import get_registration
-from falcocv.core.workflow_controller import WorkflowController, ControllerState
+from falcocv.core.workflow_controller import WorkflowController
+from falcocv.ui.execution_service import ExecutionService
 from falcocv.tools.image_loader import ImageLoader
 from falcocv.tools.depth_range_loader import DepthRangeLoader
 import sys
@@ -35,11 +36,9 @@ class WorkflowEditor(QWidget):
         self.controller = WorkflowController(workflow or Workflow())
         self.workflow = self.controller.workflow
         self._running_workflow = False
-        self.controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
         from falcocv.core.config import ConfigManager
         WorkflowEditor._global_show_overlays = ConfigManager().get_show_overlays()
-        self.controller.execution_started.connect(self._on_execution_started)
-        self.controller.execution_finished.connect(self._on_execution_finished)
+        self.engine = self._create_engine(self.controller)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -244,6 +243,7 @@ class WorkflowEditor(QWidget):
 
     def _bind_tool(self, tool):
         tool.set_controller(self.controller)
+        tool._execution_service = self.engine
         tool.structure_changed.disconnect(self.refresh_ui)
         tool.structure_changed.connect(self.refresh_ui)
 
@@ -261,10 +261,59 @@ class WorkflowEditor(QWidget):
         if parent is not None:
             parent.mark_dirty()
 
+    def _create_engine(self, controller):
+        engine = ExecutionService(controller, self)
+        engine.workflow_started.connect(self._on_execution_started)
+        engine.workflow_finished.connect(self._on_execution_finished)
+        engine.busy_changed.connect(self._on_engine_busy_changed)
+        return engine
+
+    def _dispose_engine(self):
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return
+        engine.stop_loop()
+        for signal, slot in (
+            (engine.workflow_started, self._on_execution_started),
+            (engine.workflow_finished, self._on_execution_finished),
+            (engine.busy_changed, self._on_engine_busy_changed),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (TypeError, RuntimeError):
+                pass
+        stopped = engine.shutdown()
+        if stopped:
+            engine.deleteLater()
+        self.engine = None
+        tree = getattr(self, "tree", None)
+        if tree is not None:
+            tree.set_status_frozen(False)
+
+    def shutdown(self):
+        """Stop the background engine before the editor is destroyed."""
+        self._dispose_engine()
+
+    def closeEvent(self, event):
+        self.shutdown()
+        super().closeEvent(event)
+
+    def _block_structure_edit_if_busy(self) -> bool:
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return True
+        if not engine.is_busy:
+            return False
+        self.label_error.setText("Stop the current run before editing the workflow")
+        self.label_error.setToolTip("")
+        return True
+
     def handle_add_tool(self, tool_type, index=None):
-        was_looping = self.btn_loop.isChecked()
+        if self._block_structure_edit_if_busy():
+            return
+        was_looping = self.engine.is_looping
         if was_looping:
-            self.controller.run_loop_stop()
+            self.engine.stop_loop()
 
         reg = get_registration(tool_type)
         if reg is None:
@@ -284,9 +333,14 @@ class WorkflowEditor(QWidget):
         self._mark_parent_dirty()
         
         if was_looping:
-            self.controller.run_loop_start()
+            self.engine.start_loop()
 
     def on_tool_pasted(self, tool):
+        if self._block_structure_edit_if_busy():
+            # WorkflowTree adds the clone before emitting; undo it.
+            self.workflow.remove_tool(tool)
+            self.refresh_ui()
+            return
         self._bind_tool(tool)
         self.refresh_ui()
         self._mark_parent_dirty()
@@ -295,8 +349,12 @@ class WorkflowEditor(QWidget):
         self._bind_tool(tool)
 
     def on_reorder(self):
-        was_looping = self.btn_loop.isChecked()
-        if was_looping: self.controller.run_loop_stop()
+        if self._block_structure_edit_if_busy():
+            self.refresh_ui()
+            return
+        was_looping = self.engine.is_looping
+        if was_looping:
+            self.engine.stop_loop()
 
         tree_tools = []
         for i in range(self.tree.topLevelItemCount()):
@@ -315,7 +373,7 @@ class WorkflowEditor(QWidget):
                 file=sys.stderr,
             )
             self.refresh_ui()
-            if was_looping: self.controller.run_loop_start()
+            if was_looping: self.engine.start_loop()
             return
 
         for tool in tree_tools:
@@ -330,18 +388,22 @@ class WorkflowEditor(QWidget):
 
         self._mark_parent_dirty()
 
-        if was_looping: self.controller.run_loop_start()
+        if was_looping: self.engine.start_loop()
 
     def on_deletion(self, tool):
-        was_looping = self.btn_loop.isChecked()
-        if was_looping: self.controller.run_loop_stop()
+        if self._block_structure_edit_if_busy():
+            self.refresh_ui()
+            return
+        was_looping = self.engine.is_looping
+        if was_looping:
+            self.engine.stop_loop()
         
         self.workflow.remove_tool(tool)
         self.refresh_ui()
         self._mark_parent_dirty()
         self.controller.mark_dirty()
         
-        if was_looping: self.controller.run_loop_start()
+        if was_looping: self.engine.start_loop()
 
     def refresh_ui(self):
         """Total rebuild of the UI structure."""
@@ -359,11 +421,10 @@ class WorkflowEditor(QWidget):
 
     def set_workflow(self, workflow):
         self._last_records = None
+        self._dispose_engine()
         self.controller = WorkflowController(workflow or Workflow())
-        self.controller.set_scheduler(lambda fn: QTimer.singleShot(0, fn))
-        self.controller.execution_started.connect(self._on_execution_started)
-        self.controller.execution_finished.connect(self._on_execution_finished)
         self.workflow = self.controller.workflow
+        self.engine = self._create_engine(self.controller)
         self._bind_tools()
         self.refresh_ui()
 
@@ -573,7 +634,8 @@ class WorkflowEditor(QWidget):
     def open_tool_config(self, item):
         tool = self.tree.get_tool_from_item(item)
         if tool:
-            self.controller.run(advance=False) # Populate inputs first
+            # Populate inputs in the background; never block the dialog.
+            self.run_workflow(advance=False)
             parent_rect = self.rect()
             viewer_pos = self.viewer.mapTo(self, QPoint(0, 0))
             y_offset = viewer_pos.y()
@@ -583,18 +645,34 @@ class WorkflowEditor(QWidget):
             ToolConfigDialog(tool, parent=self, geometry=geom).show()
 
     def run_workflow(self, advance=False):
-        self.controller.run(advance=advance)
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return
+        # Freeze before the worker can clear the live timing state.  If the
+        # service is already busy, the active run already owns the freeze.
+        freeze = not engine.is_busy
+        if freeze:
+            self.tree.set_status_frozen(True)
+        accepted = engine.run_workflow(advance=advance)
+        if freeze and not accepted:
+            self.tree.set_status_frozen(False)
+
+    def _on_engine_busy_changed(self, busy):
+        self.btn_refresh.setEnabled(not busy)
+        self.btn_step.setEnabled(not busy)
 
     def _on_execution_started(self):
         # The controller clears every tool's timing/error before emitting this.
-        self.tree.refresh_status(force=True)
+        # Keep the previous status visible; it is refreshed once at the end.
+        self.tree.set_status_frozen(True)
         self.label_error.setText("")
         self.label_total_time.setText("Running...")
 
     def _on_execution_finished(self, result):
+        self.tree.set_status_frozen(False)
         self.refresh_values()
         self.update_viewer_image()
-        if self.btn_loop.isChecked() and not self.controller.is_looping():
+        if self.btn_loop.isChecked() and not self.engine.is_looping:
             self.btn_loop.setChecked(False)
             self.btn_loop.setText("RUN LOOP")
         time_ms = result.get("total_time_ms", 0)
@@ -620,12 +698,20 @@ class WorkflowEditor(QWidget):
         menu.exec(self.label_error.mapToGlobal(pos))
 
     def toggle_loop(self, checked):
+        engine = getattr(self, "engine", None)
+        if engine is None:
+            return
         if checked:
+            freeze = not engine.is_busy and not engine.is_looping
+            if freeze:
+                self.tree.set_status_frozen(True)
             self.btn_loop.setText("PAUSE LOOP")
-            self.controller.run_loop_start()
+            engine.start_loop()
+            if freeze and not engine.is_busy and not engine.is_looping:
+                self.tree.set_status_frozen(False)
         else:
             self.btn_loop.setText("RUN LOOP")
-            self.controller.run_loop_stop()
+            engine.stop_loop()
 
     def _find_folder_loader(self):
         """Find the first folder-mode loader tool (ImageLoader or DepthRangeLoader)."""
@@ -642,7 +728,7 @@ class WorkflowEditor(QWidget):
                 total = len(loader._image_files)
                 if 0 <= new_idx < total:
                     loader.params["current_index"] = new_idx
-                    self.controller.run(advance=False)
+                    self.run_workflow(advance=False)
                 else:
                     self.update_image_counter()
             except ValueError:

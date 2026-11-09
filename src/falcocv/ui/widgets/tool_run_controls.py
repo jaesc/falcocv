@@ -24,6 +24,8 @@ class ToolRunControls(QWidget):
         self._shutdown = False
         self._executing = False
         self._pending = False
+        self._service = None
+        self._service_connected = False
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -59,7 +61,35 @@ class ToolRunControls(QWidget):
         self._timer.timeout.connect(self._on_timer)
 
         self.tool.parameter_changed.connect(self._on_parameter_changed)
+        self._bind_service()
         self.destroyed.connect(lambda *_: self.shutdown())
+
+    def _bind_service(self):
+        """Follow the editor's execution service if it changed."""
+        service = getattr(self.tool, "_execution_service", None)
+        if service is self._service:
+            return
+        self._disconnect_service()
+        self._service = service
+        if service is None:
+            return
+        service.tool_run_finished.connect(self._on_tool_run_finished)
+        service.busy_changed.connect(self._on_service_busy_changed)
+        self._service_connected = True
+
+    def _disconnect_service(self):
+        if not self._service_connected or self._service is None:
+            return
+        try:
+            self._service.tool_run_finished.disconnect(self._on_tool_run_finished)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            self._service.busy_changed.disconnect(self._on_service_busy_changed)
+        except (TypeError, RuntimeError):
+            pass
+        self._service_connected = False
+        self._service = None
 
     def run_once(self):
         """Execute the owning tool immediately."""
@@ -93,6 +123,7 @@ class ToolRunControls(QWidget):
     def _on_parameter_changed(self):
         if self._shutdown or not self.auto_button.isChecked():
             return
+        self._bind_service()
         if self._executing:
             self._pending = True
             return
@@ -102,18 +133,61 @@ class ToolRunControls(QWidget):
         if not self._shutdown and self.auto_button.isChecked():
             self._execute()
 
+    def _set_running(self, running):
+        self._executing = running
+        self.run_button.setText("RUN..." if running else "RUN")
+        self.run_button.setEnabled(not running)
+
     def _execute(self):
         if self._shutdown or self._executing:
             return
-        self._executing = True
+        self._bind_service()
+        service = self._service
+        if service is None:
+            self._execute_sync()
+            return
+        if service.is_busy:
+            self._pending = True
+            return
+        self._set_running(True)
+        if not service.run_tool(self.tool):
+            # Another request won the race; retry after the current run.
+            self._set_running(False)
+            self._pending = True
+
+    def _execute_sync(self):
+        self._set_running(True)
         try:
             self.tool.execute()
         finally:
-            self._executing = False
+            self._set_running(False)
             if self._pending:
                 self._pending = False
                 if self.auto_button.isChecked() and not self._shutdown:
                     self._timer.start()
+
+    def _on_tool_run_finished(self, tool, error):
+        if self._shutdown or tool is not self.tool:
+            return
+        self._set_running(False)
+        if self._pending:
+            self._pending = False
+            if self.auto_button.isChecked():
+                self._timer.start()
+            elif not self._shutdown:
+                self._execute()
+
+    def _on_service_busy_changed(self, busy):
+        if self._shutdown:
+            return
+        if busy:
+            return
+        if self._pending and not self._executing:
+            self._pending = False
+            if self.auto_button.isChecked():
+                self._timer.start()
+            else:
+                self._execute()
 
     def shutdown(self):
         """Stop the timer and detach from the tool signal."""
@@ -128,6 +202,7 @@ class ToolRunControls(QWidget):
             self.tool.parameter_changed.disconnect(self._on_parameter_changed)
         except Exception:
             pass
+        self._disconnect_service()
         try:
             if self.auto_button.isChecked():
                 self.auto_button.blockSignals(True)

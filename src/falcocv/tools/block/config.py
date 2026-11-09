@@ -62,8 +62,10 @@ class BlockConfig(QWidget):
         wf = self.tool.workflow
         ConfigManager().set_tool_splitter("Block", self.editor.splitter.sizes())
         self.editor.update_image_counter()
-        # The editor is hidden now; drop the callbacks it registered on the
-        # tools so a later structure change cannot rebuild a hidden tree.
+        # The editor is hidden now; stop its worker and drop the callbacks it
+        # registered on the tools so a later structure change cannot rebuild a
+        # hidden tree.
+        self.editor.shutdown()
         self.editor.detach()
         Toolbox.set_active_editor(self._previous_active_editor)
         time_ms = wf.last_execution_time_ms

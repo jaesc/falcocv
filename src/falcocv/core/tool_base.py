@@ -56,6 +56,66 @@ class CallbackList(list):
             cb(*args, **kwargs)
 
 
+#: Optional hook installed by the Qt UI.  Tool signals are emitted from worker
+#: threads during a background run, so the UI needs a way to marshal its
+#: callbacks back to the GUI thread.  Headless callers leave this as ``None``.
+_TOOL_SIGNAL_DISPATCHER = None
+
+
+def set_tool_signal_dispatcher(dispatcher):
+    """Install (or clear) the thread dispatcher used by :class:`ToolSignal`."""
+    global _TOOL_SIGNAL_DISPATCHER
+    _TOOL_SIGNAL_DISPATCHER = dispatcher
+
+
+def get_tool_signal_dispatcher():
+    return _TOOL_SIGNAL_DISPATCHER
+
+
+class ToolSignal(CallbackList):
+    """Callback list with suspend/resume and optional thread dispatch.
+
+    ``data_changed`` is emitted by tools while a workflow runs on a worker
+    thread.  Suspending the signal for the duration of the run avoids touching
+    Qt widgets from that thread; resuming on the GUI thread emits one coalesced
+    refresh when the run finishes.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._suspend_depth = 0
+        self._pending = False
+
+    @property
+    def suspended(self) -> bool:
+        return self._suspend_depth > 0
+
+    def suspend(self) -> None:
+        self._suspend_depth += 1
+
+    def resume(self, emit_pending: bool = True) -> None:
+        if self._suspend_depth <= 0:
+            return
+        self._suspend_depth -= 1
+        if self._suspend_depth == 0 and self._pending:
+            self._pending = False
+            if emit_pending:
+                self.emit()
+
+    def emit(self, *args, **kwargs):
+        if self._suspend_depth:
+            self._pending = True
+            return
+        callbacks = list(self)
+        dispatcher = _TOOL_SIGNAL_DISPATCHER
+        if dispatcher is None:
+            for cb in callbacks:
+                cb(*args, **kwargs)
+            return
+        for cb in callbacks:
+            dispatcher(cb, args, kwargs)
+
+
 class ToolResults(list):
     @property
     def Count(self):
@@ -90,9 +150,11 @@ class BaseTool(abc.ABC):
         self.last_error: str | None = None
         self._controller = None
         self._config_window = None
-        self.data_changed = CallbackList()
-        self.parameter_changed = CallbackList()
-        self.structure_changed = CallbackList()
+        #: UI-only service that serialises background workflow/tool runs.
+        self._execution_service = None
+        self.data_changed = ToolSignal()
+        self.parameter_changed = ToolSignal()
+        self.structure_changed = ToolSignal()
 
     def set_controller(self, controller):
         self._controller = controller

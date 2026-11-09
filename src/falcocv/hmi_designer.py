@@ -78,6 +78,8 @@ def main():
     from falcocv.ui.style import apply_qt_theme
 
     app = QApplication(sys.argv)
+    from falcocv.ui.tool_signal_dispatcher import install_tool_signal_dispatcher
+    install_tool_signal_dispatcher()
     apply_qt_theme(app)
 
     icon_path = _app_icon_path()

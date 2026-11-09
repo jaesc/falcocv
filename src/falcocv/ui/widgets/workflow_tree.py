@@ -103,6 +103,7 @@ class WorkflowTree(QTreeWidget):
         self._id_to_tool = {}
         self._workflow = None
         self._last_refresh_time = 0
+        self._status_frozen = False
 
     def mimeTypes(self):
         types = super().mimeTypes()
@@ -447,8 +448,23 @@ class WorkflowTree(QTreeWidget):
         self._restore_expanded(expanded)
         self.refresh_status(force=True)
 
+    @property
+    def is_status_frozen(self) -> bool:
+        return self._status_frozen
+
+    def set_status_frozen(self, frozen: bool) -> None:
+        """Freeze the status column while a run owns the live tool state.
+
+        The workflow clears ``last_execution_time_ms`` / ``last_error`` at the
+        start of every run.  The tree keeps the previous values visible until
+        the run finishes, then ``WorkflowEditor`` unfreezes and refreshes once.
+        """
+        self._status_frozen = bool(frozen)
+
     def refresh_status(self, force=False):
         """Update the status column for each tool item with execution time and error state."""
+        if self._status_frozen:
+            return
         import time
         now = time.perf_counter()
         if not force and now - self._last_refresh_time < 0.1:  # Limit to 10Hz
