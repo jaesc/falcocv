@@ -1,4 +1,9 @@
-"""Communications driver registry."""
+"""Communications driver registry.
+
+``registered_drivers`` is every driver the runtime accepts, including internal
+ones kept for tests and legacy projects.  ``available_drivers`` is what the HMI
+Designer offers to the user.
+"""
 
 from __future__ import annotations
 
@@ -28,8 +33,22 @@ def _driver_classes():
     }
 
 
-def available_drivers() -> tuple[str, ...]:
+#: Development/test-only drivers.  They stay registered so existing `.hmi`
+#: files and the test suite keep working, but they are never offered in the
+#: designer selector.
+INTERNAL_DRIVERS = frozenset({"dummy"})
+
+
+def registered_drivers() -> tuple[str, ...]:
+    """Every driver the runtime accepts, including internal ones."""
     return tuple(sorted(_driver_classes()))
+
+
+def available_drivers() -> tuple[str, ...]:
+    """Drivers offered to the user in the HMI Designer."""
+    return tuple(
+        name for name in registered_drivers() if name not in INTERNAL_DRIVERS
+    )
 
 
 def get_driver_schema(driver_name: str) -> DriverSchema:

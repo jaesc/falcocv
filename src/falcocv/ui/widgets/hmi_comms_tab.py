@@ -967,6 +967,8 @@ class HMICommsWidget(QWidget):
             if widget is None:
                 continue
             value = self._config_value(field, widget)
+            if value is None:
+                continue
             if (
                 field.required
                 and isinstance(value, str)
@@ -1306,10 +1308,11 @@ class HMICommsWidget(QWidget):
         while device_id in existing:
             index += 1
             device_id = f"device_{index}"
+        drivers = available_drivers()
         devices.append(
             {
                 "id": device_id,
-                "driver": "dummy",
+                "driver": drivers[0] if drivers else "",
                 "enabled": True,
                 "config": {},
                 "tags": [],

@@ -3,10 +3,11 @@
 FalcoCV has a generic communications layer for HMI projects. It is independent
 of Qt and of any specific PLC, Modbus or socket library.
 
-The current implementation ships the `dummy` driver for development, the
-`omron`, `beckhoff` and `siemens` drivers for PLCs, the `adlink` driver for
-ADLINK DASK I/O cards, and `modbus_tcp` / `opcua` clients. Modbus TCP and OPC UA
-server runtimes can expose existing tags to external clients.
+The current implementation ships the `omron`, `beckhoff` and `siemens` drivers
+for PLCs, the `adlink` driver for ADLINK DASK I/O cards, and `modbus_tcp` /
+`opcua` clients. Modbus TCP and OPC UA server runtimes can expose existing tags
+to external clients. A `dummy` driver remains registered for tests and legacy
+projects but is not offered in the HMI Designer.
 
 ## Concepts
 
@@ -103,7 +104,9 @@ marks the tag as `bad`; it must not be presented as a valid value.
 
 ## Dummy driver
 
-The dummy driver keeps values in memory. It supports:
+The dummy driver is internal: it stays registered so tests and legacy `.hmi`
+files keep working, but it is not listed in the HMI Designer driver selector.
+It keeps values in memory and supports:
 
 - initial values from each tag's `default`;
 - optional `read_delay_ms` / `write_delay_ms`;

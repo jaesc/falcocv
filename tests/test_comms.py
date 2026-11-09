@@ -47,6 +47,13 @@ def _config(*tag_overrides, device_overrides=None) -> dict:
     return {"version": 1, "devices": [device]}
 
 
+def test_dummy_driver_is_registered_but_not_offered():
+    from falcocv.comms.drivers import available_drivers, registered_drivers
+
+    assert "dummy" in registered_drivers()
+    assert "dummy" not in available_drivers()
+
+
 def test_parse_comms_config_builds_tag_identifiers():
     config = parse_comms_config(_config())
 

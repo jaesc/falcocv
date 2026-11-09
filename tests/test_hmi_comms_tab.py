@@ -14,9 +14,10 @@ def _app():
     return app
 
 
-def test_comms_tab_adds_device_and_tag():
+def test_comms_tab_adds_device_and_tag(monkeypatch):
     app = _app()
     assert app is not None
+    from falcocv.comms.drivers import available_drivers
     from falcocv.core.hmi import HMIProject
     from falcocv.ui.widgets.hmi_comms_tab import HMICommsWidget
 
@@ -24,13 +25,19 @@ def test_comms_tab_adds_device_and_tag():
     tab = HMICommsWidget(project)
 
     tab._add_device()
+    assert tab.driver_combo.currentText() == available_drivers()[0]
+    assert tab.driver_combo.currentText() != "dummy"
+    monkeypatch.setattr(tab, "_ask_driver_change", lambda *_args, **_kwargs: "delete")
+    tab.driver_combo.setCurrentText("modbus_tcp")
+    tab._config_widgets["host"].setText("127.0.0.1")
     tab._add_tag()
+    tab.tags_table.item(0, 1).setText("coil:0")
     assert tab.flush_to_project()
 
     devices = project.comms_config["devices"]
     assert len(devices) == 1
     assert devices[0]["id"] == "device"
-    assert devices[0]["driver"] == "dummy"
+    assert devices[0]["driver"] == "modbus_tcp"
     assert devices[0]["tags"][0]["name"] == "tag1"
     assert tab.validate() == (True, "")
 
@@ -665,7 +672,10 @@ def test_comms_tab_device_id_updates_device_list_live():
     tab._add_device()
     tab.device_id.setText("plc")
 
-    assert tab.device_list.item(0).text() == "plc  [dummy]"
+    assert tab.driver_combo.currentText() != "dummy"
+    assert tab.device_list.item(0).text() == (
+        f"plc  [{tab.driver_combo.currentText()}]"
+    )
 
 
 def test_comms_tab_type_and_access_are_enum_controls():

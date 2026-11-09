@@ -90,9 +90,9 @@ def _parse_comms_config(
 
     # Import lazily: the driver registry imports concrete drivers, while this
     # module is also imported while those drivers are being initialised.
-    from .drivers import available_drivers, get_driver_schema
+    from .drivers import get_driver_schema, registered_drivers
 
-    known_drivers = set(available_drivers())
+    known_drivers = set(registered_drivers())
     devices: list[DeviceConfig] = []
     device_ids: set[str] = set()
     tag_ids: set[str] = set()
