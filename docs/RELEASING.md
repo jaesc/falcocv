@@ -109,8 +109,9 @@ Windows and Linux.
 
 ## 6. Publish the stable release
 
-1. Bump `pyproject.toml` and `src/falcocv/version.py` (for example
-   `1.0.0rc1` → `1.0.0`), commit and tag `v1.0.0`.
+1. Bump `src/falcocv/version.py` only (for example `1.1.0` → `1.2.0`);
+   `pyproject.toml` reads the version dynamically from that file. Commit and
+   tag the release.
 2. Actions → **Publish** → *Run workflow* → target `pypi`.
 3. Create the GitHub release.
 

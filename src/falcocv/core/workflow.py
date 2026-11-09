@@ -21,6 +21,7 @@ _TOOL_MODULE_MAP: dict[str, str] = {
     "OCR": "falcocv.tools.ocr",
     "FixtureOverlay": "falcocv.tools.fixture_overlay",
     "PlaneFitter": "falcocv.tools.plane_fitter",
+    "HeightBlobs3D": "falcocv.tools.height_blobs",
 }
 
 

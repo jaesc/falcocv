@@ -2,10 +2,14 @@
 
 ## 1. Overview
 
-FalcoCV is an industrial machine vision framework with two operating modes:
+FalcoCV is an industrial machine vision framework with two runtimes:
 **desktop** (workflow editor) and **HMI** (operator interface via web).
-Both share the same execution engine (`src/falcocv/core/`) but have separate runtimes
-with process isolation to prevent C-level resource leaks.
+Both share the same execution engine (`src/falcocv/core/`) but have separate
+runtimes, with process isolation on the HMI side to prevent C-level resource
+leaks. Three entry points map onto them: `falcocv` (Vision Editor),
+`falcocv-hmi` (standalone HMI Designer, a Qt window that can work without a
+server) and `falcocv-server` (`python -m falcocv.web`: FastAPI server plus one
+worker subprocess per deployed project).
 
 > **Current architecture (hybrid):** the core and all tools are Python. The
 > only native code is `cpp/kernel` (`_falco_kernel`), which implements
@@ -18,28 +22,27 @@ with process isolation to prevent C-level resource leaks.
 ## 2. Process tree
 
 ```
-┌──────────────────────────┐  ┌──────────────────────┐  ┌──────────────────────┐
-│  python -m falcocv          │  │  falcocv-hmi        │  │  python -m falcocv.web       │
-│  ─────────────────────── │  │                     │  │  (or falcocv-server)  │
-│  PyQt6 + WorkflowEditor  │  │  ─────────────────── │  │  ─────────────────── │
-│  Workflow editor         │  │  standalone Qt modal │  │  FastAPI + uvicorn   │
-│  HMI Designer (modal)    │  │  No server required  │  │  + WebSocket server  │
-│                          │  │  Optional server     │  │  Dashboard at /      │
-└──────────────────────────┘  └──────────────────────┘  └──────────┬───────────┘
-                                                                   │
-                          ┌────────────────────────────────────────┘
-                          │  (n processes, one per project_id)
-                    ┌─────▼──────┐  ┌─────▼──────┐
-                    │ hmi_worker │  │ hmi_worker │  ...
-                    │ (ws10)     │  │ (ws20)     │
-                    │ subprocess │  │ subprocess │
-                    │ isolated   │  │ isolated   │
-                    └────────────┘  └────────────┘
+┌─────────────────┐   ┌──────────────────┐   ┌─────────────────┐
+│  falcocv        │   │  falcocv-hmi     │   │  falcocv-server │
+│  Vision Editor  │   │  HMI Designer    │   │  FastAPI +      │
+│  + HMI Designer │   │  (Qt window,     │   │  uvicorn +      │
+│  (embedded)     │   │   no server)     │   │  WebSocket      │
+└─────────────────┘   └──────────────────┘   └────────┬────────┘
+                                                      │ one isolated
+                                                      │ worker per
+                                              ┌───────▼────────┐
+                                              │  hmi_worker    │  ...
+                                              │  subprocess    │
+                                              └────────────────┘
 ```
 
-> FalcoCV runs **from source**. No packaged binaries are distributed: anyone who needs an
-> executable can generate it with PyInstaller/Nuitka, but that packaging is not part of the
-> repository build.
+> Within the editor, workflows run on a dedicated `QThread` per
+> `WorkflowEditor` (`ui/execution_service.py`), never on the GUI thread.
+>
+> FalcoCV is distributed as a PyPI wheel (Windows x86_64 and Linux x86_64,
+> CPython 3.13.x) and as an sdist that builds the native kernel with
+> `scikit-build-core`. Running from a source checkout is a development option,
+> not the distribution model. No PyInstaller/Nuitka bundle is produced.
 
 ### Web server (Process B)
 
@@ -96,25 +99,27 @@ WS   /api/ws?pid=xxx       → runtime events + debug commands
 
 ```
 FalcoCV/
-??? src/falcocv/
-?   ??? core/                  # workflow, VisionImage, overlays, ROI, models
-?   ??? tools/                 # logic.py (processing) + config.py (PyQt6)
-?   ??? ui/                    # viewers, ROI editors, HMI designer, assets
-?   ??? web/                   # FastAPI server, HMI workers, dashboard
-?   ??? main.py                # Vision Editor
-?   ??? hmi_designer.py        # standalone HMI Designer
-?   ??? web_runner.py          # standalone web server
-?   ??? cli.py                 # falcocv / python -m falcocv
-?   ??? version.py
-??? cpp/kernel/                # _falco_kernel: point cloud + plane fit (no OpenCV)
-??? tests/                     # pytest suite
-??? models/                    # local models for development (downloaded in production)
-??? docs/                      # tool help + HMI API reference
-??? pyproject.toml             # scikit-build-core + metadata
-??? README.md
-??? ARCHITECTURE.md
-??? AGENTS.md
-??? CREDITS.md
+├── src/falcocv/
+│   ├── core/           # workflow, VisionImage, overlays, ROI, depth/3D, models
+│   ├── tools/          # logic.py (processing) + config.py (PyQt6 widget)
+│   ├── ui/             # viewers, ROI editors, HMI designer widgets, assets
+│   ├── web/            # FastAPI server, HMI workers, dashboard
+│   ├── comms/          # devices, tags, drivers, Modbus/OPC UA clients + servers
+│   ├── main.py         # Vision Editor
+│   ├── hmi_designer.py # standalone HMI Designer
+│   ├── web_runner.py   # standalone web server (falcocv-server)
+│   ├── cli.py          # falcocv / python -m falcocv
+│   └── version.py      # single source of truth for the package version
+├── cpp/kernel/         # _falco_kernel: point cloud, plane fit, shape match
+├── tests/              # pytest suite
+├── docs/               # tool help, API reference, formats, release notes
+├── examples/           # demo jobs, dataset and HMI project
+├── benchmarks/         # performance harness
+├── pyproject.toml      # scikit-build-core + metadata
+├── README.md
+├── ARCHITECTURE.md
+├── AGENTS.md
+└── CREDITS.md
 ```
 
 ---
@@ -175,12 +180,34 @@ tool never executes on the GUI thread.
 | API | Used by | Purpose |
 |-----|-----------|-----------|
 | `@register_tool(prefix, default_name, group)` | Each `tools/X/logic.py` | Class decorator: registers the tool in `_TOOL_REGISTRY` |
-| `create_tool(tool_type, **kwargs)` | `Workflow.deserialize()` | Factory: instantiates a tool by type name |
+| `create_tool(tool_type, **kwargs)` | tests, `self_test.py` | Factory: instantiates a tool by type name (registry already populated) |
 | `get_all_tools()` | `ui/widgets/toolbox.py` | Populate the toolbox with all available tools |
 | `get_registration(tool_type)` | `ui/widgets/workflow_editor.py` | Get ToolReg to create a new tool |
 | `get_registration_by_class(cls)` | `ui/widgets/workflow_tree.py` | Get the prefix of an existing tool |
 
-The worker **does not use the registry**. It creates tools via `Workflow.create_tool_from_data()` with lazy imports.
+`Workflow.create_tool_from_data()` is the deserializer factory: it looks the
+type up in `_TOOL_MODULE_MAP`, imports that module on demand, then reads the
+class from the registry and calls `deserialize()`. A type missing from the map
+is silently dropped from the workflow, so the map must stay in sync with the
+registered tools; `tests/integration/test_tool_contract.py` enforces it.
+`create_tool()` and `get_all_tools()` require `falcocv.tools` to be imported
+first; the editor, the worker and `self_test.py` all do this.
+
+### 4.5 Execution model: ordered pipeline
+
+The workflow is an ordered list, not a DAG:
+
+- `Workflow.run()` walks `self.tools` in list order; each tool receives its
+  inputs from `connections` before it executes.
+- There is no topological sort, no automatic reordering and no cycle
+  validation. The list order is the execution contract.
+- The connection menu only offers earlier tools, which makes cycles impossible
+  to draw, but a source placed after its consumer simply runs later.
+- Disabled tools do not execute and their outputs are cleared.
+- A Block runs a nested `Workflow` with the same rules.
+
+Documentation must describe it as an ordered pipeline. "DAG", "graph" and
+"topological order" are wrong for this engine.
 
 ---
 
@@ -210,6 +237,21 @@ All endpoints accept `project_id` for concurrent multi-HMI support.
 | `POST` | `/api/hmi/set-bps` | body: `{bps, bps_by_file?, project_id}` | Sets breakpoints pre-deploy |
 | `GET` | `/api/hmi/logs` | `?project_id=&since=N` | Incremental logs |
 | `GET` | `/api/hmi/slot/{name}/output/{out}` | `?project_id=&quality=` | Image frame (base64 JPEG) |
+
+### Communications and package management
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `GET` | `/api/hmi/comms/snapshot` | `?project_id=` — tag values, quality and status of the deployed worker |
+| `GET` | `/api/hmi/comms/values` | `?project_id=` — live values for the Signal Monitor |
+| `GET` | `/api/hmi/comms/widget-values` | `?project_id=` — evaluated HMI widget tag bindings |
+| `POST` | `/api/hmi/comms/write` | body: `{project_id, tag, value}`; writes go through `CommsManager` |
+| `GET` | `/api/packages` | Lists the packages installed in the server environment |
+| `POST` | `/api/packages/install` | body: `{packages: [...]}` |
+| `POST` | `/api/packages/uninstall` | body: `{packages: [...]}` |
+
+Live communications errors use structured `JSONResponse` 4xx/5xx bodies
+(`404` when the project is not deployed, `504` on a worker timeout).
 
 ### WebSocket
 
@@ -251,6 +293,8 @@ All endpoints accept `project_id` for concurrent multi-HMI support.
     "slots": [
         {"name": "job1", "job_path": "C:\\jobs\\inspection.cvj"}
     ],
+    "comms": {"devices": [], "tags": []},
+    "servers": {},
     "layout": {
         "rows": 28,
         "cols": 50,
@@ -275,8 +319,14 @@ All endpoints accept `project_id` for concurrent multi-HMI support.
 | `script` | Embedded Python code (v1.0) |
 | `source_dir` | Directory on disk with .py files (v2.0 multi-file) |
 | `entry_point` | Main Python file inside `source_dir` |
+| `comms` | Optional communications section (`devices`, `tags`); validated by `parse_comms_config` and saved as an incomplete draft when fields are missing |
+| `servers` | Optional Modbus TCP / OPC UA server mappings; runtime values are never serialized |
 
 v1.0 `.hmi` files without `project_id` get an auto-generated one on load (`uuid.uuid4()[:8]`).
+
+`HMIProject.context` is runtime-only: it carries live objects (scanner
+controller, PLC session, `log` callbacks) to the HMI script and to Python
+Script tools, and it is never serialized.
 
 ### Widget types
 
@@ -296,37 +346,43 @@ Jobs serialized as ZIP archives containing `workflow.json`:
 
 ```json
 {
-    "version": "2",
     "stop_on_error": false,
     "tools": [
         {
             "type": "GigeCameraLoader",
+            "name": "GigeCameraLoader1",
+            "prefix": "CAM",
             "params": {
                 "camera_serial": "21906264",
                 "cti_path": "C:\\Program Files\\...\\mvGenTLProducer.cti",
                 "trigger_mode": false,
                 "pixel_format": "BayerRG8"
             },
-            "inputs": {},
-            "outputs": {"image_out": "image"},
-            "x": 0, "y": 0,
+            "enabled": true,
+            "ports": {"inputs": [], "outputs": ["image_out"]},
             "uuid": "a1b2c3d4-..."
         },
         {
             "type": "EdgeDetection",
+            "name": "EdgeDetection1",
+            "prefix": "EDGE",
             "params": {"algorithm": "canny", "threshold1": 50, "threshold2": 150},
-            "inputs": {"image_in": {"source_tool": "a1b2c3d4-...", "source_output": "image_out"}},
-            "outputs": {"edge_out": "image"},
-            "x": 1, "y": 0,
+            "enabled": true,
+            "ports": {"inputs": ["image_in"], "outputs": ["edge_out"]},
             "uuid": "e5f6g7h8-..."
         }
     ],
     "connections": [
-        {"from": "a1b2c3d4-...", "from_output": "image_out",
-         "to": "e5f6g7h8-...", "to_input": "image_in"}
+        {"src": "a1b2c3d4-...", "out_name": "image_out",
+         "dst": "e5f6g7h8-...", "in_name": "image_in"}
     ]
 }
 ```
+
+`tools[]` entries carry `type`, `uuid`, `name`, `prefix`, `params`, `enabled`
+and `ports` (`inputs`/`outputs` name lists). Tool positions belong to the
+editor view state and are not serialized. `stop_on_error` and `hmi_layout` are
+workflow-level keys.
 
 ---
 
@@ -560,10 +616,13 @@ from lib.vision import analyze
 
 ```json
 {
-    "window": {"x": 0, "y": 0, "width": 1600, "height": 900,
-               "maximized": false, "editor_splitter": [300, 700]},
-    "colors": {},
+    "window": {"x": 100, "y": 100, "width": 1200, "height": 800,
+               "maximized": false, "editor_splitter": [400, 600]},
+    "views": {"windows": {}, "splitters": {}, "headers": {}},
+    "colors": {"tool_input": "#4EC9B0", "tool_output": "#2196F3",
+               "block_input": "#2E7D32", "block_output": "#1565C0"},
     "recent_files": [],
+    "recent_hmi_files": [],
     "gige_camera": {"cti_path": ""},
     "depth_viewer": {"colormap": "TURBO", "vmin": null, "vmax": null,
                      "use_colormap": true},
@@ -581,8 +640,11 @@ from lib.vision import analyze
 | Key | Type | Default | Description |
 |-------|------|---------|-------------|
 | `window` | dict | — | Window geometry + editor splitter |
+| `views` | dict | `{}` | Qt geometry/state blobs: `windows`, `splitters`, `headers`; **View > Reset all views** clears it |
 | `colors` | dict | — | Custom colors for tool ports |
 | `recent_files` | list | [] | Recent files |
+| `recent_hmi_files` | list | [] | Recent `.hmi` projects in the HMI Designer |
+| `layout_revisions` | dict | created on demand | One-shot UI migrations (for example `shape_match_compact_panel`) |
 | `gige_camera.cti_path` | str | "" | Path to the GenTL Producer (`.cti`) |
 | `depth_viewer` | dict | TURBO | Colormap and range of the depth viewer |
 | `viewer3d.point_size` | float | 3.0 | Point size in the 3D viewer |
@@ -611,7 +673,7 @@ there are no hardcoded `8000` values anywhere functional in the code.
 - `src/falcocv/ui/`: PyQt6 only
 - `src/falcocv/web/`: FastAPI + stdlib only (0 Qt imports)
 - `src/falcocv/tools/*/logic.py`: core + numpy/opencv only
-- `src/falcocv/tools/*/config.py`: PyQt6 only (configuration widget). Some legacy tools still contain business logic that is being migrated to `logic.py`; see audit item #8.
+- `src/falcocv/tools/*/config.py`: PyQt6 only (configuration widget). Business logic belongs in `logic.py`; some legacy tools still mix both and are being migrated.
 - No unnecessary comments
 - Types with modern syntax (`str | None`, `dict[str, int]`)
 - No commits without explicit permission

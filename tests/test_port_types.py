@@ -177,6 +177,36 @@ def _registered_tools():
     return {reg.tool_type: reg.cls for reg in get_all_tools()}
 
 
+# Tools whose ports come from port_metadata instead of static class attributes.
+DYNAMIC_PORT_TOOLS = {
+    "Block": "ports come from port_metadata",
+    "PythonScriptTool": "ports come from port_metadata",
+}
+
+
+def test_every_registered_tool_has_a_port_contract():
+    """A new tool must declare its image/plane ports (or explain why it has none)."""
+    classes = _registered_tools()
+    golden = set(GOLDEN_IMAGE_PORTS) | set(GOLDEN_PLANE_PORTS)
+
+    missing = sorted(set(classes) - golden - set(DYNAMIC_PORT_TOOLS))
+    assert not missing, (
+        "declare the image/plane ports of new tools in GOLDEN_IMAGE_PORTS, "
+        f"or add them to DYNAMIC_PORT_TOOLS with the reason: {missing}"
+    )
+    stale = sorted(golden - set(classes))
+    assert not stale, f"port contracts for unknown tools: {stale}"
+
+
+def test_declared_port_kinds_reference_real_ports():
+    for name, tool_class in _registered_tools().items():
+        tool = tool_class()
+        for port in tool.input_port_types:
+            assert port in tool.inputs, f"{name}: unknown input in input_port_types: {port!r}"
+        for port in tool.output_port_types:
+            assert port in tool.outputs, f"{name}: unknown output in output_port_types: {port!r}"
+
+
 def test_every_tool_with_results_declares_results_kind():
     classes = _registered_tools()
     for name, tool_class in classes.items():

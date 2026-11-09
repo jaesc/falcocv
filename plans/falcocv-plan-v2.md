@@ -5,6 +5,8 @@
 > **Base:** repositorio `falcocv`, rama `main`.
 > **Commits de referencia:** `22c5ce6` (fix de config/help), `ede8a88` (red de tests), `945cc3f` (suelo de cobertura).
 > **Propósito:** hoja de ruta autocontenida para las próximas fases, con las decisiones ya tomadas y lo que se descarta.
+>
+> **Backlog de tareas concretas:** [`TODO.md`](../TODO.md).
 
 ---
 

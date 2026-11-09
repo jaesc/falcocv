@@ -61,6 +61,7 @@ cpp/bin/       → local kernel build output (gitignored)
   filters by `element.source_tool`, so an unclaimed inherited layer tags the
   new overlays with the upstream tool's name and they are silently dropped.
   `composite_roi_to_full(..., source_tool=...)` does the same for ROI borders.
+  Full rules: `docs/OVERLAYS.md`.
 - **Overlay rendering** → render only in visible viewers; never rasterize into
   the image buffer; keep overlays as mathematical primitives.
 - **ROI helpers** accept 4- or 5-element ROIs (`[x,y,w,h]` or `[x,y,w,h,a]`).
@@ -344,6 +345,14 @@ cpp/bin/       → local kernel build output (gitignored)
   The output keeps the original range data, calibration and `_3d_data` by
   reference, and sets the 2D fixture when `act_as_fixture` is enabled. No
   reference plane is required for this matching.
+- **New tool checklist** -> `tests/integration/test_tool_contract.py` derives
+  the registration sites from the registry and fails when a tool misses one:
+  `@register_tool` (prefix, default name, group), the
+  `falcocv/tools/__init__.py` import, `_TOOL_MODULE_MAP`, `TOOL_PREFIXES`, a
+  `tools/<pkg>/config.py` widget returned by `get_config_widget()`, and a cold
+  `.cvj` load without importing `falcocv.tools`.  `tests/test_port_types.py`
+  additionally requires every tool's image/plane ports in
+  `GOLDEN_IMAGE_PORTS`, or an entry in `DYNAMIC_PORT_TOOLS` with the reason.
 - **Workflow port types** -> every tool declares its image, plane and structured
   result ports as class attributes (`input_port_types` / `output_port_types`
   with `IMAGE` / `PLANE` / `RESULTS`); unlisted ports are `ANY`.  Never infer a
@@ -434,6 +443,10 @@ cpp/bin/       → local kernel build output (gitignored)
   `show_centroids`, `show_labels`, `copy_overlays_to_input`.  Centroids draw a
   2D contour centroid plus the 3D tip world points; search ROI skips full-image
   ROIs.  Defaults are True.
+- **Workflow order** -> the tool list is the execution contract:
+  `Workflow.run()` walks it in order and connections only feed inputs.  There
+  is no topological sort, no auto-order and no cycle validation.  Describe it
+  as an ordered pipeline, never as a DAG or graph.
 - **Workflow tree rebuilds** -> `WorkflowEditor` renders its workflow in
   `__init__` (the Block config reuses an existing workflow); `WorkflowTree.set_workflow`
   builds the items before clearing and keeps a render-error row; `on_reorder`
@@ -461,6 +474,9 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 ## Key facts
 - Python 3.13.x (only supported version), branch: `main` (release) / `dev`
   (active development).
+- Package version: `src/falcocv/version.py` is the only place to bump it;
+  `pyproject.toml` reads it through the `scikit_build_core.metadata.regex`
+  provider (`dynamic = ["version"]`).
 - No PyInstaller/Inno distribution build; distribution is the PyPI wheel/sdist.
 - `config.json` lives in `%APPDATA%/FalcoCV/config.json` (or XDG config).
 - Models live in the user data dir and are downloaded from GitHub Releases.
@@ -477,109 +493,47 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 
 ## Current handoff (2026-11-09)
 
-- `dev` is the active development branch and carries 1.1.0 plus this
-  post-1.1.0 work.  `main` is not touched by this push.
-- The `omron`, `beckhoff` and `siemens` drivers are implemented.  Omron has
-  been validated against real hardware; Beckhoff and Siemens still use fake
-  clients pending hardware validation.  The optional `plc` extra installs
-  `aphyt`, `pyads` and `python-snap7`.  Write verification is opt-in for all
-  three; `write_retries` only applies after a verification mismatch.
-- HMI communications drafts can now be saved incomplete (missing required
-  driver fields or empty tag addresses) through `validate_comms_config`; the
-  Communications tab and HMI Designer tab show the warning.  Check reports
-  warnings; Deploy, local Signal Monitor Connect and worker startup block
-  incomplete runtime configs.  `HMIProject.save` rejects structural errors but
-  preserves incomplete drafts.  Driver changes offer Keep tags / Delete tags /
-  Cancel.
-- The `adlink` DASK driver is implemented with the full model registry,
-  `DI`/`DO`/`AI`/`AO` addresses, digital port batching and analog ranges.
-  Native vendor libraries are resolved from
-  `%APPDATA%/FalcoCV/native/<driver>` or `FALCOCV_NATIVE_DIR`; `falcocv
-  native-deps` reports them.  USB-7250 hardware is validated, including
-  `verify_writes` with the relay settling delay.
-- Modbus TCP and OPC UA clients plus Modbus TCP/OPC UA servers are implemented.
-  The optional `protocols` extra installs `pymodbus`/`asyncua`; servers use
-  explicit mappings, start after the clients and are serialized/deployed in
-  the top-level `servers` section.  The OPC UA server uses anonymous/no-security
-  in this release.
-- Window geometry, dock state, splitter sizes and table column widths persist
-  through `ConfigManager.data["views"]`; the Servers tab adds
-  `hmi_servers.horizontal`, `hmi_servers.vertical` and
-  `hmi_servers.mappings`.  **View > Reset all views** restores defaults in the
-  main window and HMI Designer.
-- ShapeMatch Phase 1 (`a97c54c`), Phase 2 (`d91ecc7`) and Phase 3 (merged in
-  `fe8a135`): training mask, Canny / `min_gradient` / `max_features` controls,
-  manual feature editor with brush, spatial feature coverage, ROI-bound search
-  preprocessing and the first geometry mode.
-- Post-1.1.0 (2026-11-08): **geometry-only model v4**.  Hybrid/NCC/ECC, the
-  `match_mode`/`pre_gate_scorer` controls, the Python coarse vote and the legacy
-  `shape_match_vote` binding were removed.  The fused native vote is the only
-  vote path.  The model drops serialized `gray`/`color`; previews regenerate
-  from `train_image_b64` + `train_roi`.  Validation jobs (`depth.cvj`,
-  `shape2.cvj`, `shape2_validation.cvj`) and `examples/demo_inspection.cvj`
-  were retrained to v4; the demo's `min_score` moved 0.6 -> 0.55 because the
-  geometry score on its NG frame is 0.569.  Also included: training noise
-  filter, edge proposals on a coarser template-derived view, edge proposals in
-  the geometry pre-gate with a low-confidence second chance, compact ShapeMatch
-  settings panel, global wheel guard, Qt 6.12 ROI spin fix, and HeightBlobs
-  visibility options mirroring Blob Detector 2D.
-- ShapeMatch v2 and v3 models are rejected on purpose; retrain old jobs.
-- Spatial coverage is the default automatic selection.  Automatic orientation
-  coverage was prototyped and rejected because it changed pose/score on a real
-  job; do not reintroduce it without the benchmark gate.
-- Manual flags are provenance only.  The selected set is authoritative and
-  manual features are not prioritised in the vote subset.
-- The normal preview shows only the selected features.  Candidates are shown
-  only in the manual editor.
-- Speed work (2026-11-02): only the staged translation grid survived
-  (`067b8cc`, -8/-14 %, pose delta 0).  Convergence stop, search subset,
-  pose-lane batching, Levenberg-Marquardt and the alignment polish were tried
-  and reverted; each is recorded with numbers in
-  `docs/shape_match_perf_log.md` under "What did not work".
-- ShapeMatch is geometry-only; TemplateMatch is the grayscale reference.  The
-  latest 1005-frame gate: 0 lost / 0 extra, median 0.901 px, max 5.535 px /
-  1.162 deg / 2.065 % scale, 9/1005 strict failures (2 translation, 7 scale).
-  The 7 scale rows are a TemplateMatch reference limitation: it reports exactly
-  1.0 while the edge-alignment score prefers ShapeMatch's 0.979-0.985.  Gate:
-  `scripts/validate_shape_match_reference.py`, procedure in
-  `docs/SHAPE_MATCH_VALIDATION.md`.
-- README screenshots are generated by `scripts/capture_readme_screenshots.py`
-  into `docs/images/` from the real Vision Editor, Viewer3D and HMI Designer.
-  `examples/demo_dashboard.hmi` is the richer HMI demo; its dashboard image is
-  the Designer preview with representative data, not a live worker capture.
-- **Async GUI execution (2026-11-09)** -> `WorkflowEditor` runs workflows and
-  `ToolRunControls` RUN/AUTO through `ui/execution_service.py` (one QThread per
-  editor).  Never call `controller.run()` from the GUI thread.  `ToolSignal` in
-  `core/tool_base.py` suspends `data_changed` / `structure_changed` during a run
-  and coalesces one resume; `ui/tool_signal_dispatcher.py` marshals any
-  remaining worker-thread emission to the GUI.  Structural edits
-  (add/delete/reorder/paste) are blocked while busy; parameter edits stay
-  enabled.  The workflow tree freezes its status column during a run and
-  refreshes it once at the end, so loop runs keep the previous tool times
-  visible instead of flashing empty.  A process-wide lock serialises nested
-  Block editors.  `MainWindow._mark_modified` ignores the post-run resume via
-  `engine.is_finishing`.  Tests: `tests/ui/test_execution_service.py`,
+- `dev` is the active development branch: 1.1.0 plus the post-1.1.0 work.
+  `main` stays at the 1.1.0 release until the next version is published.
+- **Async GUI execution** -> `WorkflowEditor` and `ToolRunControls` RUN/AUTO go
+  through `ui/execution_service.py` (one QThread per editor); never call
+  `controller.run()` from the GUI thread.  `ToolSignal` suspends
+  `data_changed`/`structure_changed` during a run and coalesces one resume;
+  `ui/tool_signal_dispatcher.py` marshals the remaining worker-thread
+  emissions.  Structural edits are blocked while busy, parameter edits stay
+  enabled.  Tests: `tests/ui/test_execution_service.py`,
   `tests/ui/test_tool_signal_dispatcher.py`,
   `tests/ui/test_workflow_editor_async.py`.
-- First-run parity is **not** addressed by the async service; it needs a
-  separate per-tool warm-up pass (ONNX sessions, template caches, first image
-  decode).
-- Latest verification: `774 passed, 8 skipped, 3 xfailed`; UI
-  `169 passed, 5 skipped`; the 39-frame depth job still finds 39/39 true
-  detections with zero false positives.  The 1005-frame geometry-vs-TemplateMatch
-  gate found 0 lost/extra, max px 5.535, max angle 1.162 deg, max scale
-  2.065 %, geometry 60.7 ms vs TemplateMatch 406.5 ms.  The strict 5 px /
-  2 deg / 1.5 % gate still fails on 2 translation and 7 scale rows; the scale
-  rows are dominated by the TemplateMatch reference reporting exactly 1.0.
-  The `falcocv-1.1.0` wheel was built before this post-1.1.0 work and passed
-  `scripts/check_wheel.py` plus `scripts/wheel_smoke.py`; rebuild it before
-  publishing a new wheel.  Synthetic ShapeMatch matrix after the subpixel
-  parabola: 0.008 px / 0.021 deg / 0.0002 scale std.
-- Next work: review the two >5 px translation frames (`0867`, `0957`) and the
-  TemplateMatch scale reference (it always reports 1.0), then validate Beckhoff
-  ADS and Siemens S7 against real hardware.  Omron and ADLINK USB-7250 hardware
-  validation are complete; their automated tests still use fakes where
-  appropriate.  Modbus/OPC UA loopback tests run with the optional `protocols`
-  extra.  Resume on another machine with `git pull origin dev`,
-  `pip install -e ".[dev,plc,protocols]"` and
-  `pytest -q --ignore=tests/test_trainer_equivalence.py`.
+- First-run parity is **not** covered by the async service; it needs a
+  per-tool warm-up pass (ONNX sessions, template caches, first decode).
+- **ShapeMatch is geometry-only, model v4.**  Hybrid/NCC/ECC, `match_mode`,
+  `pre_gate_scorer`, the Python coarse vote and the legacy `shape_match_vote`
+  binding are gone; `shape_match_vote_fused` is the only vote path.  v2/v3
+  models are rejected on purpose: retrain old jobs.  Validation jobs and the
+  demo were retrained (`min_score` 0.6 -> 0.55 because the demo NG frame
+  scores 0.569).  Manual features are provenance only; the selected set is
+  authoritative.  Do not reintroduce orientation coverage without the
+  benchmark gate.
+- **Comms**: Omron and ADLINK USB-7250 are validated on real hardware.
+  Beckhoff ADS and Siemens S7 are implemented but still tested against fake
+  clients and need hardware validation.  Write verification is opt-in for all
+  drivers; `write_retries` only applies after a verification mismatch.  The
+  `plc` extra installs `aphyt`/`pyads`/`python-snap7`; the `protocols` extra
+  installs `pymodbus`/`asyncua`.  Incomplete comms drafts can be saved;
+  Deploy, Signal Monitor Connect and worker startup require a complete config.
+- **Docs**: `docs/OVERLAYS.md` owns the overlay ownership/propagation rules;
+  `ARCHITECTURE.md` is the reference for endpoints, formats and config keys.
+  Workflow order is an ordered pipeline (see the pitfall above).
+- Latest verification: `774 passed, 8 skipped, 3 xfailed`; UI `169 passed,
+  5 skipped`; the 39-frame depth job finds 39/39 true detections with no false
+  positives.  The 1005-frame geometry-vs-TemplateMatch gate: 0 lost/extra,
+  max 5.535 px / 1.162 deg / 2.065 % scale; the strict 5 px / 2 deg / 1.5 %
+  gate still fails on 2 translation and 7 scale rows (both reference-limited).
+  Synthetic ShapeMatch matrix: 0.008 px / 0.021 deg / 0.0002 scale std.
+  Geometry 60.7 ms vs TemplateMatch 406.5 ms.
+- Next work: review frames `0867` and `0957` (>5 px) and the TemplateMatch
+  scale reference (always 1.0); validate Beckhoff ADS and Siemens S7 on real
+  hardware; rebuild the wheel (the 1.1.0 wheel predates the post-release work)
+  and run `docs/SMOKE_TEST.md` before publishing.
+- Resume with `git pull origin dev`, `pip install -e ".[dev,plc,protocols]"`
+  and `pytest -q --ignore=tests/test_trainer_equivalence.py`.

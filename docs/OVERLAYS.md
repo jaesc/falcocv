@@ -1,13 +1,13 @@
-# FalcoCV — Architecture Specification
+# Overlays — ownership and propagation
 
 ## Runtime
 
 FalcoCV is Python-first: the workflow engine, the tools and the UI are Python
 (OpenCV/NumPy). The only native code is the pybind11 kernel in `cpp/kernel`
-(`_falco_kernel`), which exposes plain functions — `generate_pointcloud`,
-`plane_fit` and `shape_match_vote` — with no OpenCV dependency and no knowledge
-of `BaseTool`, `VisionImage` or overlays. Tools never delegate their main work
-to C++.
+(`_falco_kernel`), which exposes plain functions — point-cloud generation,
+plane fitting and the shape-match vote/score/ICP path — with no OpenCV
+dependency and no knowledge of `BaseTool`, `VisionImage` or overlays. Tools
+never delegate their main work to C++.
 
 See [`ARCHITECTURE.md`](../ARCHITECTURE.md) for the module layout and
 [`AGENTS.md`](../AGENTS.md) for the development rules.

@@ -22,8 +22,9 @@ operator dashboards.
 
 ## Highlights
 
-- **Workflow engine** — connect tools in a directed graph; jobs are saved as
-  `.cvj` files.
+- **Workflow engine** — chain tools in an explicit execution order; the list
+  order is the contract and connections feed each tool's inputs. Jobs are
+  saved as `.cvj` files.
 - **Vision toolset** — acquisition, image enhancement, segmentation, template
   and shape matching, code reading, measurement, deep-learning inspection and
   3D analysis.
@@ -230,19 +231,21 @@ src/falcocv/
 ├── tools/       Vision tools
 ├── ui/          PyQt6 widgets, viewers, ROI editors, HMI designer
 ├── web/         FastAPI server, HMI workers, dashboard
+├── comms/       devices, tags, PLC/protocol drivers, Modbus/OPC UA servers
 ├── main.py      Vision Editor
+├── hmi_designer.py  standalone HMI Designer
 ├── cli.py       `falcocv` / `python -m falcocv`
-└── version.py
+└── version.py   single source of truth for the package version
 
 cpp/kernel/      Native kernel (no OpenCV)
 tests/           Pytest suite
 ```
 
 FalcoCV is Python-first: tools and algorithms use OpenCV/NumPy unless a measured
-benchmark justifies native code. The small C++ kernel in `cpp/kernel`
-accelerates the hot paths where that win exists (for example point-cloud
-generation, plane fitting and template matching). It has no OpenCV dependency;
-OpenCV is provided by `opencv-python`.
+benchmark shows a real end-to-end win. A small C++ kernel collects only those
+performance-critical hot paths, so the native surface stays minimal and does not
+shape the tool API. It has no OpenCV dependency; OpenCV is provided by
+`opencv-python`.
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the module layout and
 [`benchmarks/`](benchmarks/) for the performance harness.

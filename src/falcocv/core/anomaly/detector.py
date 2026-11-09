@@ -2,8 +2,8 @@
 
 Uses ResNet18-Layer3 ONNX backbone for spatial feature extraction,
 greedy coreset subsampling, per-patch 1-NN scoring, template-matching
-alignment, and heatmap generation.  Follows the spec at
-specifications/anomaly_detector_spec.md.
+alignment, and heatmap generation.  Design notes live in
+`docs/specs/third-party/anomaly_detector_spec.md`.
 """
 
 __all__ = ["PatchCoreDetector", "AnomalyResult", "greedy_coreset_subsampling"]

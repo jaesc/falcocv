@@ -3,6 +3,10 @@
 > Based on: official OpenCV 5 announcement (June 2026, CVPR Denver), FalcoCV code analysis, comparative benchmark OpenCV 5 DNN vs ONNX Runtime.
 >
 > **Plan date:** June 2026. Living document.
+>
+> **Status:** exploratory, not approved roadmap. Decisions of record live in
+> [`falcocv-plan-v2.md`](falcocv-plan-v2.md); treat every proposal here as a
+> candidate that still needs a measured benchmark.
 
 ---
 
