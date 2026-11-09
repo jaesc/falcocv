@@ -154,15 +154,32 @@ def test_template_match_preview_has_fixed_square_size(qtbot):
     qtbot.wait(150)
 
     viewer = widget.template_viewer
-    assert viewer.width() == 250
-    assert viewer.height() == 250
+    assert viewer.width() == 180
+    assert viewer.height() == 180
 
     widget.content_layout.setSizes([700, 500])
     qtbot.wait(150)
-    assert viewer.width() == 250
-    assert viewer.height() == 250
+    assert viewer.width() == 180
+    assert viewer.height() == 180
 
     dialog.close()
+
+
+def test_template_match_settings_panel_is_compact(qtbot):
+    from falcocv.tools.template_match.config import TemplateMatchConfig
+    from falcocv.tools.template_match.logic import TemplateMatch
+
+    config = TemplateMatchConfig(TemplateMatch())
+    qtbot.addWidget(config)
+    config.resize(1200, 800)
+    config.show()
+    qtbot.wait(50)
+
+    assert config.left_panel.minimumSizeHint().width() <= 300
+
+    config.left_scroll.setFixedWidth(293)
+    qtbot.wait(20)
+    assert config.left_scroll.horizontalScrollBar().maximum() == 0
 
 
 def test_shape_match_capture_roi_train_uses_roi(qtbot):

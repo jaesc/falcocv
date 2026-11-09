@@ -40,6 +40,7 @@ __all__ = [
     "add_record_selector",
     "add_record_header",
     "add_fixture_axis_row",
+    "add_fixture_group",
     "set_fixture_axes_enabled",
 ]
 
@@ -120,6 +121,44 @@ def add_fixture_axis_row(layout, tool, on_change=None):
     row.addStretch()
     layout.addLayout(row)
     return boxes
+
+
+def add_fixture_group(layout, tool, on_change=None):
+    """Add the shared Fixture section and return its controls.
+
+    The section is intentionally separate from "Expected Results": acting as
+    a fixture is a downstream-coordinate behaviour, not a result count.  Both
+    match tools use this helper so the label, order and enablement rules stay
+    identical.
+    """
+    group = QGroupBox("Fixture")
+    group_layout = QVBoxLayout(group)
+    checkbox = QCheckBox("Act as Fixture")
+    checkbox.setToolTip(
+        "Use this result as the fixture anchor for downstream tools."
+    )
+    checkbox.setChecked(bool(tool.params.get("act_as_fixture", False)))
+    checkbox.toggled.connect(_fixture_toggle_slot(tool, on_change))
+    group_layout.addWidget(checkbox)
+
+    axes = add_fixture_axis_row(group_layout, tool, on_change=on_change)
+    set_fixture_axes_enabled(axes, checkbox.isChecked())
+    checkbox.toggled.connect(
+        lambda checked: set_fixture_axes_enabled(axes, checked)
+    )
+    layout.addWidget(group)
+    return checkbox, axes
+
+
+def _fixture_toggle_slot(tool, on_change):
+    def slot(checked):
+        if on_change is not None:
+            on_change("act_as_fixture", bool(checked))
+        else:
+            tool.params["act_as_fixture"] = bool(checked)
+            tool.mark_dirty()
+
+    return slot
 
 
 def _fixture_axis_slot(tool, key, on_change):

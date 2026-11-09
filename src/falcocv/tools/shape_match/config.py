@@ -22,9 +22,9 @@ from falcocv.core.vision_image import VisionImage
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.style import SUCCESS, WARNING, disabled_css
 from falcocv.ui.tool_config_helpers import (
+    add_fixture_group,
     add_record_header,
     make_record_selector,
-    set_fixture_axes_enabled,
     add_min_results_group,
     configure_params_splitter,
     connect_execution_time,
@@ -459,45 +459,13 @@ class ShapeMatchConfig(QWidget):
         label_matches.setToolTip("Maximum number of matches (0 = all)")
         results_layout.addWidget(label_matches)
         results_layout.addWidget(self.spin_max_matches)
-        self.chk_fixture = QCheckBox("Fixture")
-        self.chk_fixture.setToolTip(
-            "Use this result as the fixture anchor for downstream tools."
-        )
-        self.chk_fixture.setChecked(bool(self.tool.params.get("act_as_fixture", False)))
-        self.chk_fixture.toggled.connect(
-            lambda checked: self._set_param("act_as_fixture", checked)
-        )
-        results_layout.addWidget(self.chk_fixture)
-        self.fixture_axes = []
-        axes_grid = QGridLayout()
-        axes_grid.setContentsMargins(0, 0, 0, 0)
-        axes_grid.setHorizontalSpacing(6)
-        axes_grid.setVerticalSpacing(2)
-        for index, (key, text) in enumerate(
-            (
-                ("fixture_use_x", "X"),
-                ("fixture_use_y", "Y"),
-                ("fixture_use_angle", "Angle"),
-            )
-        ):
-            box = QCheckBox(text)
-            box.setChecked(bool(self.tool.params.get(key, True)))
-            box.setToolTip(f"Use the matched {text.lower()} as fixture.")
-            box.toggled.connect(
-                lambda checked, k=key: self._set_param(k, bool(checked))
-            )
-            axes_grid.addWidget(box, index // 2, index % 2)
-            self.fixture_axes.append(box)
-        results_layout.addLayout(axes_grid)
-        set_fixture_axes_enabled(
-            self.fixture_axes, self.chk_fixture.isChecked()
-        )
-        self.chk_fixture.toggled.connect(
-            lambda checked: set_fixture_axes_enabled(
-                self.fixture_axes, checked
-            )
-        )
         layout.addWidget(results_group)
+
+        self.chk_fixture, self.fixture_axes = add_fixture_group(
+            layout,
+            self.tool,
+            on_change=lambda key, value: self._set_param(key, value),
+        )
 
         self.spin_min_results = add_min_results_group(
             layout, self.tool, "Min matches:", 100, "matches"

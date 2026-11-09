@@ -7,25 +7,25 @@ from falcocv.core.roi_utils import extract_roi
 from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
+    QGridLayout,
     QLabel,
     QDoubleSpinBox,
+    QSizePolicy,
     QSpinBox,
     QPushButton,
     QGroupBox,
-    QComboBox,
     QTabWidget,
     QCheckBox,
     QSplitter,
 )
 from PyQt6.QtCore import QRectF, QTimer, Qt, QThread, pyqtSignal as Signal
+from falcocv.core.config import ConfigManager
 from falcocv.ui.style import ALT_BG, BORDER, SUCCESS, WARNING, disabled_css
 from falcocv.ui.safe_refresh import safe_refresh
 from falcocv.ui.tool_config_helpers import (
-    add_fixture_axis_row,
+    add_fixture_group,
     add_record_header,
     make_record_selector,
-    set_fixture_axes_enabled,
     add_min_results_group,
     wrap_params_scroll,
     configure_params_splitter,
@@ -175,6 +175,15 @@ class TemplateMatchConfig(QWidget):
         self.viewer = ImageViewer(); self.viewer_layout.addWidget(self.viewer)
         self.content_layout.addWidget(self.right_panel)
 
+        # The old layout forced a wide left panel and saved that width.  Reset
+        # it once so the compact panel opens at its natural size.
+        config = ConfigManager()
+        revisions = config.data.setdefault("layout_revisions", {})
+        if not revisions.get("template_match_compact_panel"):
+            config.set_tool_splitter("TemplateMatch", [])
+            revisions["template_match_compact_panel"] = True
+            config.save()
+
         configure_params_splitter(
             self.content_layout, self.left_scroll, self.right_panel, "TemplateMatch"
         )
@@ -196,42 +205,113 @@ class TemplateMatchConfig(QWidget):
 
         self.refresh_ui()
 
-    def _build_training_tab(self):
-        panel = QWidget(); layout = QVBoxLayout(panel)
-        layout.addWidget(self.train_roi_editor)
-        btn_capture = QPushButton("Capture Train Image"); btn_capture.clicked.connect(self._on_capture); layout.addWidget(btn_capture)
-        btn_train = QPushButton("Train Pattern"); btn_train.clicked.connect(self._on_train_pattern); layout.addWidget(btn_train)
-        self.label_state = QLabel("Not trained"); layout.addWidget(self.label_state)
+    # ------------------------------------------------------------------
+    # Layout helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _field(label, widget):
+        """Compact field: caption above the control."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(1)
+        layout.addWidget(QLabel(label))
+        layout.addWidget(widget)
+        return container
 
-        # Origin Offset UI
+    @classmethod
+    def _field_grid(cls, entries, columns=2):
+        """Two-column grid of compact fields; keeps the panel narrow."""
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(6)
+        grid.setVerticalSpacing(4)
+        for index, (label, widget) in enumerate(entries):
+            grid.addWidget(
+                cls._field(label, widget), index // columns, index % columns
+            )
+        return container
+
+    @staticmethod
+    def _compact_spin(spin, minimum_width=90):
+        """Let the layout ignore the spin's wide size hint."""
+        spin.setSizePolicy(
+            QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+        )
+        spin.setMinimumWidth(minimum_width)
+
+    def _build_training_tab(self):
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.addWidget(self.train_roi_editor)
+
+        btn_capture = QPushButton("Capture Train Image")
+        btn_capture.clicked.connect(self._on_capture)
+        layout.addWidget(btn_capture)
+        btn_train = QPushButton("Train Pattern")
+        btn_train.clicked.connect(self._on_train_pattern)
+        layout.addWidget(btn_train)
+        self.label_state = QLabel("Not trained")
+        self.label_state.setWordWrap(True)
+        layout.addWidget(self.label_state)
+
         orig_group = QGroupBox("Tool Origin Offset")
-        orig_lyt = QVBoxLayout(orig_group)
-        spin_lyt = QHBoxLayout()
-        self.spin_ox = QDoubleSpinBox(); self.spin_ox.setRange(-500, 500); self.spin_ox.setValue(self.tool.params["origin_x"])
-        self.spin_oy = QDoubleSpinBox(); self.spin_oy.setRange(-500, 500); self.spin_oy.setValue(self.tool.params["origin_y"])
+        orig_layout = QVBoxLayout(orig_group)
+        self.spin_ox = QDoubleSpinBox()
+        self.spin_ox.setRange(-500.0, 500.0)
+        self.spin_ox.setMaximumWidth(110)
+        self.spin_ox.setValue(self.tool.params["origin_x"])
+        self._compact_spin(self.spin_ox)
+        self.spin_oy = QDoubleSpinBox()
+        self.spin_oy.setRange(-500.0, 500.0)
+        self.spin_oy.setMaximumWidth(110)
+        self.spin_oy.setValue(self.tool.params["origin_y"])
+        self._compact_spin(self.spin_oy)
         self.spin_ox.valueChanged.connect(lambda v: self._set_param("origin_x", v))
         self.spin_oy.valueChanged.connect(lambda v: self._set_param("origin_y", v))
-        spin_lyt.addWidget(QLabel("X:")); spin_lyt.addWidget(self.spin_ox); spin_lyt.addWidget(QLabel("Y:")); spin_lyt.addWidget(self.spin_oy)
-        orig_lyt.addLayout(spin_lyt)
+        orig_layout.addWidget(
+            self._field_grid((("X", self.spin_ox), ("Y", self.spin_oy)))
+        )
 
-        self.btn_pick_origin = QPushButton("Pick Origin Point (Click on Pattern)")
+        self.btn_pick_origin = QPushButton("Pick Origin")
+        self.btn_pick_origin.setToolTip(
+            "Click a point on the pattern preview to set the origin offset."
+        )
         self.btn_pick_origin.setCheckable(True)
         self.btn_pick_origin.clicked.connect(self._on_pick_origin_clicked)
-        orig_lyt.addWidget(self.btn_pick_origin)
+        orig_layout.addWidget(self.btn_pick_origin)
         layout.addWidget(orig_group)
 
-        preview_box = QGroupBox("Pattern Preview"); preview_lyt = QVBoxLayout(preview_box)
-        self.template_viewer = ImageViewer(); self.template_viewer.setFixedSize(250, 250); preview_lyt.addWidget(self.template_viewer)
-        layout.addWidget(preview_box); layout.addStretch(); return panel
+        preview_box = QGroupBox("Pattern Preview")
+        preview_layout = QVBoxLayout(preview_box)
+        self.template_viewer = ImageViewer()
+        self.template_viewer.setFixedSize(180, 180)
+        preview_layout.addWidget(self.template_viewer)
+        layout.addWidget(preview_box)
+        layout.addStretch()
+        return panel
 
     def _build_search_tab(self):
-        panel = QWidget(); layout = QVBoxLayout(panel); layout.addWidget(self.search_roi_editor)
-        conf_group = QGroupBox("Sensitivity"); conf_lyt = QVBoxLayout(conf_group)
-        self.spin_score = QDoubleSpinBox(); self.spin_score.setRange(0.1, 1.0); self.spin_score.setValue(self.tool.params["score_threshold"]); self.spin_score.valueChanged.connect(lambda v: self._set_param("score_threshold", v))
-        conf_lyt.addWidget(QLabel("Confidence")); conf_lyt.addWidget(self.spin_score); layout.addWidget(conf_group)
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.addWidget(self.search_roi_editor)
 
-        angle_group = QGroupBox("Angle Range"); angle_lyt = QHBoxLayout(angle_group)
-        [angle_lyt.addWidget(QLabel(t)) for t in ["Min:", "Max:", "Step:"]]
+        confidence_group = QGroupBox("Sensitivity")
+        confidence_layout = QVBoxLayout(confidence_group)
+        self.spin_score = QDoubleSpinBox()
+        self.spin_score.setRange(0.1, 1.0)
+        self.spin_score.setMaximumWidth(110)
+        self.spin_score.setValue(self.tool.params["score_threshold"])
+        self.spin_score.valueChanged.connect(
+            lambda v: self._set_param("score_threshold", v)
+        )
+        self._compact_spin(self.spin_score)
+        confidence_layout.addWidget(self._field("Confidence", self.spin_score))
+        layout.addWidget(confidence_group)
+
+        angle_group = QGroupBox("Angle Range")
+        angle_layout = QVBoxLayout(angle_group)
         self.spin_a0 = QSpinBox()
         self.spin_a0.setRange(-180, 180)
         self.spin_a0.setValue(self.tool.params["angle_start"])
@@ -239,7 +319,10 @@ class TemplateMatchConfig(QWidget):
             "Positive angles rotate clockwise in the image frame, "
             "like ROI/fixture angles."
         )
-        self.spin_a0.valueChanged.connect(lambda v: self._set_param("angle_start", v))
+        self.spin_a0.valueChanged.connect(
+            lambda v: self._set_param("angle_start", v)
+        )
+        self._compact_spin(self.spin_a0)
         self.spin_a1 = QSpinBox()
         self.spin_a1.setRange(-180, 180)
         self.spin_a1.setValue(self.tool.params["angle_end"])
@@ -247,78 +330,159 @@ class TemplateMatchConfig(QWidget):
             "Positive angles rotate clockwise in the image frame, "
             "like ROI/fixture angles."
         )
-        self.spin_a1.valueChanged.connect(lambda v: self._set_param("angle_end", v))
-        self.spin_as = QDoubleSpinBox(); self.spin_as.setRange(0.1, 1.0); self.spin_as.setSingleStep(0.1); self.spin_as.setDecimals(1); self.spin_as.setValue(self.tool.params["angle_step"]); self.spin_as.valueChanged.connect(lambda v: self._set_param("angle_step", v))
-        angle_lyt.insertWidget(1, self.spin_a0); angle_lyt.insertWidget(3, self.spin_a1); angle_lyt.insertWidget(5, self.spin_as); layout.addWidget(angle_group)
+        self.spin_a1.valueChanged.connect(
+            lambda v: self._set_param("angle_end", v)
+        )
+        self._compact_spin(self.spin_a1)
+        self.spin_as = QDoubleSpinBox()
+        self.spin_as.setRange(0.1, 1.0)
+        self.spin_as.setSingleStep(0.1)
+        self.spin_as.setDecimals(1)
+        self.spin_as.setValue(self.tool.params["angle_step"])
+        self.spin_as.valueChanged.connect(
+            lambda v: self._set_param("angle_step", v)
+        )
+        self._compact_spin(self.spin_as)
+        angle_layout.addWidget(
+            self._field_grid(
+                (
+                    ("Min", self.spin_a0),
+                    ("Max", self.spin_a1),
+                    ("Step", self.spin_as),
+                )
+            )
+        )
+        layout.addWidget(angle_group)
 
-        scale_group = QGroupBox("Scale Range"); scale_lyt = QHBoxLayout(scale_group)
-        [scale_lyt.addWidget(QLabel(t)) for t in ["Min:", "Max:", "Step:"]]
-        self.spin_s0 = QDoubleSpinBox(); self.spin_s0.setRange(0.1, 5.0); self.spin_s0.setValue(self.tool.params["scale_start"]); self.spin_s0.valueChanged.connect(lambda v: self._set_param("scale_start", v))
-        self.spin_s1 = QDoubleSpinBox(); self.spin_s1.setRange(0.1, 5.0); self.spin_s1.setValue(self.tool.params["scale_end"]); self.spin_s1.valueChanged.connect(lambda v: self._set_param("scale_end", v))
-        self.spin_ss = QDoubleSpinBox(); self.spin_ss.setRange(0.01, 1.0); self.spin_ss.setValue(self.tool.params["scale_step"]); self.spin_ss.valueChanged.connect(lambda v: self._set_param("scale_step", v))
-        scale_lyt.insertWidget(1, self.spin_s0); scale_lyt.insertWidget(3, self.spin_s1); scale_lyt.insertWidget(5, self.spin_ss); layout.addWidget(scale_group)
+        scale_group = QGroupBox("Scale Range")
+        scale_layout = QVBoxLayout(scale_group)
+        self.spin_s0 = QDoubleSpinBox()
+        self.spin_s0.setRange(0.1, 5.0)
+        self.spin_s0.setValue(self.tool.params["scale_start"])
+        self.spin_s0.valueChanged.connect(
+            lambda v: self._set_param("scale_start", v)
+        )
+        self._compact_spin(self.spin_s0)
+        self.spin_s1 = QDoubleSpinBox()
+        self.spin_s1.setRange(0.1, 5.0)
+        self.spin_s1.setValue(self.tool.params["scale_end"])
+        self.spin_s1.valueChanged.connect(
+            lambda v: self._set_param("scale_end", v)
+        )
+        self._compact_spin(self.spin_s1)
+        self.spin_ss = QDoubleSpinBox()
+        self.spin_ss.setRange(0.01, 1.0)
+        self.spin_ss.setValue(self.tool.params["scale_step"])
+        self.spin_ss.valueChanged.connect(
+            lambda v: self._set_param("scale_step", v)
+        )
+        self._compact_spin(self.spin_ss)
+        scale_layout.addWidget(
+            self._field_grid(
+                (
+                    ("Min", self.spin_s0),
+                    ("Max", self.spin_s1),
+                    ("Step", self.spin_ss),
+                )
+            )
+        )
+        layout.addWidget(scale_group)
 
-        pyr_group = QGroupBox("Performance"); pyr_lyt = QVBoxLayout(pyr_group)
-        self.spin_pyr = QSpinBox(); self.spin_pyr.setRange(1, 5); self.spin_pyr.setValue(self.tool.params["pyramid_levels"]); self.spin_pyr.valueChanged.connect(lambda v: self._set_param("pyramid_levels", v))
-        pyr_lyt.addWidget(QLabel("Pyramid Levels")); pyr_lyt.addWidget(self.spin_pyr); layout.addWidget(pyr_group)
+        performance_group = QGroupBox("Performance")
+        performance_layout = QVBoxLayout(performance_group)
+        self.spin_pyr = QSpinBox()
+        self.spin_pyr.setRange(1, 5)
+        self.spin_pyr.setValue(self.tool.params["pyramid_levels"])
+        self.spin_pyr.valueChanged.connect(
+            lambda v: self._set_param("pyramid_levels", v)
+        )
+        self._compact_spin(self.spin_pyr)
+        performance_layout.addWidget(self._field("Levels", self.spin_pyr))
+        layout.addWidget(performance_group)
 
-        res_group = QGroupBox("Expected Results"); res_lyt = QVBoxLayout(res_group)
-        self.spin_max = QSpinBox(); self.spin_max.setRange(0, 100); self.spin_max.setValue(self.tool.params["max_matches"]); self.spin_max.setSpecialValueText("All"); self.spin_max.setToolTip("Maximum number of matches to return (0 = all). This does not control the minimum-result error policy."); self.spin_max.valueChanged.connect(lambda v: self._set_param("max_matches", v))
-        res_lyt.addWidget(QLabel("Number of matches (0 = All)")); res_lyt.addWidget(self.spin_max)
+        results_group = QGroupBox("Expected Results")
+        results_layout = QVBoxLayout(results_group)
+        self.spin_max = QSpinBox()
+        self.spin_max.setRange(0, 100)
+        self.spin_max.setValue(self.tool.params["max_matches"])
+        self.spin_max.setSpecialValueText("All")
+        self.spin_max.setToolTip(
+            "Maximum number of matches to return (0 = all). "
+            "This does not control the minimum-result error policy."
+        )
+        self.spin_max.valueChanged.connect(
+            lambda v: self._set_param("max_matches", v)
+        )
+        self._compact_spin(self.spin_max)
+        results_layout.addWidget(self._field("Matches", self.spin_max))
+        layout.addWidget(results_group)
 
-        self.chk_fixture = QCheckBox("Act as Fixture (Anchor)")
-        self.chk_fixture.setChecked(self.tool.params.get("act_as_fixture", False))
-        self.chk_fixture.toggled.connect(lambda v: self._set_param("act_as_fixture", v))
-        res_lyt.addWidget(self.chk_fixture)
-        self.fixture_axes = add_fixture_axis_row(
-            res_lyt,
+        self.chk_fixture, self.fixture_axes = add_fixture_group(
+            layout,
             self.tool,
             on_change=lambda key, value: self._set_param(key, value),
         )
-        set_fixture_axes_enabled(
-            self.fixture_axes, self.chk_fixture.isChecked()
-        )
-        self.chk_fixture.toggled.connect(
-            lambda checked: set_fixture_axes_enabled(
-                self.fixture_axes, checked
-            )
-        )
-
-        layout.addWidget(res_group)
 
         self.spin_min_results = add_min_results_group(
-            layout, self.tool, "Minimum matches:", 100, "matches"
+            layout, self.tool, "Min matches:", 100, "matches"
         )
 
-        # Visibility checkboxes
-        vis_group = QGroupBox("Visibility"); vis_lyt = QVBoxLayout(vis_group)
+        visibility_group = QGroupBox("Visibility")
+        visibility_layout = QVBoxLayout(visibility_group)
         self.chk_overlays = QCheckBox("Show Overlays")
         self.chk_overlays.setChecked(self.tool.params.get("show_overlays", True))
-        self.chk_overlays.toggled.connect(lambda v: self._set_param("show_overlays", v))
-        vis_lyt.addWidget(self.chk_overlays)
-        self.chk_show_search = QCheckBox("Show Search Region")
-        self.chk_show_search.setChecked(self.tool.params.get("show_search_roi", True))
-        self.chk_show_search.toggled.connect(lambda v: self._set_param("show_search_roi", v))
-        vis_lyt.addWidget(self.chk_show_search)
-        self.chk_show_region = QCheckBox("Show Found Region")
-        self.chk_show_region.setChecked(self.tool.params.get("show_found_region", True))
-        self.chk_show_region.toggled.connect(lambda v: self._set_param("show_found_region", v))
-        vis_lyt.addWidget(self.chk_show_region)
-        self.chk_show_origin = QCheckBox("Show Found Origin")
-        self.chk_show_origin.setChecked(self.tool.params.get("show_found_origin", True))
-        self.chk_show_origin.toggled.connect(lambda v: self._set_param("show_found_origin", v))
-        vis_lyt.addWidget(self.chk_show_origin)
-        self.chk_labels = QCheckBox("Show Labels")
+        self.chk_overlays.toggled.connect(
+            lambda v: self._set_param("show_overlays", v)
+        )
+        visibility_layout.addWidget(self.chk_overlays)
+        self.chk_show_search = QCheckBox("Search ROI")
+        self.chk_show_search.setToolTip("Show the search region.")
+        self.chk_show_search.setChecked(
+            self.tool.params.get("show_search_roi", True)
+        )
+        self.chk_show_search.toggled.connect(
+            lambda v: self._set_param("show_search_roi", v)
+        )
+        visibility_layout.addWidget(self.chk_show_search)
+        self.chk_show_region = QCheckBox("Found ROI")
+        self.chk_show_region.setToolTip("Show the found match region.")
+        self.chk_show_region.setChecked(
+            self.tool.params.get("show_found_region", True)
+        )
+        self.chk_show_region.toggled.connect(
+            lambda v: self._set_param("show_found_region", v)
+        )
+        visibility_layout.addWidget(self.chk_show_region)
+        self.chk_show_origin = QCheckBox("Origin")
+        self.chk_show_origin.setToolTip("Show the found match origin.")
+        self.chk_show_origin.setChecked(
+            self.tool.params.get("show_found_origin", True)
+        )
+        self.chk_show_origin.toggled.connect(
+            lambda v: self._set_param("show_found_origin", v)
+        )
+        visibility_layout.addWidget(self.chk_show_origin)
+        self.chk_labels = QCheckBox("Labels")
         self.chk_labels.setChecked(self.tool.params.get("show_labels", True))
-        self.chk_labels.toggled.connect(lambda v: self._set_param("show_labels", v))
-        vis_lyt.addWidget(self.chk_labels)
-        self.chk_copy_in = QCheckBox("Copy overlays to input image")
-        self.chk_copy_in.setChecked(self.tool.params.get("copy_overlays_to_input", True))
-        self.chk_copy_in.toggled.connect(lambda v: self._set_param("copy_overlays_to_input", v))
-        vis_lyt.addWidget(self.chk_copy_in)
-        layout.addWidget(vis_group)
-
-        layout.addStretch(); return panel
+        self.chk_labels.toggled.connect(
+            lambda v: self._set_param("show_labels", v)
+        )
+        visibility_layout.addWidget(self.chk_labels)
+        self.chk_copy_in = QCheckBox("Copy overlays")
+        self.chk_copy_in.setToolTip(
+            "Copy this tool's overlays to the input image so downstream "
+            "tools can draw on them."
+        )
+        self.chk_copy_in.setChecked(
+            self.tool.params.get("copy_overlays_to_input", True)
+        )
+        self.chk_copy_in.toggled.connect(
+            lambda v: self._set_param("copy_overlays_to_input", v)
+        )
+        visibility_layout.addWidget(self.chk_copy_in)
+        layout.addWidget(visibility_group)
+        layout.addStretch()
+        return panel
 
     def _set_param(self, key, value): self.tool.params[key] = value; self._exec_timer.start()
     def _on_capture(self): self._stop_all_editing(); self.tool.save_train_image(); self.record_selector.setCurrentText("train image"); self.refresh_ui()

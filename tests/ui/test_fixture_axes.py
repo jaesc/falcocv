@@ -37,3 +37,16 @@ def test_fixture_axes_are_enabled_only_with_the_toggle(
     assert tool.params["fixture_use_y"] is False
     config.fixture_axes[1].setChecked(True)
     assert tool.params["fixture_use_y"] is True
+
+
+@pytest.mark.parametrize(
+    "tool_cls, config_cls",
+    [(ShapeMatch, ShapeMatchConfig), (TemplateMatch, TemplateMatchConfig)],
+    ids=["shape", "template"],
+)
+def test_match_fixture_is_a_dedicated_section(qtbot, tool_cls, config_cls):
+    config = config_cls(tool_cls())
+    qtbot.addWidget(config)
+
+    assert config.chk_fixture.text() == "Act as Fixture"
+    assert config.chk_fixture.parent().title() == "Fixture"
