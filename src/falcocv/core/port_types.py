@@ -16,14 +16,12 @@ from __future__ import annotations
 
 IMAGE = "image"
 PLANE = "plane"
-FEATURES = "features"
 RESULTS = "results"
 ANY = "any"
 
 PORT_LABELS = {
     IMAGE: "Image",
     PLANE: "Plane",
-    FEATURES: "Features",
     RESULTS: "Results",
     ANY: "Any",
 }
@@ -35,8 +33,10 @@ _ALIASES = {
     "image": IMAGE,
     "img": IMAGE,
     "plane": PLANE,
-    "features": FEATURES,
-    "feature": FEATURES,
+    # Legacy blocks could declare Features; nothing uses that kind now, so it
+    # degrades to untyped instead of becoming a dangling type.
+    "features": ANY,
+    "feature": ANY,
     "results": RESULTS,
     "result": RESULTS,
     "any": ANY,

@@ -15,7 +15,7 @@ class BlobResult(ToolResult):
         super().__init__(id=id, x=x, y=y, area=area)
 
 
-@register_tool(prefix="[BLOB]", default_name="Blob Detector", group="Vision Tools")
+@register_tool(prefix="[BLOB]", default_name="Blob Detector", group="Inspection")
 class BlobDetector(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "binary mask": IMAGE, "results": RESULTS}

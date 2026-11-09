@@ -22,6 +22,8 @@ _TOOL_MODULE_MAP: dict[str, str] = {
     "FixtureOverlay": "falcocv.tools.fixture_overlay",
     "PlaneFitter": "falcocv.tools.plane_fitter",
     "HeightBlobs3D": "falcocv.tools.height_blobs",
+    "LineFit": "falcocv.tools.line_fit",
+    "CircleFit": "falcocv.tools.circle_fit",
 }
 
 

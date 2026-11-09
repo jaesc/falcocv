@@ -14,6 +14,44 @@ from falcocv.ui.style import ALT_BG
 from falcocv.core.tool_registry import get_all_tools
 
 
+#: Preferred toolbox order.  A group registered by a tool but missing here is
+#: appended automatically, so a new group never hides its tools.
+GROUP_ORDER = [
+    "Acquisition",
+    "Processing",
+    "Inspection",
+    "3D",
+    "Machine Learning",
+    "Logic",
+]
+
+#: Display order inside each group.  Unlisted tools follow alphabetically, so a
+#: new tool never disappears from its section.
+TOOL_ORDER = {
+    "Acquisition": ["GigE Camera", "Image Loader", "Depth Range Loader"],
+    "Processing": [
+        "Filters",
+        "Image Calculator",
+        "Histogram",
+        "Edge Detection",
+        "Fixture Overlay",
+    ],
+    "Inspection": [
+        "Blob Detector",
+        "Template Match",
+        "Shape Match",
+        "Barcode Decoder",
+        "OCR",
+        "Measurement",
+        "Line Fit",
+        "Circle Fit",
+    ],
+    "3D": ["Plane Fitter", "Height Blobs 3D"],
+    "Machine Learning": ["Classifier", "Anomaly Detector"],
+    "Logic": ["Python Script", "Block"],
+}
+
+
 
 class ToolButton(QPushButton):
     def __init__(self, text, tool_type, parent=None):
@@ -86,13 +124,37 @@ class Toolbox(QWidget):
         if not embedded:
             layout.addWidget(QLabel("Click to Add or Drag to Workspace:"))
 
+        tools = get_all_tools()
+        group_names = list(GROUP_ORDER)
+        for group_name in sorted({reg.group for reg in tools if reg.group}):
+            if group_name not in group_names:
+                group_names.append(group_name)
+
+        group_rank = {name: index for index, name in enumerate(group_names)}
+
+        def tool_rank(reg):
+            order = TOOL_ORDER.get(reg.group, [])
+            try:
+                return order.index(reg.default_name)
+            except ValueError:
+                return len(order)
+
+        tools = sorted(
+            tools,
+            key=lambda reg: (
+                group_rank.get(reg.group, len(group_rank)),
+                tool_rank(reg),
+                reg.default_name,
+            ),
+        )
+
         groups: dict[str, QVBoxLayout] = {}
-        for group_name in ["Acquisition", "Preprocess", "Vision Tools", "Machine Learning", "3D", "Logic"]:
+        for group_name in group_names:
             gb = QGroupBox(group_name)
             groups[group_name] = QVBoxLayout(gb)
             layout.addWidget(gb)
 
-        for reg in get_all_tools():
+        for reg in tools:
             gl = groups.get(reg.group)
             if gl is None:
                 continue

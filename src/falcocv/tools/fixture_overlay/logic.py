@@ -85,7 +85,7 @@ def _compute_fixture(elem):
     return (cx, cy, angle)
 
 
-@register_tool(prefix="[FIXT]", default_name="Fixture Overlay", group="Vision Tools")
+@register_tool(prefix="[FIXT]", default_name="Fixture Overlay", group="Processing")
 class FixtureOverlay(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE}

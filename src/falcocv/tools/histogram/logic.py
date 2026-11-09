@@ -18,7 +18,7 @@ class HistogramResult(ToolResult):
         )
 
 
-@register_tool(prefix="[HIST]", default_name="Histogram", group="Vision Tools")
+@register_tool(prefix="[HIST]", default_name="Histogram", group="Processing")
 class HistogramTool(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "results": RESULTS}

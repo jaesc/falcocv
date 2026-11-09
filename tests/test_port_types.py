@@ -59,6 +59,9 @@ def test_normalize_kind_accepts_labels_and_legacy_values():
     assert normalize_kind(None) == ANY
     assert normalize_kind("Number") == ANY
     assert normalize_kind("String") == ANY
+    # The Features kind was removed; legacy metadata stays usable as untyped.
+    assert normalize_kind("Features") == ANY
+    assert normalize_kind("features") == ANY
     assert normalize_kind("anything else") == ANY
 
 
@@ -148,6 +151,7 @@ GOLDEN_IMAGE_PORTS = {
     "AnomalyDetector": ({"input image"}, {"output image"}),
     "BarcodeDecoder": ({"input image"}, {"output image"}),
     "BlobDetector": ({"input image"}, {"output image", "binary mask"}),
+    "CircleFit": ({"input image"}, {"output image"}),
     "Classifier": ({"input image"}, {"output image"}),
     "DepthRangeLoader": (set(), {"output image"}),
     "EdgeDetection": ({"input image"}, {"output image"}),
@@ -158,6 +162,7 @@ GOLDEN_IMAGE_PORTS = {
     "HistogramTool": ({"input image"}, {"output image"}),
     "ImageCalculatorTool": ({"image_A", "image_B"}, {"output image"}),
     "ImageLoader": (set(), {"output image"}),
+    "LineFit": ({"input image"}, {"output image"}),
     "MeasurementTool": ({"input image"}, {"output image"}),
     "OCR": ({"input image"}, {"output image"}),
     "PlaneFitter": ({"input image"}, {"output image"}),

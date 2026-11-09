@@ -198,7 +198,7 @@ class ShapeMatchResult(ToolResult):
         )
 
 
-@register_tool(prefix="[SHAP]", default_name="Shape Match", group="Vision Tools")
+@register_tool(prefix="[SHAP]", default_name="Shape Match", group="Inspection")
 class ShapeMatch(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "results": RESULTS}

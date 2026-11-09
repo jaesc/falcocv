@@ -406,7 +406,7 @@ def apply_filter(img, ftype, params):
 # FiltersTool
 # ---------------------------------------------------------------------------
 
-@register_tool(prefix="[FILT]", default_name="Filters", group="Preprocess")
+@register_tool(prefix="[FILT]", default_name="Filters", group="Processing")
 class FiltersTool(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE}

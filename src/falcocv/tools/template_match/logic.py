@@ -136,7 +136,7 @@ class TemplateMatchResult(ToolResult):
         super().__init__(id=id, x=x, y=y, angle=angle, scale=scale, score=score)
 
 
-@register_tool(prefix="[TMPL]", default_name="Template Match", group="Vision Tools")
+@register_tool(prefix="[TMPL]", default_name="Template Match", group="Inspection")
 class TemplateMatch(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "results": RESULTS}

@@ -220,7 +220,7 @@ def _apply_op(img_a, img_b, op_type, params):
     return a
 
 
-@register_tool(prefix="[CALC]", default_name="Image Calculator", group="Preprocess")
+@register_tool(prefix="[CALC]", default_name="Image Calculator", group="Processing")
 class ImageCalculatorTool(BaseTool):
     input_port_types = {"image_A": IMAGE, "image_B": IMAGE}
     output_port_types = {"output image": IMAGE}

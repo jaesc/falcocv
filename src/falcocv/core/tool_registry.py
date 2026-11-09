@@ -75,4 +75,6 @@ TOOL_PREFIXES: dict[str, str] = {
     "FixtureOverlay": "[FIXT]",
     "PlaneFitter": "[PLAN]",
     "HeightBlobs3D": "[3DBL]",
+    "LineFit": "[LFIT]",
+    "CircleFit": "[CFIT]",
 }

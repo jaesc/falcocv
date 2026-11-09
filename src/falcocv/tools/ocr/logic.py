@@ -20,7 +20,7 @@ from falcocv.core.ocr.industrial_ocr_engine import (
 )
 
 
-@register_tool(prefix="[IOCR]", default_name="OCR", group="Vision Tools")
+@register_tool(prefix="[IOCR]", default_name="OCR", group="Inspection")
 class OCR(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE}

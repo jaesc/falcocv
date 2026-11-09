@@ -21,8 +21,28 @@ from falcocv.ui.tool_help import TOOL_HELP, TYPE_TO_HELP_KEY
 
 # ── Category ordering ──────────────────────────────────────────────────────
 
-_CATEGORIES = ["Acquisition", "Vision Tools", "Logic", "HMI"]
+_CATEGORIES = [
+    "Acquisition",
+    "Processing",
+    "Inspection",
+    "3D",
+    "Machine Learning",
+    "Logic",
+    "HMI",
+]
 _CATEGORY_ORDER = {c: i for i, c in enumerate(_CATEGORIES)}
+
+
+def help_categories(categories) -> list[str]:
+    """Display order for help categories, including data-only categories.
+
+    A category added to :mod:`falcocv.ui.tool_help` without updating
+    ``_CATEGORIES`` is still listed, so its entries never disappear.
+    """
+    ordered = list(_CATEGORIES)
+    for category in sorted(set(categories) - set(ordered)):
+        ordered.append(category)
+    return ordered
 
 
 def _sort_key(item):
@@ -356,7 +376,7 @@ class ToolHelpDialog(QDialog):
             grouped.setdefault(cat, []).append((key, entry))
 
         first = True
-        for cat in _CATEGORIES:
+        for cat in help_categories(grouped):
             items = grouped.get(cat, [])
             if not items:
                 continue

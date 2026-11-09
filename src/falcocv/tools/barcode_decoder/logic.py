@@ -18,7 +18,7 @@ class CodeResult(ToolResult):
                          text=text, format=format, quality=quality)
 
 
-@register_tool(prefix="[BDEC]", default_name="Barcode Decoder", group="Vision Tools")
+@register_tool(prefix="[BDEC]", default_name="Barcode Decoder", group="Inspection")
 class BarcodeDecoder(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "results": RESULTS}

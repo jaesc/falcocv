@@ -18,3 +18,5 @@ import falcocv.tools.anomaly_detector
 import falcocv.tools.depth_range_loader
 import falcocv.tools.plane_fitter
 import falcocv.tools.height_blobs
+import falcocv.tools.line_fit
+import falcocv.tools.circle_fit

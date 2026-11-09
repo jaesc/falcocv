@@ -27,6 +27,8 @@ TYPE_TO_HELP_KEY = {
     "MeasurementTool": "Measurement",
     "PythonScriptTool": "Python Script",
     "EdgeDetection": "Edge Detection",
+    "LineFit": "Line Fit",
+    "CircleFit": "Circle Fit",
     "Block": "Block",
     "Classifier": "Classifier",
     "AnomalyDetector": "Anomaly Detector",
@@ -164,7 +166,7 @@ TOOL_HELP["GigE Camera"] = {
 
 TOOL_HELP["Blob Detector"] = {
     "name": "Blob Detector",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": (
         "Detects and analyzes blobs (connected components) in an image using thresholding "
         "and contour analysis. Supports fixed and adaptive thresholding, area-based filtering, "
@@ -238,7 +240,7 @@ TOOL_HELP["Blob Detector"] = {
 
 TOOL_HELP["Filters"] = {
     "name": "Filters",
-    "category": "Vision Tools",
+    "category": "Processing",
     "purpose": (
         "Applies a sequential pipeline of preprocessing filters to the input image. "
         "Each filter operates on the result of the previous one, allowing complex "
@@ -441,7 +443,7 @@ TOOL_HELP["Filters"] = {
 
 TOOL_HELP["Histogram"] = {
     "name": "Histogram",
-    "category": "Vision Tools",
+    "category": "Processing",
     "purpose": (
         "Computes the image histogram and statistical descriptors (mean, std dev, min, max, median). "
         "Auto-detects the bit depth (8/10/12/14/16-bit) and selects appropriate bin count."
@@ -472,7 +474,7 @@ TOOL_HELP["Histogram"] = {
 
 TOOL_HELP["Template Match"] = {
     "name": "Template Match",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": (
         "Industrial multi-scale template matching with rotation and scale invariance. "
         "Searches for a reference pattern (template) in the input image and returns matches "
@@ -556,7 +558,7 @@ TOOL_HELP["Template Match"] = {
 
 TOOL_HELP["Barcode Decoder"] = {
     "name": "Barcode Decoder",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": (
         "Detects and decodes QR codes, 1D barcodes (UPC, EAN, Code128, etc.), DataMatrix codes, "
         "and ArUco markers. Supports multiple code types simultaneously in Auto mode, with "
@@ -681,7 +683,7 @@ TOOL_HELP["Barcode Decoder"] = {
 
 TOOL_HELP["Measurement"] = {
     "name": "Measurement",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": (
         "Performs geometric measurements on overlay primitives (points, lines, contours, "
         "circles, ROIs) using a table-driven interface. Each row defines a measurement "
@@ -820,7 +822,7 @@ TOOL_HELP["Measurement"] = {
 
 TOOL_HELP["Edge Detection"] = {
     "name": "Edge Detection",
-    "category": "Vision Tools",
+    "category": "Processing",
     "purpose": (
         "1D caliper tool that detects edges along a scan line projected across a ROI. "
         "Supports single-edge detection (one transition) or edge-pair detection (width between "
@@ -908,6 +910,166 @@ TOOL_HELP["Edge Detection"] = {
 
 # ── Logic / Custom ─────────────────────────────────────────────────────────
 
+TOOL_HELP["Line Fit"] = {
+    "name": "Line Fit",
+    "category": "Inspection",
+    "purpose": (
+        "Finds a straight edge with a caliper array inside the search ROI: "
+        "N parallel calipers measure subpixel edge positions across the ROI "
+        "and a robust total-least-squares fit returns the line.  It can also "
+        "fit existing overlay/contour points."
+    ),
+    "inputs": [
+        {"name": "input image", "type": "VisionImage",
+         "description": "Image the calipers sample (or whose overlays provide points)."},
+
+    ],
+    "outputs": [
+        {"name": "output image", "type": "VisionImage",
+         "description": "Input image plus the fitted line, inliers and labels."},
+        {"name": "count", "type": "int", "description": "1 when a line was fitted."},
+        {"name": "results", "type": "ToolResults",
+         "description": "x1/y1/x2/y2, angle (deg), length, rms, inliers, outliers, score, calipers, edge_points."},
+    ],
+    "params": [
+        {"name": "roi", "default": "[0, 0, 0, 0, 0]",
+         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required in caliper mode; filters points in points mode."},
+        {"name": "point_source", "default": "calipers",
+         "description": "calipers (scan the ROI) or existing (overlay/contour points)."},
+        {"name": "caliper_count", "default": "9",
+         "description": "Number of parallel calipers distributed along the ROI width."},
+        {"name": "caliper_width", "default": "5.0",
+         "description": "Pixels averaged along the ROI for each caliper profile."},
+        {"name": "caliper_length", "default": "0.0",
+         "description": "Scan length across the ROI height; 0 uses the full height."},
+        {"name": "caliper_edge_polarity", "default": "Any",
+         "description": "Any, Dark→Light or Light→Dark along the ROI's local V axis."},
+        {"name": "caliper_selector", "default": "Best",
+         "description": "Best (strongest peak), First or Last edge per caliper."},
+        {"name": "caliper_threshold", "default": "5.0",
+         "description": "Minimum 1D profile gradient for a caliper to report an edge."},
+        {"name": "caliper_sigma", "default": "1.0",
+         "description": "Gaussian smoothing of the caliper profile."},
+        {"name": "caliper_subpixel", "default": "True",
+         "description": "Parabolic subpixel refinement of the edge position."},
+        {"name": "show_calipers", "default": "True",
+         "description": "Draw the caliper scan segments."},
+        {"name": "use_overlay_points", "default": "True",
+         "description": "Points mode: use POINT overlay elements as candidates."},
+        {"name": "use_contours", "default": "False",
+         "description": "Use contour/polygon vertices as candidates."},
+        {"name": "robust", "default": "True",
+         "description": "Reject outliers (least-median RANSAC + capped trimming) before the least-squares fit."},
+        {"name": "max_residual_px", "default": "0.0",
+         "description": "Max residual in pixels; 0 derives a robust cutoff from the residual MAD."},
+        {"name": "max_outlier_percent", "default": "20.0",
+         "description": "Max percentage of points the fit may ignore; more outliers abort the fit (0 = no cap)."},
+        {"name": "iterations", "default": "200",
+         "description": "RANSAC iterations."},
+        {"name": "min_points", "default": "2",
+         "description": "Fail when fewer candidate points are available."},
+    ],
+    "notes": (
+        "Caliper mode needs only the ROI: the long side is the fit direction "
+        "and the calipers scan across the short side.  The profile follows "
+        "the ROI's local V axis, so Dark→Light means the edge brightens "
+        "towards the ROI's local bottom.  Points mode fits the visible "
+        "overlay and contour points.  The tool never feeds its own "
+        "overlays back into the next run.  The angle follows the measurement "
+        "convention: atan2(-dy, dx) in image pixels, so a +1 image slope "
+        "reports -45 degrees; without calibration the length stays in pixels.  "
+        "Points beyond the robust cutoff are discarded, up to "
+        "max_outlier_percent of the array, so one or two calipers on a wrong "
+        "edge cannot pull the line.  If more than that are outside the cutoff "
+        "the tool reports an error instead of publishing a biased fit; "
+        "rejected points are drawn red with Show Outliers."
+    ),
+    "see_also": ["Circle Fit", "Measurement", "Edge Detection"],
+}
+
+TOOL_HELP["Circle Fit"] = {
+    "name": "Circle Fit",
+    "category": "Inspection",
+    "purpose": (
+        "Finds a circle edge with a radial caliper array inside the search "
+        "ROI: N calipers scan inwards or outwards from the caliper ring and "
+        "an algebraic least-squares fit returns the circle.  It can also fit "
+        "existing contour/overlay points."
+    ),
+    "inputs": [
+        {"name": "input image", "type": "VisionImage",
+         "description": "Image the calipers sample (or whose overlays provide points)."},
+
+    ],
+    "outputs": [
+        {"name": "output image", "type": "VisionImage",
+         "description": "Input image plus the fitted circle, center and labels."},
+        {"name": "count", "type": "int", "description": "1 when a circle was fitted."},
+        {"name": "results", "type": "ToolResults",
+         "description": "cx/cy, radius, diameter, rms, inliers, outliers, score, calipers, edge_points."},
+    ],
+    "params": [
+        {"name": "roi", "default": "[0, 0, 0, 0, 0]",
+         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required in caliper mode; filters points in points mode."},
+        {"name": "point_source", "default": "calipers",
+         "description": "calipers (scan the ROI) or existing (overlay/contour points)."},
+        {"name": "caliper_count", "default": "16",
+         "description": "Number of radial calipers around the ROI centre."},
+        {"name": "caliper_width", "default": "3.0",
+         "description": "Pixels averaged along the tangent for each caliper profile."},
+        {"name": "caliper_length", "default": "0.0",
+         "description": "Radial band scanned from the ring in the selected direction; 0 uses 35% of the ROI short side."},
+        {"name": "caliper_radius", "default": "0.0",
+         "description": "Caliper ring radius; 0 uses the ROI's inscribed radius."},
+        {"name": "caliper_direction", "default": "inward",
+         "description": "Radial scan direction: inward (towards the ROI centre) or outward (away from it)."},
+        {"name": "caliper_edge_polarity", "default": "Any",
+         "description": "Any, Dark→Light or Light→Dark along the selected radial scan direction."},
+        {"name": "caliper_selector", "default": "Best",
+         "description": "Best (strongest peak), First or Last edge per caliper."},
+        {"name": "caliper_threshold", "default": "5.0",
+         "description": "Minimum 1D profile gradient for a caliper to report an edge."},
+        {"name": "caliper_sigma", "default": "1.0",
+         "description": "Gaussian smoothing of the caliper profile."},
+        {"name": "caliper_subpixel", "default": "True",
+         "description": "Parabolic subpixel refinement of the edge position."},
+        {"name": "show_calipers", "default": "True",
+         "description": "Draw the radial caliper scan segments."},
+        {"name": "use_overlay_points", "default": "True",
+         "description": "Points mode: use POINT overlay elements as candidates."},
+        {"name": "use_contours", "default": "True",
+         "description": "Use contour/polygon vertices as candidates."},
+        {"name": "robust", "default": "True",
+         "description": "Reject outliers (least-median RANSAC + capped trimming) before the least-squares fit."},
+        {"name": "max_residual_px", "default": "0.0",
+         "description": "Max residual in pixels; 0 derives a robust cutoff from the residual MAD."},
+        {"name": "max_outlier_percent", "default": "20.0",
+         "description": "Max percentage of points the fit may ignore; more outliers abort the fit (0 = no cap)."},
+        {"name": "iterations", "default": "200",
+         "description": "RANSAC iterations."},
+        {"name": "min_points", "default": "3",
+         "description": "Fail when fewer candidate points are available."},
+    ],
+    "notes": (
+        "Caliper mode needs only the ROI: draw it around the circle and "
+        "centred on it.  The ring starts at the caliper radius (auto = the "
+        "ROI's inscribed radius); caliper_direction selects inwards (towards "
+        "the centre) or outwards (away from it).  The profile follows that "
+        "direction, so Dark→Light means the edge brightens towards the scan "
+        "direction.  Points "
+        "mode fits the visible contour and overlay points.  "
+        "Collinear points make the fit degenerate and the tool reports an "
+        "error instead of emitting a huge-radius circle.  Radius and "
+        "diameter stay in pixels until a calibration tool exists.  Points "
+        "beyond the robust cutoff are discarded, up to max_outlier_percent of "
+        "the array, so a couple of calipers on a wrong edge cannot pull the "
+        "circle.  If more than that are outside the cutoff the tool reports "
+        "an error instead of publishing a biased fit; rejected points are "
+        "drawn red with Show Outliers."
+    ),
+    "see_also": ["Line Fit", "Measurement", "Blob Detector"],
+}
+
 TOOL_HELP["Python Script"] = {
     "name": "Python Script",
     "category": "Logic",
@@ -924,7 +1086,7 @@ TOOL_HELP["Python Script"] = {
         {"name": "script_path", "default": '""',
          "description": "Path to an external Python file (alternative to embedded code)."},
         {"name": "port_metadata", "default": "{}",
-         "description": "Input and output ports with their kind (Image, Plane, Results, Features or Any). Ports are created and typed in the Terminals tab."},
+         "description": "Input and output ports with their kind (Image, Plane, Results or Any). Ports are created and typed in the Terminals tab."},
     ],
     "notes": (
         "The script must define a CustomTool subclass with __init__() and process(inputs) methods. "
@@ -1031,7 +1193,7 @@ TOOL_HELP["Block"] = {
     "outputs": [],
     "params": [
         {"name": "port_metadata", "default": "{}",
-         "description": "Dict with 'inputs' and 'outputs' entries defining the block's external interface and the kind of each port: Image, Plane, Results, Features or Any."},
+         "description": "Dict with 'inputs' and 'outputs' entries defining the block's external interface and the kind of each port: Image, Plane, Results or Any."},
     ],
     "notes": (
         "Double-click a Block to edit its internal workflow. The block's inputs and outputs "
@@ -1044,7 +1206,7 @@ TOOL_HELP["Block"] = {
 
 TOOL_HELP["Image Calculator"] = {
     "name": "Image Calculator",
-    "category": "Vision Tools",
+    "category": "Processing",
     "purpose": (
         "Performs arithmetic, bitwise, and blending operations between two images or between "
         "an image and a constant. Operations execute sequentially in a pipeline, each receiving "
@@ -1207,7 +1369,7 @@ TOOL_HELP["Image Calculator"] = {
 
 TOOL_HELP["Classifier"] = {
     "name": "Classifier",
-    "category": "Classification",
+    "category": "Machine Learning",
     "purpose": (
         "Multi-class classifier using deep embedding similarity. "
         "Trains a projection head with triplet loss on frozen EfficientNet-B0 features, "
@@ -1245,7 +1407,7 @@ TOOL_HELP["Classifier"] = {
 
 TOOL_HELP["Anomaly Detector"] = {
     "name": "Anomaly Detector",
-    "category": "Analysis",
+    "category": "Machine Learning",
     "purpose": (
         "Unsupervised defect detection using PatchCore. Given a set of good (nominal) "
         "images, it builds a memory bank of patch-level features from an ONNX backbone "
@@ -1335,7 +1497,7 @@ TOOL_HELP["Anomaly Detector"] = {
 
 TOOL_HELP["OCR"] = {
     "name": "OCR",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": "Recognizes text in a cropped ROI using PP-OCRv5 (ONNX Runtime). Pure recognition — no text detection. The user must define a Search ROI around the text region.",
     "inputs": [{"name": "input image", "type": "VisionImage / ndarray", "description": "Input image containing the text region."}],
     "outputs": [
@@ -1954,7 +2116,7 @@ TOOL_HELP["LogPanel"] = {
 
 TOOL_HELP["Shape Match"] = {
     "name": "Shape Match",
-    "category": "Vision Tools",
+    "category": "Inspection",
     "purpose": (
         "Edge/shape matching for rotation, scale and translation. The native "
         "kernel proposes hypotheses from scene edges, then edge distance, "

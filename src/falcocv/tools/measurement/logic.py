@@ -231,7 +231,7 @@ class MeasurementResult(ToolResult):
                 yield item
 
 
-@register_tool(prefix="[MEAS]", default_name="Measurement", group="Vision Tools")
+@register_tool(prefix="[MEAS]", default_name="Measurement", group="Inspection")
 class MeasurementTool(BaseTool):
     input_port_types = {"input image": IMAGE}
     output_port_types = {"output image": IMAGE, "results": RESULTS}
