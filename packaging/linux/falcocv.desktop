@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FalcoCV
+GenericName=Machine Vision
+Comment=Industrial machine vision environment
+Exec=FalcoCV %f
+Icon=falcocv
+Terminal=false
+Categories=Graphics;Science;
+MimeType=application/x-falcocv-job;application/x-falcocv-hmi;
+StartupWMClass=FalcoCV

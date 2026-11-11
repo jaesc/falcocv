@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-falcocv-job">
+    <comment>FalcoCV Job</comment>
+    <glob pattern="*.cvj"/>
+    <icon name="falcocv"/>
+  </mime-type>
+  <mime-type type="application/x-falcocv-hmi">
+    <comment>FalcoCV HMI Project</comment>
+    <glob pattern="*.hmi"/>
+    <icon name="falcocv"/>
+  </mime-type>
+</mime-info>

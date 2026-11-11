@@ -1009,6 +1009,16 @@ def main():
 
     window.show()
 
+    # A job path on the command line comes from the .cvj file association.
+    for argument in sys.argv[1:]:
+        if argument.lower().endswith(".cvj") and os.path.isfile(argument):
+            from PyQt6.QtCore import QTimer
+
+            QTimer.singleShot(
+                0, lambda path=argument: window.open_job_from_path(path)
+            )
+            break
+
     _elapsed = (_time.monotonic() - _t_start) * 1000
     if _elapsed < _MIN_SPLASH_MS:
         _time.sleep((_MIN_SPLASH_MS - _elapsed) / 1000)

@@ -1,0 +1,6 @@
+#!/bin/sh
+# AppImage entry point.  The PyInstaller onedir bundle lives in usr/bin, so the
+# executable still finds its _internal directory next to itself.
+HERE=$(dirname "$(readlink -f "$0")")
+export APPDIR="$HERE"
+exec "$HERE/usr/bin/FalcoCV" "$@"

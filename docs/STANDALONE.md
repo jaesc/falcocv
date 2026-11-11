@@ -102,6 +102,42 @@ Limitations: a user package that requires a different numpy/OpenCV version
 than the bundled one will use the bundled copy; packages that need a C
 compiler cannot be installed (wheels only).
 
+## Installers
+
+### Windows (Inno Setup 6)
+
+```bash
+python scripts/build_standalone.py --zip --installer
+# dist/standalone/FalcoCV-<version>-windows-x64-setup.exe
+```
+
+- Per-user install by default; the privilege dialog allows a machine-wide one.
+- Start-menu shortcuts, optional desktop icon, `.cvj` → Vision Editor and
+  `.hmi` → HMI Designer associations.
+- Silent install for deployments:
+  `FalcoCV-<version>-windows-x64-setup.exe /VERYSILENT /DIR="C:\FalcoCV"`.
+- Uninstall removes the bundle and the associations; `%APPDATA%\FalcoCV`
+  (config, models, user packages, native DLLs) is preserved on purpose.
+- Rebuild only the installer after editing `packaging/falcocv.iss`:
+  `python scripts/build_standalone.py --skip-build --installer`.
+
+### Linux (AppImage)
+
+```bash
+# appimagetool on PATH or APPIMAGETOOL=/path/to/appimagetool
+python scripts/build_standalone.py --zip --appimage
+# dist/standalone/FalcoCV-<version>-linux-x86_64.AppImage
+```
+
+Build on Ubuntu 22.04 or newer (PyQt6 needs glibc 2.34).  The AppDir embeds
+`AppRun`, the desktop entry and the MIME definitions for `.cvj`/`.hmi`.
+
+### CI
+
+`.github/workflows/standalone.yml` builds both platforms in parallel on tags
+`v*` or `workflow_dispatch`, runs the smoke test and uploads the ZIP,
+installer and AppImage as artifacts.
+
 ## Platform notes
 
 - **Windows**: the bundle is the input for the Inno Setup installer

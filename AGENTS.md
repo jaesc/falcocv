@@ -506,7 +506,8 @@ pytest -q --ignore=tests/test_trainer_equivalence.py
 ### Standalone bundle (PyInstaller onedir)
 ```bash
 pip install -e ".[dev,plc,protocols,standalone]"
-python scripts/build_standalone.py --zip   # dist/standalone/FalcoCV + ZIP
+python scripts/build_standalone.py --zip --installer   # Windows
+python scripts/build_standalone.py --zip --appimage    # Linux
 python scripts/smoke_standalone.py         # CLI, kernel, models and server
 ```
 See `docs/STANDALONE.md`.  Each platform builds on its own machine; there is

@@ -183,6 +183,62 @@ def create_site_packages(bundle: Path) -> None:
         )
 
 
+def find_iscc() -> Path | None:
+    """Locate the Inno Setup command-line compiler."""
+    candidates = [
+        Path(os.environ.get("LOCALAPPDATA", ""))
+        / "Programs"
+        / "Inno Setup 6"
+        / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe",
+        Path(os.environ.get("ProgramFiles(x86)", ""))
+        / "Inno Setup 6"
+        / "ISCC.exe",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    found = shutil.which("iscc") or shutil.which("ISCC")
+    return Path(found) if found else None
+
+
+def build_installer(bundle: Path, version: str) -> Path | None:
+    """Compile ``packaging/falcocv.iss`` against the bundle."""
+    iscc = find_iscc()
+    if iscc is None:
+        print("[build] Inno Setup (ISCC.exe) not found; skipping the installer")
+        return None
+
+    script = ROOT / "packaging" / "falcocv.iss"
+    command = [
+        str(iscc),
+        f"/DAppVersion={version}",
+        f"/DSourceDir={bundle}",
+        f"/DOutputDir={bundle.parent}",
+        str(script),
+    ]
+    print("[build] " + " ".join(command))
+    subprocess.run(command, cwd=ROOT, check=True)
+
+    installer = bundle.parent / f"FalcoCV-{version}-windows-x64-setup.exe"
+    if installer.is_file():
+        size = installer.stat().st_size / 1e6
+        print(f"[build] installer: {installer} ({size:.1f} MB)")
+        return installer
+    return None
+
+
+def build_appimage(bundle: Path) -> None:
+    """Wrap the Linux bundle in an AppImage (requires appimagetool)."""
+    if sys.platform != "linux":
+        print("[build] AppImage is only built on Linux; skipping")
+        return
+    script = ROOT / "packaging" / "linux" / "build_appimage.sh"
+    command = ["bash", str(script), str(bundle)]
+    print("[build] " + " ".join(command))
+    subprocess.run(command, cwd=ROOT, check=True)
+
+
 def make_zip(bundle: Path, version: str) -> Path:
     platform = "windows" if sys.platform == "win32" else "linux"
     archive = bundle.parent / f"FalcoCV-{version}-{platform}-x86_64"
@@ -223,6 +279,21 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--zip", action="store_true", help="Create a portable ZIP")
     parser.add_argument(
+        "--installer",
+        action="store_true",
+        help="Build the Inno Setup installer after the bundle",
+    )
+    parser.add_argument(
+        "--appimage",
+        action="store_true",
+        help="Build the Linux AppImage (Linux only)",
+    )
+    parser.add_argument(
+        "--skip-build",
+        action="store_true",
+        help="Reuse the existing bundle (installer/zip only)",
+    )
+    parser.add_argument(
         "--clean", action="store_true", help="Remove the PyInstaller cache first"
     )
     args = parser.parse_args(argv)
@@ -233,23 +304,33 @@ def main(argv: list[str] | None = None) -> int:
     work = Path(args.work).resolve()
 
     print(f"[build] FalcoCV {version}")
-    write_version_resource(version)
-    run_pyinstaller(dist, work, args.clean)
-
     bundle = dist / BUNDLE_NAME
-    if not bundle.is_dir():
-        raise SystemExit(f"PyInstaller did not produce {bundle}")
 
-    rename_executables(bundle)
-    copy_uv(bundle)
-    create_site_packages(bundle)
-    if not args.no_models:
-        copy_models(bundle, Path(args.models_dir).resolve())
-    report(bundle)
+    if args.skip_build:
+        if not bundle.is_dir():
+            raise SystemExit(f"bundle not found: {bundle}")
+    else:
+        write_version_resource(version)
+        run_pyinstaller(dist, work, args.clean)
+        if not bundle.is_dir():
+            raise SystemExit(f"PyInstaller did not produce {bundle}")
+
+        rename_executables(bundle)
+        copy_uv(bundle)
+        create_site_packages(bundle)
+        if not args.no_models:
+            copy_models(bundle, Path(args.models_dir).resolve())
+        report(bundle)
 
     if args.zip:
         archive = make_zip(bundle, version)
         print(f"[build] zip:    {archive} ({archive.stat().st_size / 1e6:.1f} MB)")
+
+    if args.installer:
+        build_installer(bundle, version)
+
+    if args.appimage:
+        build_appimage(bundle)
 
     print(f"[build] done in {time.time() - started:.0f} s")
     return 0
