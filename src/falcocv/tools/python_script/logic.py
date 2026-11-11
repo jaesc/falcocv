@@ -119,6 +119,10 @@ class PythonScriptTool(BaseTool):
             mt = os.path.getmtime(sp)
             if self._instance and self._script_modified_time == mt:
                 return
+            # Multi-file custom tools import their sibling modules.
+            script_dir = os.path.dirname(os.path.abspath(sp))
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
             mn = f"falcocv_custom_{self.uuid.replace('-', '_')}"
             spec = importlib.util.spec_from_file_location(mn, sp)
             m = importlib.util.module_from_spec(spec)

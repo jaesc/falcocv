@@ -18,6 +18,9 @@ warnings.filterwarnings("ignore", message="remove second argument of ws_handler"
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+    from falcocv.core.user_libs import install_user_libs
+
+    install_user_libs()
 
     if "--worker" in args:
         from falcocv.web.hmi_worker import main as worker_main

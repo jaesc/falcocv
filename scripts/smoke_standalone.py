@@ -93,6 +93,36 @@ def check_server(bundle: Path, log_path: Path, timeout: float) -> dict:
                 process.kill()
 
 
+def check_user_libs(bundle: Path, timeout: int) -> list[str]:
+    """Prove that a module dropped in ``site-packages`` is importable."""
+    failures: list[str] = []
+    site = bundle / "site-packages"
+    site.mkdir(exist_ok=True)
+    probe = site / "falcocv_smoke_probe.py"
+    probe.write_text("VALUE = 'falcocv-user-lib-ok'\n", encoding="utf-8")
+    try:
+        result = _run(
+            [
+                str(_exe(bundle, "FalcoCVCLI")),
+                "python",
+                "-c",
+                "import falcocv_smoke_probe; print(falcocv_smoke_probe.VALUE)",
+            ],
+            timeout=timeout,
+        )
+    finally:
+        probe.unlink(missing_ok=True)
+
+    if result.returncode != 0 or "falcocv-user-lib-ok" not in result.stdout:
+        failures.append("user site-packages is not on sys.path")
+        print(result.stdout[-2000:])
+        print(result.stderr[-2000:])
+    else:
+        print("[smoke] user libs: site-packages import OK")
+
+    return failures
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Smoke-test the standalone bundle")
     parser.add_argument(
@@ -134,6 +164,18 @@ def main(argv: list[str] | None = None) -> int:
             failures.append(f"native-deps failed (rc={result.returncode})")
         else:
             print(result.stdout.strip())
+
+        failures += check_user_libs(bundle, args.timeout)
+
+    uv = bundle / ("uv.exe" if sys.platform == "win32" else "uv")
+    if uv.is_file():
+        result = _run([str(uv), "--version"], timeout=60)
+        if result.returncode != 0:
+            failures.append("bundled uv does not run")
+        else:
+            print(f"[smoke] uv: {result.stdout.strip()}")
+    else:
+        print("[smoke] uv: not bundled ('packages install' disabled)")
 
     server = _exe(bundle, "FalcoCVServer")
     if server.is_file():

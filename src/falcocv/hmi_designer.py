@@ -28,6 +28,9 @@ def _app_icon_path() -> str | None:
 
 
 def main():
+    from falcocv.core.user_libs import install_user_libs
+
+    install_user_libs()
     if is_frozen():
         from falcocv.core.environment import (
             bundled_python_available,

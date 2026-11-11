@@ -891,6 +891,9 @@ class MainWindow(QMainWindow):
 def main():
     global ConfigManager, Workflow, ControllerState, JobManager
     global WorkflowEditor, Toolbox, JobConfigDialog
+    from falcocv.core.user_libs import install_user_libs
+
+    install_user_libs()
     import time as _time
     _t_start = _time.monotonic()
     _MIN_SPLASH_MS = 3000

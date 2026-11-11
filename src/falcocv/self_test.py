@@ -186,6 +186,16 @@ def _check_kernel() -> bool:
         return False
 
 
+def _check_user_libs() -> None:
+    from falcocv.core.user_libs import user_dirs
+
+    directories = [str(path) for path in user_dirs()]
+    if directories:
+        _pass("user libs: " + ", ".join(directories))
+    else:
+        _pass("user libs: none configured")
+
+
 def _check_models() -> None:
     try:
         from falcocv.core.models import missing_models
@@ -220,6 +230,7 @@ def main(argv=None) -> int:
     ok = _check_configs() and ok
     ok = _check_pipeline() and ok
     ok = _check_kernel() and ok
+    _check_user_libs()
     _check_models()
 
     print("SELF-TEST:", "PASS" if ok else "FAIL")

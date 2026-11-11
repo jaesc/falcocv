@@ -58,6 +58,7 @@ dependencies = [
 [project.optional-dependencies]
 standalone = [
     "pyinstaller>=6.11",
+    "uv>=0.9",
 ]
 dev = [
     "pytest>=7.0",

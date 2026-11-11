@@ -526,6 +526,12 @@ no cross-compilation.
   `.exe` name, `sys._MEIPASS` or `sys.executable` paths in tool code; use
   `is_frozen()` / `app_dir()` / `bundle_dir()` / `server_executable()`.
   Verify with `scripts/smoke_standalone.py`.
+- User libraries (standalone): `core/user_libs.py` **appends** the user
+  directories to `sys.path` (`FALCOCV_USER_LIBS`, `<install>/site-packages`,
+  `%APPDATA%/FalcoCV/user-packages`) and never prepends them, so bundled
+  numpy/OpenCV/Qt always win.  `uv` installs binary wheels into the user
+  directory (`falcocv packages install`); `falcocv python -c` is the
+  diagnostic entry point.
 - `config.json` lives in `%APPDATA%/FalcoCV/config.json` (or XDG config).
 - Models live in the user data dir and are downloaded from GitHub Releases.
 - `core/` has no PyQt6/UI imports at module level.

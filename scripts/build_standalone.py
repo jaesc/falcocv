@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import subprocess
@@ -147,6 +148,41 @@ def copy_models(bundle: Path, models_dir: Path) -> None:
     print(f"[build] models: {size_mb:.1f} MB")
 
 
+def copy_uv(bundle: Path) -> None:
+    """Ship ``uv`` so users can install their own wheels at runtime."""
+    alongside_python = Path(sys.executable).parent / (
+        "uv.exe" if os.name == "nt" else "uv"
+    )
+    uv = shutil.which("uv")
+    if alongside_python.is_file():
+        uv = str(alongside_python)
+    if not uv:
+        print(
+            "[build] uv not found: 'falcocv packages install' will be disabled "
+            '(pip install ".[standalone]")'
+        )
+        return
+    target = bundle / Path(uv).name
+    shutil.copy2(uv, target)
+    print(f"[build] uv: {target.name} ({target.stat().st_size / 1e6:.1f} MB)")
+
+
+def create_site_packages(bundle: Path) -> None:
+    """Create the administrator drop-in directory for user libraries."""
+    target = bundle / "site-packages"
+    target.mkdir(exist_ok=True)
+    readme = target / "README.txt"
+    if not readme.exists():
+        readme.write_text(
+            "Drop pure-Python packages or unpacked cp313 wheels here.\n"
+            "This directory is appended to sys.path, so the packages bundled\n"
+            "with FalcoCV keep priority.\n\n"
+            "Use 'FalcoCVCLI packages install <name>' to install into\n"
+            "%APPDATA%/FalcoCV/user-packages instead.\n",
+            encoding="utf-8",
+        )
+
+
 def make_zip(bundle: Path, version: str) -> Path:
     platform = "windows" if sys.platform == "win32" else "linux"
     archive = bundle.parent / f"FalcoCV-{version}-{platform}-x86_64"
@@ -205,6 +241,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"PyInstaller did not produce {bundle}")
 
     rename_executables(bundle)
+    copy_uv(bundle)
+    create_site_packages(bundle)
     if not args.no_models:
         copy_models(bundle, Path(args.models_dir).resolve())
     report(bundle)

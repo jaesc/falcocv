@@ -43,6 +43,7 @@ All are compatible with GPLv3.
 | python-Levenshtein | MIT |
 | python-barcode | MIT |
 | setuptools | MIT |
+| uv (standalone bundle) | MIT or Apache-2.0 |
 
 `harvesters` and `genicam` are installed by default for GigE/USB3 Vision
 cameras. `harvesters` is Apache-2.0; the GenICam reference implementation is

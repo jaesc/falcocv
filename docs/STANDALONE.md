@@ -12,8 +12,10 @@ FalcoCV/
   FalcoCV.exe        GUI (Vision Editor)
   FalcoCVHMI.exe     HMI Designer
   FalcoCVServer.exe  web dashboard, HMI runtime and `--worker` processes
-  FalcoCVCLI.exe     self-test, run, native-deps, download-models
+  FalcoCVCLI.exe     self-test, run, packages, python, native-deps
+  uv.exe             installs user wheels (`falcocv packages install`)
   models/            ONNX models and the OCR dictionary
+  site-packages/     drop-in user libraries (appended to sys.path)
   _internal/         Python 3.13, packages, Qt plugins and the native kernel
 ```
 
@@ -66,6 +68,39 @@ code; use these helpers.
 Models are resolved in this order: `FALCOCV_MODELS_DIR`, the development
 checkout, `<app_dir>/models` (standalone bundle), then the user data
 directory.
+
+## User libraries
+
+Pipeline scripts (`PythonScriptTool`) and HMI scripts run inside the FalcoCV
+process, so their imports come from `sys.path`.  User directories are
+**appended**, never prepended: the packages bundled with FalcoCV (numpy,
+OpenCV, Qt, ONNX Runtime) always win, so a user wheel can never shadow them
+with an incompatible build.
+
+Resolution order:
+
+1. `FALCOCV_USER_LIBS` - `os.pathsep` separated list of directories.
+2. `<install>/site-packages` - drop-in directory for the integrator.
+3. `%APPDATA%/FalcoCV/user-packages` (`$XDG_DATA_HOME/FalcoCV/user-packages`
+   on Linux) - managed by `falcocv packages`.
+
+```bash
+FalcoCVCLI packages install pandas requests
+FalcoCVCLI packages install --find-links D:\wheels openpyxl   # offline
+FalcoCVCLI packages list
+FalcoCVCLI packages remove pandas
+FalcoCVCLI packages dir
+FalcoCVCLI python -c "import pandas; print(pandas.__version__)"
+```
+
+`uv.exe` ships next to the executables and installs only binary wheels
+(`cp313`) for the frozen interpreter.  Offline plants set
+`FALCOCV_WHEELHOUSE` or pass `--find-links`.  If `uv` is missing, the rest of
+the application keeps working and only `packages install` is disabled.
+
+Limitations: a user package that requires a different numpy/OpenCV version
+than the bundled one will use the bundled copy; packages that need a C
+compiler cannot be installed (wheels only).
 
 ## Platform notes
 
