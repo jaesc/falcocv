@@ -56,6 +56,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+standalone = [
+    "pyinstaller>=6.11",
+]
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.0",

@@ -24,6 +24,8 @@ import urllib.request
 from pathlib import Path
 from typing import Callable
 
+from .runtime import app_dir, is_frozen
+
 # GitHub Release that hosts the model bundle. Override with FALCOCV_MODELS_URL.
 DEFAULT_MODELS_URL = "https://github.com/jaesc/falcocv/releases/download/models-v1"
 _USER_AGENT = "FalcoCV-model-downloader/1.0"
@@ -58,7 +60,17 @@ class ModelDownloadError(RuntimeError):
 
 def _dev_models_dir() -> Path | None:
     """Return the source-tree models directory when running from a checkout."""
+    if is_frozen():
+        return None
     candidate = Path(__file__).resolve().parents[3] / "models"
+    return candidate if candidate.is_dir() else None
+
+
+def _bundled_models_dir() -> Path | None:
+    """Models shipped next to the executables by the standalone build."""
+    if not is_frozen():
+        return None
+    candidate = app_dir() / "models"
     return candidate if candidate.is_dir() else None
 
 
@@ -71,6 +83,11 @@ def models_dir() -> Path:
     dev = _dev_models_dir()
     if dev is not None and any(dev.iterdir()):
         return dev
+
+    # Standalone build: the installer drops the models next to the exe.
+    bundled = _bundled_models_dir()
+    if bundled is not None:
+        return bundled
 
     try:
         from falcocv.core.environment import APP_DATA

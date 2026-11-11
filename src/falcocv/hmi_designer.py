@@ -10,13 +10,12 @@ import subprocess
 import socket
 import time
 
+from falcocv.core.runtime import app_dir, is_frozen, server_executable
+
 
 def _app_icon_path() -> str | None:
-    """Resolve the theme-aware app icon for dev and frozen bundles."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
+    """Resolve the theme-aware app icon; the assets live next to this module."""
+    base = os.path.dirname(os.path.abspath(__file__))
     icon_name = "icon.ico"
     try:
         from falcocv.core.config import ConfigManager
@@ -29,12 +28,17 @@ def _app_icon_path() -> str | None:
 
 
 def main():
-    if getattr(sys, 'frozen', False):
-        from falcocv.core.environment import ensure_venv, get_venv_site_packages
-        ensure_venv()
-        sp = get_venv_site_packages()
-        if sp and sp not in sys.path:
-            sys.path.insert(0, sp)
+    if is_frozen():
+        from falcocv.core.environment import (
+            bundled_python_available,
+            ensure_venv,
+            get_venv_site_packages,
+        )
+        if bundled_python_available():
+            ensure_venv()
+            sp = get_venv_site_packages()
+            if sp and sp not in sys.path:
+                sys.path.insert(0, sp)
 
     from falcocv.core.config import ConfigManager
 
@@ -49,15 +53,16 @@ def main():
         auto_web = True
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env = os.environ.copy()
-        if getattr(sys, "frozen", False):
-            server_exe = os.path.join(os.path.dirname(sys.executable), "FalcoCVServer.exe")
-            cmd = [server_exe, "--host", "0.0.0.0", "--port", str(port)]
+        if is_frozen():
+            cmd = [str(server_executable()), "--host", "0.0.0.0", "--port", str(port)]
+            cwd = str(app_dir())
         else:
             env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
             cmd = [sys.executable, "-m", "uvicorn", "falcocv.web.server:app",
                    "--host", "0.0.0.0", "--port", str(port)]
+            cwd = root
         proc = subprocess.Popen(
-            cmd, cwd=root, env=env,
+            cmd, cwd=cwd, env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
 

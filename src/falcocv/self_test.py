@@ -163,6 +163,29 @@ def _check_pipeline() -> bool:
         return False
 
 
+def _check_kernel() -> bool:
+    try:
+        import numpy as np
+
+        import falcocv.core  # noqa: F401  (registers ``_falco_kernel``)
+
+        try:
+            from _falco_kernel import generate_pointcloud
+        except ImportError:
+            from falcocv._falco_kernel import generate_pointcloud
+
+        depth = np.ones((32, 32), dtype=np.float32) * 100.0
+        cloud = generate_pointcloud(depth, 1.0, 1.0, 1.0, 0.0, 100000, True)
+        points = cloud["points"]
+        if tuple(points.shape) != (32 * 32, 3):
+            raise AssertionError(f"unexpected point cloud shape {points.shape}")
+        _pass("kernel: generate_pointcloud")
+        return True
+    except Exception as exc:
+        _fail(f"kernel: {type(exc).__name__}: {exc}")
+        return False
+
+
 def _check_models() -> None:
     try:
         from falcocv.core.models import missing_models
@@ -196,6 +219,7 @@ def main(argv=None) -> int:
 
     ok = _check_configs() and ok
     ok = _check_pipeline() and ok
+    ok = _check_kernel() and ok
     _check_models()
 
     print("SELF-TEST:", "PASS" if ok else "FAIL")

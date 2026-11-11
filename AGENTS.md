@@ -503,13 +503,29 @@ pip install -e ".[dev]"   # builds the kernel via scikit-build-core
 pytest -q --ignore=tests/test_trainer_equivalence.py
 ```
 
+### Standalone bundle (PyInstaller onedir)
+```bash
+pip install -e ".[dev,plc,protocols,standalone]"
+python scripts/build_standalone.py --zip   # dist/standalone/FalcoCV + ZIP
+python scripts/smoke_standalone.py         # CLI, kernel, models and server
+```
+See `docs/STANDALONE.md`.  Each platform builds on its own machine; there is
+no cross-compilation.
+
 ## Key facts
 - Python 3.13.x (only supported version), branch: `main` (release) / `dev`
   (active development).
 - Package version: `src/falcocv/version.py` is the only place to bump it;
   `pyproject.toml` reads it through the `scikit_build_core.metadata.regex`
   provider (`dynamic = ["version"]`).
-- No PyInstaller/Inno distribution build; distribution is the PyPI wheel/sdist.
+- Distribution: PyPI wheel/sdist **and** a standalone bundle.  The bundle is a
+  PyInstaller onedir build (`packaging/falcocv.spec`,
+  `scripts/build_standalone.py`) shipped with the four executables
+  (`FalcoCV`, `FalcoCVServer`, `FalcoCVCLI`, `FalcoCVHMI`) and `models/` next
+  to them.  `core/runtime.py` owns the layout helpers: never hardcode an
+  `.exe` name, `sys._MEIPASS` or `sys.executable` paths in tool code; use
+  `is_frozen()` / `app_dir()` / `bundle_dir()` / `server_executable()`.
+  Verify with `scripts/smoke_standalone.py`.
 - `config.json` lives in `%APPDATA%/FalcoCV/config.json` (or XDG config).
 - Models live in the user data dir and are downloaded from GitHub Releases.
 - `core/` has no PyQt6/UI imports at module level.

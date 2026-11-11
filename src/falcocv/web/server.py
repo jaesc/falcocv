@@ -640,6 +640,15 @@ def server_projects():
 
 # ── Static files ──────────────────────────────────────────────
 
+@app.get("/api/health")
+async def health():
+    """Liveness probe used by the standalone smoke test and monitoring."""
+    from falcocv.core.runtime import is_frozen
+    from falcocv.version import __version__
+
+    return {"ok": True, "version": __version__, "standalone": is_frozen()}
+
+
 hmi_dir = os.path.join(os.path.dirname(__file__), "hmi")
 
 @app.get("/{full_path:path}")

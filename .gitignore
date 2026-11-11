@@ -29,6 +29,7 @@ logs/
 # Local build artifacts
 build/
 dist/
+packaging/version_info.txt
 benchmarks/.legacy/
 benchmarks/__pycache__/
 

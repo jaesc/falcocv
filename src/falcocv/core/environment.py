@@ -32,6 +32,11 @@ def _get_bundled_python_dir() -> Path | None:
     return None
 
 
+def bundled_python_available() -> bool:
+    """True when a ``python`` directory ships next to the frozen executable."""
+    return _get_bundled_python_dir() is not None
+
+
 def _get_python_exe(python_dir: Path) -> Path:
     if platform.system() == "Windows":
         return python_dir / "python.exe"
