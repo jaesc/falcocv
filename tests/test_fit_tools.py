@@ -40,16 +40,6 @@ def _two_edge_image(size=300):
     return VisionImage(data)
 
 
-def _with_points(points, contours=()):
-    image = _blank_image()
-    layer = image.get_overlay_layer("default")
-    for x, y in points:
-        layer.add_point((float(x), float(y)))
-    for contour in contours:
-        layer.add_contour(np.asarray(contour, dtype=np.float64))
-    return image
-
-
 def _run_line(image, **params):
     tool = LineFit()
     tool.inputs["input image"] = image
@@ -134,68 +124,6 @@ def test_line_fit_errors_when_more_calipers_are_outliers_than_allowed():
     assert "outlier" in tool.last_error.lower()
 
 
-def test_line_fit_reports_rejected_overlay_points():
-    xs = np.arange(40.0, 251.0, 10.0)
-    points = [(x, 0.25 * x + 60.0) for x in xs]
-    points[2] = (points[2][0], points[2][1] + 40.0)
-    points[7] = (points[7][0], points[7][1] - 40.0)
-
-    tool = _run_line(
-        _with_points(points), point_source="existing", show_labels=False
-    )
-
-    result = tool.outputs["results"][0]
-    assert result.inliers == len(points) - 2
-    assert result.outliers == 2
-    assert result.angle == pytest.approx(-14.0362, abs=1e-3)
-
-
-def test_line_fit_tool_fits_overlay_points():
-    xs = np.arange(40.0, 251.0, 10.0)
-    image = _with_points([(x, 0.25 * x + 60.0) for x in xs])
-
-    tool = _run_line(image, point_source="existing", show_labels=False)
-
-    assert tool.outputs["count"] == 1
-    result = tool.outputs["results"][0]
-    assert result.type == "line"
-    assert result.angle == pytest.approx(-14.0362, abs=1e-3)
-    assert result.value == result.angle
-    assert result.unit == "deg"
-    assert result.inliers == len(xs)
-    assert result.score == pytest.approx(1.0)
-    assert result.rms < 1e-6
-    assert result.calipers == 0
-    assert result.edge_points == len(xs)
-    span = xs.max() - xs.min()
-    assert result.length == pytest.approx(math.hypot(span, 0.25 * span), abs=1e-6)
-
-    output = tool.outputs["output image"]
-    own = [
-        element
-        for element in output.get_overlay_layer("default").elements
-        if element.source_tool == tool.name
-    ]
-    assert any(element.element_type.name == "LINE" for element in own)
-    assert any(element.ref_id == "fit" for element in own)
-    # copy_overlays_to_input is on by default
-    copied = [
-        element
-        for element in image.get_overlay_layer("default").elements
-        if element.source_tool == tool.name
-    ]
-    assert copied
-
-
-def test_line_fit_tool_applies_the_roi():
-    points = [(x, 150.0) for x in np.arange(10.0, 291.0, 10.0)]
-    tool = _run_line(
-        _with_points(points), point_source="existing", roi=[0, 100, 150, 100, 0]
-    )
-
-    assert tool.outputs["results"][0].inliers == 15
-
-
 def test_fit_tools_do_not_expose_an_input_points_port():
     assert "input points" not in LineFit().inputs
     assert "input points" not in CircleFit().inputs
@@ -204,7 +132,7 @@ def test_fit_tools_do_not_expose_an_input_points_port():
 def test_line_fit_tool_reports_too_few_points():
     tool = LineFit()
     tool.inputs["input image"] = _blank_image()
-    tool.params["point_source"] = "existing"
+    tool.params["roi"] = [40, 40, 220, 120, 0]
     tool.params["min_points"] = 3
     tool.run()
 
@@ -212,17 +140,6 @@ def test_line_fit_tool_reports_too_few_points():
     assert tool.outputs["results"] == []
     assert tool.last_error
     assert "found 0" in tool.last_error
-
-
-def test_line_fit_tool_ignores_its_own_overlays_on_the_next_run():
-    xs = np.arange(40.0, 251.0, 10.0)
-    image = _with_points([(x, 0.5 * x) for x in xs])
-    tool = _run_line(image, point_source="existing")
-
-    first = tool.outputs["results"][0].inliers
-    tool.run()
-
-    assert tool.outputs["results"][0].inliers == first
 
 
 def test_circle_fit_uses_the_radial_caliper_array_by_default():
@@ -287,57 +204,87 @@ def test_circle_fit_caliper_mode_requires_a_roi():
     assert "ROI" in tool.last_error
 
 
-def test_circle_fit_tool_uses_contour_vertices():
-    theta = np.linspace(0.0, 2.0 * np.pi, 96, endpoint=False)
-    contour = np.column_stack(
-        [150.0 + 40.0 * np.cos(theta), 150.0 + 40.0 * np.sin(theta)]
-    )
-    image = _with_points([], contours=[contour])
-
+def test_circle_fit_tool_reports_too_few_points():
     tool = CircleFit()
-    tool.inputs["input image"] = image
-    tool.params["point_source"] = "existing"
-    tool.params["show_labels"] = False
-    tool.run()
-
-    assert tool.outputs["count"] == 1
-    result = tool.outputs["results"][0]
-    assert result.type == "circle"
-    assert result.cx == pytest.approx(150.0, abs=1e-3)
-    assert result.cy == pytest.approx(150.0, abs=1e-3)
-    assert result.radius == pytest.approx(40.0, abs=1e-3)
-    assert result.diameter == pytest.approx(80.0, abs=1e-3)
-    assert result.unit == "px"
-    assert result.inliers == len(contour)
-    assert result.rms < 1e-6
-    assert result.calipers == 0
-
-
-def test_circle_fit_tool_is_robust_to_outliers():
-    theta = np.linspace(0.0, 2.0 * np.pi, 72, endpoint=False)
-    points = [(150 + 30 * math.cos(t), 150 + 30 * math.sin(t)) for t in theta]
-    points += [(10.0, 10.0), (290.0, 10.0), (150.0, 290.0)]
-    tool = CircleFit()
-    tool.inputs["input image"] = _with_points(points)
-    tool.params["point_source"] = "existing"
-    tool.params["use_overlay_points"] = True
-    tool.params["use_contours"] = False
-    tool.run()
-
-    result = tool.outputs["results"][0]
-    assert result.inliers == len(theta)
-    assert result.outliers == 3
-    assert result.radius == pytest.approx(30.0, abs=0.05)
-
-
-def test_circle_fit_tool_reports_degenerate_points():
-    collinear = [(10.0 + 10.0 * i, 20.0 + 10.0 * i) for i in range(10)]
-    tool = CircleFit()
-    tool.inputs["input image"] = _with_points(collinear)
-    tool.params["point_source"] = "existing"
-    tool.params["use_contours"] = False
+    tool.inputs["input image"] = _blank_image()
+    tool.params["roi"] = [60, 60, 180, 180, 0]
     tool.run()
 
     assert tool.outputs["count"] == 0
     assert tool.last_error
-    assert "collinear" in tool.last_error.lower()
+    assert "found 0" in tool.last_error
+
+
+def test_circle_fit_rejects_a_radius_above_the_max():
+    tool = CircleFit()
+    tool.inputs["input image"] = _circle_image()
+    tool.params["roi"] = [80, 80, 140, 140, 0]
+    tool.params["max_radius"] = 40.0
+    tool.run()
+
+    assert tool.outputs["count"] == 0
+    assert tool.outputs["results"] == []
+    assert tool.last_error
+    assert "above" in tool.last_error.lower()
+
+
+def test_circle_fit_rejects_a_radius_below_the_min():
+    tool = CircleFit()
+    tool.inputs["input image"] = _circle_image()
+    tool.params["roi"] = [80, 80, 140, 140, 0]
+    tool.params["min_radius"] = 60.0
+    tool.run()
+
+    assert tool.outputs["count"] == 0
+    assert tool.last_error
+    assert "below" in tool.last_error.lower()
+
+
+def test_circle_fit_accepts_a_radius_inside_the_limits():
+    tool = CircleFit()
+    tool.inputs["input image"] = _circle_image()
+    tool.params["roi"] = [80, 80, 140, 140, 0]
+    tool.params["min_radius"] = 40.0
+    tool.params["max_radius"] = 60.0
+    tool.run()
+
+    assert not tool.last_error, tool.last_error
+    assert tool.outputs["count"] == 1
+    assert tool.outputs["results"][0].radius == pytest.approx(50.0, abs=1.0)
+
+
+def test_circle_fit_limits_are_disabled_at_zero():
+    tool = CircleFit()
+    tool.inputs["input image"] = _circle_image()
+    tool.params["roi"] = [80, 80, 140, 140, 0]
+    tool.params["min_radius"] = 0.0
+    tool.params["max_radius"] = 0.0
+    tool.run()
+
+    assert not tool.last_error, tool.last_error
+    assert tool.outputs["count"] == 1
+
+
+def test_circle_fit_rejects_inverted_limits():
+    tool = CircleFit()
+    tool.inputs["input image"] = _circle_image()
+    tool.params["roi"] = [80, 80, 140, 140, 0]
+    tool.params["min_radius"] = 80.0
+    tool.params["max_radius"] = 40.0
+    tool.run()
+
+    assert tool.outputs["count"] == 0
+    assert tool.last_error
+    assert "inverted" in tool.last_error.lower()
+
+
+def test_circle_fit_rejects_a_straight_edge_with_a_max_radius():
+    tool = CircleFit()
+    tool.inputs["input image"] = _line_image()
+    tool.params["roi"] = [60, 60, 180, 180, 0]
+    tool.params["max_radius"] = 500.0
+    tool.run()
+
+    assert tool.outputs["count"] == 0
+    assert tool.last_error
+    assert "above" in tool.last_error.lower()

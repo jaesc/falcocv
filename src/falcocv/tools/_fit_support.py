@@ -1,13 +1,8 @@
 """Shared helpers for the metrology fit tools (LineFit / CircleFit).
 
-Two point sources feed the robust fitters:
-
-* a caliper array driven by the tool ROI (the default), which detects
-  subpixel edges and returns one point per caliper, and
-* existing points from overlay, contour or polygon elements.
-
-The module also filters points with the tool ROI and prepares the output
-VisionImage with the overlay-ownership rules every processing tool follows.
+A caliper array driven by the tool ROI detects the subpixel edge points that
+feed the robust fitters.  The module also prepares the output VisionImage with
+the overlay-ownership rules every processing tool follows.
 """
 
 from __future__ import annotations
@@ -17,85 +12,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
-from falcocv.core.overlay_layer import OverlayType
 from falcocv.core.pointcloud_utils import propagate_3d
 from falcocv.core.vision_image import VisionImage
-
-
-def _point_from_item(item):
-    if isinstance(item, dict):
-        if "center" in item:
-            return item["center"]
-        return item.get("x"), item.get("y")
-    if isinstance(item, (tuple, list)):
-        return item[:2] if len(item) >= 2 else None
-    center = getattr(item, "center", None)
-    if center is not None:
-        return center
-    return getattr(item, "x", None), getattr(item, "y", None)
-
-
-def normalize_points(raw) -> np.ndarray:
-    """Coerce tuples, dicts, result objects or arrays into an ``(N, 2)`` array.
-
-    Accepts a NumPy array, a list of ``(x, y)`` pairs, dictionaries with
-    ``x``/``y`` (or ``center``) and result objects with ``x``/``y`` attributes,
-    so an upstream tool's ``ToolResults`` can feed the point overlays directly.
-    """
-    if raw is None:
-        return np.empty((0, 2), dtype=np.float64)
-    if isinstance(raw, np.ndarray):
-        return _finite(raw)
-    try:
-        iterator = iter(raw)
-    except TypeError:
-        return np.empty((0, 2), dtype=np.float64)
-    if np.isscalar(raw):
-        return np.empty((0, 2), dtype=np.float64)
-    pairs = []
-    for item in iterator:
-        point = _point_from_item(item)
-        if point is None:
-            continue
-        pairs.append(point)
-    return _finite(pairs)
-
-
-def _finite(points) -> np.ndarray:
-    array = np.asarray(points, dtype=np.float64)
-    if array.size == 0:
-        return np.empty((0, 2), dtype=np.float64)
-    array = array.reshape(-1, 2)
-    return array[np.isfinite(array).all(axis=1)]
-
-
-def collect_overlay_points(
-    v_image: VisionImage,
-    *,
-    use_points: bool = True,
-    use_contours: bool = False,
-    exclude_source: str = "",
-) -> np.ndarray:
-    """Points of the visible POINT / CONTOUR / POLYGON overlays."""
-    points = []
-    for layer in v_image.overlay_layers.values():
-        for element in layer.elements:
-            if not element.visible:
-                continue
-            if exclude_source and element.source_tool == exclude_source:
-                # Never feed the tool its own overlays back into the next run.
-                continue
-            if element.element_type == OverlayType.POINT and use_points:
-                center = element.data.get("center")
-                if center is not None:
-                    points.append(center)
-            elif (
-                element.element_type in (OverlayType.CONTOUR, OverlayType.POLYGON)
-                and use_contours
-            ):
-                raw = element.data.get("contour") or element.data.get("points") or []
-                points.extend(raw)
-    return normalize_points(points)
 
 
 def roi_to_image(v_image: VisionImage, roi) -> list[float] | None:
@@ -103,20 +21,6 @@ def roi_to_image(v_image: VisionImage, roi) -> list[float] | None:
     if not roi or len(roi) < 4 or float(roi[2]) <= 0 or float(roi[3]) <= 0:
         return None
     return list(v_image.fixture_to_image(list(roi)))
-
-
-def filter_by_roi(points: np.ndarray, roi_image) -> np.ndarray:
-    """Keep the points inside the rotated ROI (all points when it is empty)."""
-    if roi_image is None or len(points) == 0:
-        return points
-    rx, ry, rw, rh, angle = roi_image
-    theta = np.deg2rad(angle)
-    cos_a, sin_a = np.cos(theta), np.sin(theta)
-    delta = points - np.array([rx + rw / 2.0, ry + rh / 2.0])
-    u = cos_a * delta[:, 0] + sin_a * delta[:, 1]
-    v = -sin_a * delta[:, 0] + cos_a * delta[:, 1]
-    mask = (np.abs(u) <= rw / 2.0) & (np.abs(v) <= rh / 2.0)
-    return points[mask]
 
 
 @dataclass

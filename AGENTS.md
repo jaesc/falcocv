@@ -440,15 +440,13 @@ cpp/bin/       → local kernel build output (gitignored)
   is 180 px and the old saved splitter width is reset once through
   `ConfigManager.data["layout_revisions"]["shape_match_compact_panel"]`.  Keep
   labels short and put explanations in tooltips.
-- **LineFit/CircleFit sources** -> the default source is a **caliper array
-  driven by the tool ROI**: line calipers are parallel, one point per station
-  along the ROI's local U axis scanning across V; circle calipers are radial
-  around the ROI centre, start at the caliper ring and scan inwards or
-  outwards (`caliper_direction`) from it.  Caliper
-  points are already inside the ROI, so the ROI only filters the points mode.
-  Points mode reads visible POINT overlays and contour/polygon vertices; there
-  is no `input points` port.  Edges use the same subpixel math as Edge
-  Detection (DoG profile + parabolic peak).
+- **LineFit/CircleFit sources** -> the only source is a **caliper array driven
+  by the tool ROI**: line calipers are parallel, one point per station along
+  the ROI's local U axis scanning across V; circle calipers are radial around
+  the ROI centre, start at the caliper ring and scan inwards or outwards
+  (`caliper_direction`) from it.  Caliper points are already inside the ROI.
+  There is no overlay/points mode and no `input points` port.  Edges use the
+  same subpixel math as Edge Detection (DoG profile + parabolic peak).
 - **LineFit/CircleFit outlier rejection** -> RANSAC ranks candidate models by
   the **median** residual (least median of squares), the inlier cutoff comes
   from the residual MAD, and `max_outlier_percent` (default 20, 0 = no cap)
@@ -459,6 +457,12 @@ cpp/bin/       → local kernel build output (gitignored)
   clean mask down to `n - allowed`: with 2 of 9 calipers on a second edge a
   2.5x-median cutoff kept all 9 points and the line drifted to -3.3 deg with
   RMS 10.3 px.  Rejected points must stay visible (Show Outliers).
+- **CircleFit radius limits** -> `min_radius`/`max_radius` (px, `0` = off)
+  reject a fit outside the expected range before publishing it.  A straight
+  edge seen by the radial calipers fits a huge circle with a low RMS (radius
+  ~6.6 kpx, RMS 0.04 px on the synthetic line), so set `max_radius` to catch
+  it; the core keeps a hard `_MAX_RADIUS = 1e7` safety only.  A configured
+  `min_radius > max_radius` is a configuration error.
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
   `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
   the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.

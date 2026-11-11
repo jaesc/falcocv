@@ -84,47 +84,6 @@ class MetrologyFitConfigBase(QWidget):
         self.roi_editor = RoiEditorWidget()
         self.controls_layout.addWidget(self.roi_editor)
 
-        source_group = QGroupBox("Point Source")
-        source_layout = QVBoxLayout(source_group)
-        self.combo_source = QComboBox()
-        self.combo_source.addItem("Caliper array (ROI)", "calipers")
-        self.combo_source.addItem("Overlays / contour points", "existing")
-        index = self.combo_source.findData(
-            str(self.tool.params.get("point_source", "calipers"))
-        )
-        self.combo_source.setCurrentIndex(max(0, index))
-        self.combo_source.setToolTip(
-            "Caliper array: the ROI is scanned and every caliper contributes one "
-            "subpixel edge point. Overlays / contour points: fit points "
-            "produced by another tool (POINT overlays or contour/polygon "
-            "vertices)."
-        )
-        self.combo_source.currentIndexChanged.connect(self._on_source_changed)
-        source_layout.addWidget(self.combo_source)
-
-        self.chk_points = QCheckBox("Overlay points")
-        self.chk_points.setChecked(bool(self.tool.params.get("use_overlay_points", True)))
-        self.chk_points.toggled.connect(
-            lambda value: self._set_param("use_overlay_points", value)
-        )
-        source_layout.addWidget(self.chk_points)
-
-        self.chk_contours = QCheckBox("Contour / polygon vertices")
-        self.chk_contours.setChecked(bool(self.tool.params.get("use_contours", False)))
-        self.chk_contours.toggled.connect(
-            lambda value: self._set_param("use_contours", value)
-        )
-        source_layout.addWidget(self.chk_contours)
-
-        hint = QLabel(
-            "Caliper mode needs only the ROI. Points mode reads the visible "
-            "POINT overlays and contour/polygon vertices."
-        )
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #9a9a9a; font-size: 11px;")
-        source_layout.addWidget(hint)
-        self.controls_layout.addWidget(source_group)
-
         caliper_group = QGroupBox("Caliper Array")
         caliper_group_layout = QVBoxLayout(caliper_group)
         self.caliper_box = QWidget()
@@ -296,6 +255,49 @@ class MetrologyFitConfigBase(QWidget):
         caliper_group_layout.addWidget(self.caliper_box)
         self.controls_layout.addWidget(caliper_group)
 
+        if self.IS_CIRCLE:
+            limits_group = QGroupBox("Radius Limits")
+            limits_layout = QVBoxLayout(limits_group)
+
+            self.spin_min_radius = QDoubleSpinBox()
+            self.spin_min_radius.setRange(0.0, 100000.0)
+            self.spin_min_radius.setDecimals(1)
+            self.spin_min_radius.setSingleStep(1.0)
+            self.spin_min_radius.setSpecialValueText("Off")
+            self.spin_min_radius.setValue(
+                float(self.tool.params.get("min_radius", 0.0) or 0.0)
+            )
+            self.spin_min_radius.setToolTip(
+                "Reject the fit when the radius is below this value. 0 disables "
+                "the limit."
+            )
+            self.spin_min_radius.valueChanged.connect(
+                lambda value: self._set_param("min_radius", float(value))
+            )
+            limits_layout.addWidget(QLabel("Min radius (px, 0 = off):"))
+            limits_layout.addWidget(self.spin_min_radius)
+
+            self.spin_max_radius = QDoubleSpinBox()
+            self.spin_max_radius.setRange(0.0, 100000.0)
+            self.spin_max_radius.setDecimals(1)
+            self.spin_max_radius.setSingleStep(1.0)
+            self.spin_max_radius.setSpecialValueText("Off")
+            self.spin_max_radius.setValue(
+                float(self.tool.params.get("max_radius", 0.0) or 0.0)
+            )
+            self.spin_max_radius.setToolTip(
+                "Reject the fit when the radius is above this value. A straight "
+                "edge otherwise fits a huge circle with a low RMS. 0 disables "
+                "the limit."
+            )
+            self.spin_max_radius.valueChanged.connect(
+                lambda value: self._set_param("max_radius", float(value))
+            )
+            limits_layout.addWidget(QLabel("Max radius (px, 0 = off):"))
+            limits_layout.addWidget(self.spin_max_radius)
+
+            self.controls_layout.addWidget(limits_group)
+
         fit_group = QGroupBox("Fit")
         fit_layout = QVBoxLayout(fit_group)
         self.chk_robust = QCheckBox("Robust (RANSAC)")
@@ -390,8 +392,6 @@ class MetrologyFitConfigBase(QWidget):
         self.controls_layout.addWidget(vis_group)
         self.controls_layout.addStretch()
 
-        self._update_source_state()
-
     def _build_viewer(self):
         self.record_selector = make_record_selector()
         self.record_selector.addItem("input image", "input image")
@@ -408,16 +408,6 @@ class MetrologyFitConfigBase(QWidget):
     def _set_param(self, key, value):
         self.tool.params[key] = value
         self.tool.mark_dirty()
-
-    def _on_source_changed(self):
-        self._set_param("point_source", self.combo_source.currentData())
-        self._update_source_state()
-
-    def _update_source_state(self):
-        calipers = self.combo_source.currentData() == "calipers"
-        self.caliper_box.setEnabled(calipers)
-        self.chk_points.setEnabled(not calipers)
-        self.chk_contours.setEnabled(not calipers)
 
     def _on_record_changed(self):
         if self.record_selector.currentData() != "input image":

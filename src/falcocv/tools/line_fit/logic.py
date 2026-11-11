@@ -1,13 +1,11 @@
-"""Line Fit — caliper-array or point-based robust line fitting."""
+"""Line Fit — caliper-array robust line fitting."""
 
 from falcocv.core.fitting import fit_line
 from falcocv.core.port_types import IMAGE, RESULTS
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.tools._fit_support import (
-    collect_overlay_points,
     drawable_roi,
-    filter_by_roi,
     prepare_output,
     roi_to_image,
     scan_line_calipers,
@@ -60,7 +58,6 @@ class LineFit(BaseTool):
         super().__init__(name)
         self.params = {
             "roi": [0, 0, 0, 0, 0],
-            "point_source": "calipers",
             "caliper_count": 9,
             "caliper_width": 5.0,
             "caliper_length": 0.0,
@@ -69,8 +66,6 @@ class LineFit(BaseTool):
             "caliper_threshold": 5.0,
             "caliper_sigma": 1.0,
             "caliper_subpixel": True,
-            "use_overlay_points": True,
-            "use_contours": False,
             "robust": True,
             "max_residual_px": 0.0,
             "max_outlier_percent": 20.0,
@@ -131,29 +126,17 @@ class LineFit(BaseTool):
         img, vision_img, layer = prepare_output(image_input, self.name)
         roi_image = roi_to_image(img, self.params.get("roi"))
 
-        source = str(self.params.get("point_source", "calipers") or "calipers")
-        scan = None
-        total_calipers = 0
-        if source == "calipers":
-            if roi_image is None:
-                self.outputs["output image"] = vision_img
-                self._copy_overlays_to_input(vision_img, img)
-                self.set_error(
-                    "Line Fit needs a search ROI: place it over the edge, with "
-                    "its long side along the line, so the calipers can scan it"
-                )
-                return
-            scan = scan_line_calipers(img.data, roi_image, **self._caliper_kwargs())
-            points = scan.points
-            total_calipers = scan.total
-        else:
-            points = collect_overlay_points(
-                img,
-                use_points=bool(self.params.get("use_overlay_points", True)),
-                use_contours=bool(self.params.get("use_contours", False)),
-                exclude_source=self.name,
+        if roi_image is None:
+            self.outputs["output image"] = vision_img
+            self._copy_overlays_to_input(vision_img, img)
+            self.set_error(
+                "Line Fit needs a search ROI: place it over the edge, with "
+                "its long side along the line, so the calipers can scan it"
             )
-            points = filter_by_roi(points, roi_image)
+            return
+        scan = scan_line_calipers(img.data, roi_image, **self._caliper_kwargs())
+        points = scan.points
+        total_calipers = scan.total
 
         minimum = max(2, int(self.params.get("min_points", 2) or 2))
         if len(points) < minimum:
@@ -161,16 +144,11 @@ class LineFit(BaseTool):
             self._draw_calipers(layer, scan)
             self.outputs["output image"] = vision_img
             self._copy_overlays_to_input(vision_img, img)
-            if scan is not None:
-                self.set_error(
-                    f"Caliper array found {len(points)} edge points in "
-                    f"{total_calipers} calipers; line fit needs at least "
-                    f"{minimum}. Check the ROI, polarity and edge threshold"
-                )
-            else:
-                self.set_error(
-                    f"Line fit needs at least {minimum} points; found {len(points)}"
-                )
+            self.set_error(
+                f"Caliper array found {len(points)} edge points in "
+                f"{total_calipers} calipers; line fit needs at least "
+                f"{minimum}. Check the ROI, polarity and edge threshold"
+            )
             return
 
         fit = fit_line(

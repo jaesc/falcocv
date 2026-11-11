@@ -1,13 +1,11 @@
-"""Circle Fit — radial caliper-array or point-based robust circle fitting."""
+"""Circle Fit — radial caliper-array robust circle fitting."""
 
 from falcocv.core.fitting import fit_circle
 from falcocv.core.port_types import IMAGE, RESULTS
 from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.tools._fit_support import (
-    collect_overlay_points,
     drawable_roi,
-    filter_by_roi,
     prepare_output,
     roi_to_image,
     scan_radial_calipers,
@@ -56,7 +54,6 @@ class CircleFit(BaseTool):
         super().__init__(name)
         self.params = {
             "roi": [0, 0, 0, 0, 0],
-            "point_source": "calipers",
             "caliper_count": 16,
             "caliper_width": 3.0,
             "caliper_length": 0.0,
@@ -67,8 +64,8 @@ class CircleFit(BaseTool):
             "caliper_threshold": 5.0,
             "caliper_sigma": 1.0,
             "caliper_subpixel": True,
-            "use_overlay_points": True,
-            "use_contours": True,
+            "min_radius": 0.0,
+            "max_radius": 0.0,
             "robust": True,
             "max_residual_px": 0.0,
             "max_outlier_percent": 20.0,
@@ -132,29 +129,17 @@ class CircleFit(BaseTool):
         img, vision_img, layer = prepare_output(image_input, self.name)
         roi_image = roi_to_image(img, self.params.get("roi"))
 
-        source = str(self.params.get("point_source", "calipers") or "calipers")
-        scan = None
-        total_calipers = 0
-        if source == "calipers":
-            if roi_image is None:
-                self.outputs["output image"] = vision_img
-                self._copy_overlays_to_input(vision_img, img)
-                self.set_error(
-                    "Circle Fit needs a search ROI: draw it around the circle, "
-                    "centred on it, so the radial calipers can scan it"
-                )
-                return
-            scan = scan_radial_calipers(img.data, roi_image, **self._caliper_kwargs())
-            points = scan.points
-            total_calipers = scan.total
-        else:
-            points = collect_overlay_points(
-                img,
-                use_points=bool(self.params.get("use_overlay_points", True)),
-                use_contours=bool(self.params.get("use_contours", True)),
-                exclude_source=self.name,
+        if roi_image is None:
+            self.outputs["output image"] = vision_img
+            self._copy_overlays_to_input(vision_img, img)
+            self.set_error(
+                "Circle Fit needs a search ROI: draw it around the circle, "
+                "centred on it, so the radial calipers can scan it"
             )
-            points = filter_by_roi(points, roi_image)
+            return
+        scan = scan_radial_calipers(img.data, roi_image, **self._caliper_kwargs())
+        points = scan.points
+        total_calipers = scan.total
 
         minimum = max(3, int(self.params.get("min_points", 3) or 3))
         if len(points) < minimum:
@@ -162,17 +147,12 @@ class CircleFit(BaseTool):
             self._draw_calipers(layer, scan)
             self.outputs["output image"] = vision_img
             self._copy_overlays_to_input(vision_img, img)
-            if scan is not None:
-                self.set_error(
-                    f"Caliper array found {len(points)} edge points in "
-                    f"{total_calipers} calipers; circle fit needs at least "
-                    f"{minimum}. Check the ROI, caliper radius/direction/length, "
-                    "polarity and edge threshold"
-                )
-            else:
-                self.set_error(
-                    f"Circle fit needs at least {minimum} points; found {len(points)}"
-                )
+            self.set_error(
+                f"Caliper array found {len(points)} edge points in "
+                f"{total_calipers} calipers; circle fit needs at least "
+                f"{minimum}. Check the ROI, caliper radius/direction/length, "
+                "polarity and edge threshold"
+            )
             return
 
         fit = fit_circle(
@@ -188,6 +168,32 @@ class CircleFit(BaseTool):
             self.outputs["output image"] = vision_img
             self._copy_overlays_to_input(vision_img, img)
             self.set_error("Circle fit is degenerate: the points are collinear")
+            return
+
+        min_radius = max(0.0, float(self.params.get("min_radius", 0.0) or 0.0))
+        max_radius = max(0.0, float(self.params.get("max_radius", 0.0) or 0.0))
+        if min_radius > 0.0 and max_radius > 0.0 and min_radius > max_radius:
+            self._reject_fit(
+                layer, roi_image, vision_img, img, scan,
+                f"Circle fit limits are inverted: Min radius {min_radius:.1f} px "
+                f"is above Max radius {max_radius:.1f} px",
+            )
+            return
+        if min_radius > 0.0 and fit.radius < min_radius:
+            self._reject_fit(
+                layer, roi_image, vision_img, img, scan,
+                f"Circle fit radius {fit.radius:.1f} px is below Min radius "
+                f"{min_radius:.1f} px; check the ROI and caliper ring, or lower "
+                "Min radius / set it to 0",
+            )
+            return
+        if max_radius > 0.0 and fit.radius > max_radius:
+            self._reject_fit(
+                layer, roi_image, vision_img, img, scan,
+                f"Circle fit radius {fit.radius:.1f} px is above Max radius "
+                f"{max_radius:.1f} px; check the ROI and caliper ring, or raise "
+                "Max radius / set it to 0",
+            )
             return
 
         if fit.cap_exceeded:
@@ -229,6 +235,14 @@ class CircleFit(BaseTool):
         )
         self.fail_if_below_min_results(self.outputs["count"], "circle", "circles")
         self._copy_overlays_to_input(vision_img, img)
+
+    def _reject_fit(self, layer, roi_image, vision_img, img, scan, message):
+        """Publish the failure overlays without a fitted circle."""
+        self._draw_search_roi(layer, roi_image, vision_img.data.shape)
+        self._draw_calipers(layer, scan)
+        self.outputs["output image"] = vision_img
+        self._copy_overlays_to_input(vision_img, img)
+        self.set_error(message)
 
     def _draw_search_roi(self, layer, roi_image, shape):
         if not self.params.get("show_search_roi", True):

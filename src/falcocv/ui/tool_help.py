@@ -933,9 +933,7 @@ TOOL_HELP["Line Fit"] = {
     ],
     "params": [
         {"name": "roi", "default": "[0, 0, 0, 0, 0]",
-         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required in caliper mode; filters points in points mode."},
-        {"name": "point_source", "default": "calipers",
-         "description": "calipers (scan the ROI) or existing (overlay/contour points)."},
+         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required."},
         {"name": "caliper_count", "default": "9",
          "description": "Number of parallel calipers distributed along the ROI width."},
         {"name": "caliper_width", "default": "5.0",
@@ -954,10 +952,6 @@ TOOL_HELP["Line Fit"] = {
          "description": "Parabolic subpixel refinement of the edge position."},
         {"name": "show_calipers", "default": "True",
          "description": "Draw the caliper scan segments."},
-        {"name": "use_overlay_points", "default": "True",
-         "description": "Points mode: use POINT overlay elements as candidates."},
-        {"name": "use_contours", "default": "False",
-         "description": "Use contour/polygon vertices as candidates."},
         {"name": "robust", "default": "True",
          "description": "Reject outliers (least-median RANSAC + capped trimming) before the least-squares fit."},
         {"name": "max_residual_px", "default": "0.0",
@@ -970,12 +964,10 @@ TOOL_HELP["Line Fit"] = {
          "description": "Fail when fewer candidate points are available."},
     ],
     "notes": (
-        "Caliper mode needs only the ROI: the long side is the fit direction "
+        "The ROI is required: the long side is the fit direction "
         "and the calipers scan across the short side.  The profile follows "
         "the ROI's local V axis, so Dark→Light means the edge brightens "
-        "towards the ROI's local bottom.  Points mode fits the visible "
-        "overlay and contour points.  The tool never feeds its own "
-        "overlays back into the next run.  The angle follows the measurement "
+        "towards the ROI's local bottom.  The angle follows the measurement "
         "convention: atan2(-dy, dx) in image pixels, so a +1 image slope "
         "reports -45 degrees; without calibration the length stays in pixels.  "
         "Points beyond the robust cutoff are discarded, up to "
@@ -993,12 +985,11 @@ TOOL_HELP["Circle Fit"] = {
     "purpose": (
         "Finds a circle edge with a radial caliper array inside the search "
         "ROI: N calipers scan inwards or outwards from the caliper ring and "
-        "an algebraic least-squares fit returns the circle.  It can also fit "
-        "existing contour/overlay points."
+        "an algebraic least-squares fit returns the circle."
     ),
     "inputs": [
         {"name": "input image", "type": "VisionImage",
-         "description": "Image the calipers sample (or whose overlays provide points)."},
+         "description": "Image the calipers sample."},
 
     ],
     "outputs": [
@@ -1010,9 +1001,7 @@ TOOL_HELP["Circle Fit"] = {
     ],
     "params": [
         {"name": "roi", "default": "[0, 0, 0, 0, 0]",
-         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required in caliper mode; filters points in points mode."},
-        {"name": "point_source", "default": "calipers",
-         "description": "calipers (scan the ROI) or existing (overlay/contour points)."},
+         "description": "Caliper search region in fixture coordinates: line = long side along the line, circle = centred on the circle. Required."},
         {"name": "caliper_count", "default": "16",
          "description": "Number of radial calipers around the ROI centre."},
         {"name": "caliper_width", "default": "3.0",
@@ -1035,10 +1024,10 @@ TOOL_HELP["Circle Fit"] = {
          "description": "Parabolic subpixel refinement of the edge position."},
         {"name": "show_calipers", "default": "True",
          "description": "Draw the radial caliper scan segments."},
-        {"name": "use_overlay_points", "default": "True",
-         "description": "Points mode: use POINT overlay elements as candidates."},
-        {"name": "use_contours", "default": "True",
-         "description": "Use contour/polygon vertices as candidates."},
+        {"name": "min_radius", "default": "0.0",
+         "description": "Reject the fit when the radius is below this many pixels; 0 disables the limit."},
+        {"name": "max_radius", "default": "0.0",
+         "description": "Reject the fit when the radius is above this many pixels; 0 disables the limit."},
         {"name": "robust", "default": "True",
          "description": "Reject outliers (least-median RANSAC + capped trimming) before the least-squares fit."},
         {"name": "max_residual_px", "default": "0.0",
@@ -1051,15 +1040,16 @@ TOOL_HELP["Circle Fit"] = {
          "description": "Fail when fewer candidate points are available."},
     ],
     "notes": (
-        "Caliper mode needs only the ROI: draw it around the circle and "
+        "The ROI is required: draw it around the circle and "
         "centred on it.  The ring starts at the caliper radius (auto = the "
         "ROI's inscribed radius); caliper_direction selects inwards (towards "
         "the centre) or outwards (away from it).  The profile follows that "
         "direction, so Dark→Light means the edge brightens towards the scan "
-        "direction.  Points "
-        "mode fits the visible contour and overlay points.  "
+        "direction.  "
         "Collinear points make the fit degenerate and the tool reports an "
-        "error instead of emitting a huge-radius circle.  Radius and "
+        "error instead of emitting a huge-radius circle.  Set Max radius to "
+        "reject a straight edge, which otherwise fits a huge circle with a low "
+        "RMS.  Radius and "
         "diameter stay in pixels until a calibration tool exists.  Points "
         "beyond the robust cutoff are discarded, up to max_outlier_percent of "
         "the array, so a couple of calipers on a wrong edge cannot pull the "
