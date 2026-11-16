@@ -33,6 +33,8 @@ class WorkflowTree(QTreeWidget):
     tool_selected = pyqtSignal(object)
     order_changed = pyqtSignal()
     tool_deleted = pyqtSignal(object)
+    tools_deleted = pyqtSignal(object)
+    generate_block_requested = pyqtSignal(object)
     tool_dropped = pyqtSignal(str, int) # tool_type, index
     tool_pasted = pyqtSignal(object)
     connection_changed = pyqtSignal(object, str, object, str) # src, out, dst, in
@@ -54,7 +56,7 @@ class WorkflowTree(QTreeWidget):
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop) # Allow external drops
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setDragDropOverwriteMode(False)
         self.setDropIndicatorShown(True)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
@@ -121,11 +123,14 @@ class WorkflowTree(QTreeWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Delete:
-            item = self.currentItem()
-            if item:
-                tool = self.get_tool_from_item(item)
-                if tool and self._workflow and tool != self._workflow.parent_tool:
-                    self.tool_deleted.emit(tool)
+            tools = self.selected_tools()
+            if tools:
+                if len(tools) == 1:
+                    self.tool_deleted.emit(tools[0])
+                else:
+                    self.tools_deleted.emit(tools)
+                event.accept()
+                return
         super().keyPressEvent(event)
 
     def dragEnterEvent(self, event):
@@ -838,43 +843,86 @@ class WorkflowTree(QTreeWidget):
 
     def show_context_menu(self, pos):
         item = self.itemAt(pos)
-        if not item: return
-        
-        tool = self.get_tool_from_item(item)
-        if not tool or tool == self._workflow.parent_tool: return
-        
+        if not item:
+            return
+
+        clicked_tool = self.get_tool_from_item(item)
+        if not clicked_tool or clicked_tool == self._workflow.parent_tool:
+            return
+
+        selected = self.selected_tools()
+        if clicked_tool not in selected:
+            self.clearSelection()
+            item.setSelected(True)
+            self.setCurrentItem(item)
+            selected = [clicked_tool]
+        if not selected:
+            selected = [clicked_tool]
+
         menu = QMenu(self)
         menu.setStyleSheet(f"background-color: {MENU_BG}; color: {WHITE};")
-        
+
         enabled_action = QAction("Enabled", menu)
         enabled_action.setCheckable(True)
-        enabled_action.setChecked(getattr(tool, 'enabled', True))
-        enabled_action.triggered.connect(lambda checked, t=tool: self.set_tool_enabled(t, checked))
+        enabled_action.setChecked(getattr(clicked_tool, 'enabled', True))
+        enabled_action.triggered.connect(
+            lambda checked, t=clicked_tool: self.set_tool_enabled(t, checked)
+        )
         menu.addAction(enabled_action)
         menu.addSeparator()
 
-        copy_action = menu.addAction("Copy")
-        copy_action.triggered.connect(lambda: self.copy_tool(tool))
-        
-        paste_action = menu.addAction("Paste")
-        paste_action.setEnabled(WorkflowTree._clipboard is not None)
-        paste_action.triggered.connect(lambda: self.paste_tool(self.indexAt(pos).row()))
-        
-        menu.addSeparator()
-        
-        save_action = menu.addAction(f"Save Tool As...")
-        save_action.triggered.connect(lambda: self._save_tool_to_file(tool))
+        if len(selected) >= 2:
+            block_action = menu.addAction(
+                f"Generate Block from {len(selected)} tools..."
+            )
+            block_action.setToolTip(
+                "Group a contiguous range of tools. The workflow runs in order."
+            )
+            block_action.triggered.connect(
+                lambda checked=False, tools=list(selected):
+                self.generate_block_requested.emit(tools)
+            )
+            menu.addSeparator()
+
+        if len(selected) == 1:
+            copy_action = menu.addAction("Copy")
+            copy_action.triggered.connect(
+                lambda checked=False, t=clicked_tool: self.copy_tool(t)
+            )
+
+            paste_action = menu.addAction("Paste")
+            paste_action.setEnabled(WorkflowTree._clipboard is not None)
+            paste_action.triggered.connect(
+                lambda checked=False: self.paste_tool(self.indexAt(pos).row())
+            )
+
+            menu.addSeparator()
+
+            save_action = menu.addAction("Save Tool As...")
+            save_action.triggered.connect(
+                lambda checked=False, t=clicked_tool: self._save_tool_to_file(t)
+            )
+
+            menu.addSeparator()
+
+        if len(selected) > 1:
+            del_action = menu.addAction(f"Delete {len(selected)} tools")
+            del_action.triggered.connect(
+                lambda checked=False, tools=list(selected):
+                self.tools_deleted.emit(tools)
+            )
+        else:
+            del_action = menu.addAction(f"Delete {clicked_tool.name}")
+            del_action.triggered.connect(
+                lambda checked=False, t=clicked_tool:
+                self.tool_deleted.emit(t)
+            )
 
         menu.addSeparator()
 
-        del_action = menu.addAction(f"Delete {tool.name}")
-        del_action.triggered.connect(lambda: self.tool_deleted.emit(tool))
-
-        menu.addSeparator()
-
-        help_action = menu.addAction(f"Help: {tool.name}")
+        help_action = menu.addAction(f"Help: {clicked_tool.name}")
         help_action.triggered.connect(
-            lambda: self._show_tool_help(tool)
+            lambda checked=False, t=clicked_tool: self._show_tool_help(t)
         )
 
         menu.exec(self.viewport().mapToGlobal(pos))
@@ -937,6 +985,20 @@ class WorkflowTree(QTreeWidget):
         if not item: return None
         tool_id = item.data(0, Qt.ItemDataRole.UserRole)
         return self._id_to_tool.get(tool_id)
+
+    def selected_tools(self):
+        """Return selected top-level tools in workflow order."""
+        if self._workflow is None:
+            return []
+        selected_ids = set()
+        for item in self.selectedItems():
+            tool = self.get_tool_from_item(item)
+            if tool is not None and tool is not self._workflow.parent_tool:
+                selected_ids.add(id(tool))
+        return [
+            tool for tool in self._workflow.tools
+            if id(tool) in selected_ids
+        ]
 
     def set_tool_enabled(self, tool, enabled: bool):
         tool.enabled = enabled

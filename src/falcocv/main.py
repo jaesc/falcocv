@@ -699,11 +699,14 @@ class MainWindow(QMainWindow):
         self.editor.tree.order_changed.connect(self._mark_modified)
         self.editor.tree.order_changed.connect(self._connect_tool_signals)
         self.editor.tree.tool_deleted.connect(self._mark_modified)
+        self.editor.tree.tools_deleted.connect(self._mark_modified)
         self.editor.tree.tool_dropped.connect(self._mark_modified)
         self.editor.tree.tool_dropped.connect(self._connect_tool_signals)
         self.editor.tree.tool_pasted.connect(self._mark_modified)
         self.editor.tree.tool_pasted.connect(self._connect_tool_signals)
         self.editor.tree.connection_changed.connect(self._mark_modified)
+        self.editor.block_generated.connect(self._mark_modified)
+        self.editor.block_generated.connect(self._connect_tool_signals)
         self._connect_tool_signals()
 
     def _connect_tool_signals(self):
