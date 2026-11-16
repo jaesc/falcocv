@@ -2,22 +2,60 @@
 
 import numpy as np
 import math
+import os
+import sys
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 from PyQt6.QtCore import Qt, QPoint, QPointF, pyqtSignal, QTimer
 from PyQt6.QtGui import QMouseEvent, QWheelEvent, QSurfaceFormat, QAction
-from PyQt6.QtWidgets import QMenu
+from PyQt6.QtWidgets import QApplication, QMenu
+
+
+def _qt_platform() -> str:
+    return os.environ.get("QT_QPA_PLATFORM", "").strip().lower()
+
+
+def _is_wayland_session() -> bool:
+    """Return True when Qt will use the native Wayland platform plugin."""
+    platform = _qt_platform()
+    if platform:
+        return platform == "wayland"
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        return False
+    # XWayland sessions export both WAYLAND_DISPLAY and DISPLAY.
+    return os.environ.get("XDG_SESSION_TYPE", "").strip().lower() != "x11"
+
+
+def _configure_pyopengl_platform() -> None:
+    """Match PyOpenGL's context lookup to the Qt platform plugin.
+
+    PyOpenGL resolves the current context through a fixed backend chosen at
+    import time.  On Linux the xcb plugin uses GLX while Wayland uses EGL, so
+    mixing them makes glVertexAttribPointer fail with "no valid context".
+    Must run before ``from OpenGL import GL``.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    if os.environ.get("PYOPENGL_PLATFORM"):
+        return
+    if _qt_platform() in {"offscreen", "minimal", "vnc"}:
+        return
+    os.environ["PYOPENGL_PLATFORM"] = "egl" if _is_wayland_session() else "glx"
+
+
+_configure_pyopengl_platform()
 
 try:
     from OpenGL import GL
 except ImportError:
     GL = None
 
+
 from falcocv.ui.style import HANDLE_FILL, HANDLE_STROKE
 
 
-# ── GLSL shaders (OpenGL 3.3 core) ──────────────────────────────────
+# ── GLSL shaders (OpenGL 3.3 core / GLES 3.0) ───────────────────────
 
-_POINT_VERTEX_SHADER = """
+_POINT_VERTEX_SHADER_330 = """
 #version 330 core
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 color;
@@ -31,7 +69,7 @@ void main() {
 }
 """
 
-_POINT_FRAGMENT_SHADER = """
+_POINT_FRAGMENT_SHADER_330 = """
 #version 330 core
 in vec3 v_color;
 out vec4 frag_color;
@@ -40,7 +78,7 @@ void main() {
 }
 """
 
-_LINE_VERTEX_SHADER = """
+_LINE_VERTEX_SHADER_330 = """
 #version 330 core
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec4 color;
@@ -52,7 +90,7 @@ void main() {
 }
 """
 
-_LINE_FRAGMENT_SHADER = """
+_LINE_FRAGMENT_SHADER_330 = """
 #version 330 core
 in vec4 v_color;
 out vec4 frag_color;
@@ -60,6 +98,59 @@ void main() {
     frag_color = v_color;
 }
 """
+
+_POINT_VERTEX_SHADER_300ES = """
+#version 300 es
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec3 color;
+uniform mat4 u_mvp;
+uniform float u_point_size;
+out vec3 v_color;
+void main() {
+    gl_Position = u_mvp * vec4(position, 1.0);
+    gl_PointSize = u_point_size;
+    v_color = color;
+}
+"""
+
+_POINT_FRAGMENT_SHADER_300ES = """
+#version 300 es
+precision mediump float;
+in vec3 v_color;
+out vec4 frag_color;
+void main() {
+    frag_color = vec4(v_color, 1.0);
+}
+"""
+
+_LINE_VERTEX_SHADER_300ES = """
+#version 300 es
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec4 color;
+uniform mat4 u_mvp;
+out vec4 v_color;
+void main() {
+    gl_Position = u_mvp * vec4(position, 1.0);
+    v_color = color;
+}
+"""
+
+_LINE_FRAGMENT_SHADER_300ES = """
+#version 300 es
+precision mediump float;
+in vec4 v_color;
+out vec4 frag_color;
+void main() {
+    frag_color = v_color;
+}
+"""
+
+
+_BOX_EDGES = (
+    (0, 1), (1, 2), (2, 3), (3, 0),
+    (4, 5), (5, 6), (6, 7), (7, 4),
+    (0, 4), (1, 5), (2, 6), (3, 7),
+)
 
 
 # ── Camera ──────────────────────────────────────────────────────────
@@ -164,6 +255,7 @@ class Viewer3D(QOpenGLWidget):
 
     # Signals
     mouse_moved = pyqtSignal(float, float, float)     # (x, y, z) or NaN if no hit
+    mouse_left = pyqtSignal()
     mouse_clicked = pyqtSignal(float, float, float)    # (x, y, z) or NaN
     roi_changed = pyqtSignal(object)                   # dict with center, size, rotation
     roi_drawing_finished = pyqtSignal()                # emitted when a 3D ROI draw completes
@@ -172,17 +264,29 @@ class Viewer3D(QOpenGLWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._use_gles = False
         try:
             fmt = QSurfaceFormat()
-            fmt.setVersion(3, 3)
-            fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+            force_gles = os.environ.get("FALCOCV_GL_ES") == "1"
+            force_desktop = os.environ.get("FALCOCV_GL_ES") == "0"
+            if force_gles or (not force_desktop and _is_wayland_session()):
+                fmt.setVersion(3, 0)
+                fmt.setRenderableType(QSurfaceFormat.RenderableType.OpenGLES)
+                fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.NoProfile)
+                self._use_gles = True
+            else:
+                fmt.setVersion(3, 3)
+                fmt.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+                self._use_gles = False
             self.setFormat(fmt)
         except Exception:
             pass
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.customContextMenuRequested.connect(self._show_context_menu)
+        # Handle the context menu manually on right-button release.  The
+        # platform default (CustomContextMenu) fires on press on Linux and on
+        # release on Windows, which made right-drag panning open the menu.
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.PreventContextMenu)
 
         self.camera = ArcballCamera()
         self._point_program = None
@@ -200,6 +304,14 @@ class Viewer3D(QOpenGLWidget):
         self._roi_vbo = 0
         self._roi_count = 0
 
+        # Secondary ROI boxes (non-editable, drawn in green).  The active ROI
+        # keeps its own editable box above.
+        self._roi_boxes = []  # list of (center, size, rotation_deg)
+        self._roi_boxes_vao = 0
+        self._roi_boxes_vbo = 0
+        self._roi_boxes_count = 0
+        self._roi_boxes_visible = False
+
         # 3D overlays (generic: WORLD_POLYGON, WORLD_LINE, etc.)
         self._overlay_vao = 0
         self._overlay_vbo = 0
@@ -209,6 +321,8 @@ class Viewer3D(QOpenGLWidget):
         # Point cloud data (full resolution)
         self._points = np.zeros((0, 3), dtype=np.float32)
         self._colors = np.zeros((0, 3), dtype=np.uint8)
+        # Capped subset used by the footer hover readout on huge clouds.
+        self._hover_points = self._points
         self._point_size = 3.0
         self._bbox_center = np.zeros(3, dtype=np.float32)
         self._bbox_size = np.ones(3, dtype=np.float32)
@@ -254,6 +368,7 @@ class Viewer3D(QOpenGLWidget):
         self._drag_start_azimuth = 0.0
         self._drag_start_elevation = 0.0
         self._drag_start_target = None
+        self._right_drag_moved = False
 
         # Hover
         self._pending_upload = False
@@ -275,22 +390,50 @@ class Viewer3D(QOpenGLWidget):
             # Force PyOpenGL to resolve functions against the current context.
             version_bytes = GL.glGetString(GL.GL_VERSION)
             version_str = version_bytes.decode() if version_bytes else ""
-            version_parts = version_str.split()[0].split(".") if version_str else ["0", "0"]
-            major = int(version_parts[0])
-            minor = int(version_parts[1]) if len(version_parts) > 1 else 0
+            is_gles = "OpenGL ES" in version_str
+            if not version_str:
+                is_gles = self._use_gles
+            minor = 0
+            if is_gles:
+                # e.g. "OpenGL ES 3.2 ..."
+                parts = version_str.replace("OpenGL ES ", "").split()[0].split(".")
+                major = int(parts[0]) if parts and parts[0].isdigit() else 3
+                if len(parts) > 1 and parts[1].isdigit():
+                    minor = int(parts[1])
+            else:
+                parts = version_str.split()[0].split(".") if version_str else ["0", "0"]
+                major = int(parts[0]) if parts and parts[0].isdigit() else 0
+                if len(parts) > 1 and parts[1].isdigit():
+                    minor = int(parts[1])
             if major < 3:
                 raise RuntimeError(f"OpenGL {major}.{minor} found; 3.0+ required")
 
             GL.glClearColor(0.12, 0.12, 0.14, 1.0)
             GL.glEnable(GL.GL_DEPTH_TEST)
-            GL.glEnable(GL.GL_PROGRAM_POINT_SIZE)
+            if not is_gles:
+                try:
+                    GL.glEnable(GL.GL_PROGRAM_POINT_SIZE)
+                except Exception:
+                    pass
 
             # Clear any stale error flag before creating VAOs.
             while GL.glGetError() != GL.GL_NO_ERROR:
                 pass
 
-            self._point_program = _link_program(_POINT_VERTEX_SHADER, _POINT_FRAGMENT_SHADER)
-            self._line_program = _link_program(_LINE_VERTEX_SHADER, _LINE_FRAGMENT_SHADER)
+            if is_gles:
+                self._point_program = _link_program(
+                    _POINT_VERTEX_SHADER_300ES, _POINT_FRAGMENT_SHADER_300ES
+                )
+                self._line_program = _link_program(
+                    _LINE_VERTEX_SHADER_300ES, _LINE_FRAGMENT_SHADER_300ES
+                )
+            else:
+                self._point_program = _link_program(
+                    _POINT_VERTEX_SHADER_330, _POINT_FRAGMENT_SHADER_330
+                )
+                self._line_program = _link_program(
+                    _LINE_VERTEX_SHADER_330, _LINE_FRAGMENT_SHADER_330
+                )
 
             self._point_vao = int(GL.glGenVertexArrays(1))
             self._point_vbo_pos = int(GL.glGenBuffers(1))
@@ -303,11 +446,16 @@ class Viewer3D(QOpenGLWidget):
             self._roi_vao = int(GL.glGenVertexArrays(1))
             self._roi_vbo = int(GL.glGenBuffers(1))
 
+            self._roi_boxes_vao = int(GL.glGenVertexArrays(1))
+            self._roi_boxes_vbo = int(GL.glGenBuffers(1))
+
             self._overlay_vao = int(GL.glGenVertexArrays(1))
             self._overlay_vbo = int(GL.glGenBuffers(1))
 
             if self._roi_visible:
                 self._build_roi_buffers()
+            if self._roi_boxes_visible and self._roi_boxes:
+                self._build_roi_boxes_buffers()
             if self._pending_upload:
                 self._upload_point_data()
 
@@ -359,6 +507,10 @@ class Viewer3D(QOpenGLWidget):
             GL.glBindVertexArray(self._point_vao)
             GL.glDrawArrays(GL.GL_POINTS, 0, self._lod_count)
             GL.glBindVertexArray(0)
+
+        # Draw secondary ROI boxes (all non-active ROIs)
+        if self._roi_boxes_visible and self._roi_boxes_count > 0:
+            self._draw_roi_boxes(mvp)
 
         # Draw ROI box
         if self._roi_visible:
@@ -545,6 +697,10 @@ class Viewer3D(QOpenGLWidget):
             return
         self._points = np.ascontiguousarray(points, dtype=np.float32)
         n = len(self._points)
+        # Thin the cloud for the hover readout so the footer stays responsive
+        # on multi-million-point clouds.  Click picking keeps using _points.
+        hover_stride = max(1, int(np.ceil(n / 200_000))) if n else 1
+        self._hover_points = self._points[::hover_stride]
         if colors is None or len(colors) != n:
             colors = np.full((n, 3), 200, dtype=np.uint8)
         self._colors = np.ascontiguousarray(colors, dtype=np.uint8)
@@ -575,6 +731,7 @@ class Viewer3D(QOpenGLWidget):
         """
         if data is None:
             self._roi_visible = False
+            self._roi_boxes_visible = False
             if self._gl_initialized:
                 self.update()
             return
@@ -610,6 +767,58 @@ class Viewer3D(QOpenGLWidget):
             self._build_roi_buffers()
             self.update()
 
+    def set_roi_boxes(self, boxes, active_index=0):
+        """Set the non-active ROI boxes drawn as green wireframes.
+
+        ``boxes`` is a list of dicts with ``center``, ``size`` and optional
+        ``rotation`` (world degrees, or ``[0, 0, angle]``).  ``active_index``
+        is skipped because that box is drawn by :meth:`set_roi` with its edit
+        handles.
+        """
+        if isinstance(boxes, dict):
+            boxes = [boxes]
+        cleaned = []
+        for box in boxes or []:
+            if isinstance(box, dict):
+                center = box.get("center")
+                size = box.get("size")
+                rotation = box.get("rotation", 0.0)
+            elif isinstance(box, (list, tuple)) and len(box) >= 2:
+                center, size = box[0], box[1]
+                rotation = box[2] if len(box) > 2 else 0.0
+            else:
+                continue
+            if center is None or size is None:
+                continue
+            center_arr = np.asarray(center, dtype=np.float32).reshape(-1)
+            size_arr = np.asarray(size, dtype=np.float32).reshape(-1)
+            if center_arr.size < 3 or size_arr.size < 3:
+                continue
+            values = np.asarray(rotation, dtype=np.float64).reshape(-1)
+            if values.size >= 3:
+                angle = float(values[2])
+            elif values.size:
+                angle = float(values[0])
+            else:
+                angle = 0.0
+            cleaned.append((
+                center_arr[:3].copy(),
+                np.maximum(size_arr[:3], 1.0),
+                angle,
+            ))
+
+        try:
+            active = int(active_index)
+        except (TypeError, ValueError):
+            active = -1
+        self._roi_boxes = [
+            box for index, box in enumerate(cleaned) if index != active
+        ]
+        self._roi_boxes_visible = bool(self._roi_boxes)
+        if self._gl_initialized:
+            self._build_roi_boxes_buffers()
+        self.update()
+
     def _roi_axes(self):
         """World axes of the box: X/Y rotated about Z, Z unchanged."""
         angle = math.radians(float(self._roi_rotation))
@@ -620,8 +829,30 @@ class Viewer3D(QOpenGLWidget):
             np.array([0.0, 0.0, 1.0], dtype=np.float32),
         )
 
+    @staticmethod
+    def _corners_for_box(center, size, rotation_deg):
+        """Return the eight world-space corners of a rotated ROI box."""
+        c = np.asarray(center, dtype=np.float32)
+        h = np.asarray(size, dtype=np.float32) * 0.5
+        angle = math.radians(float(rotation_deg or 0.0))
+        ca, sa = math.cos(angle), math.sin(angle)
+        ex = np.array([ca, sa, 0.0], dtype=np.float32)
+        ey = np.array([-sa, ca, 0.0], dtype=np.float32)
+        ez = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        def corner(sx, sy, sz):
+            return c + ex * (sx * h[0]) + ey * (sy * h[1]) + ez * (sz * h[2])
+
+        return np.array([
+            corner(-1, -1, -1), corner(1, -1, -1),
+            corner(1, -1, 1), corner(-1, -1, 1),
+            corner(-1, 1, -1), corner(1, 1, -1),
+            corner(1, 1, 1), corner(-1, 1, 1),
+        ], dtype=np.float32)
+
     def show_roi(self, visible=True):
         self._roi_visible = visible
+        self._roi_boxes_visible = bool(visible and self._roi_boxes)
         if self._gl_initialized:
             self.update()
 
@@ -810,27 +1041,11 @@ class Viewer3D(QOpenGLWidget):
         h = self._roi_size * 0.5
         c = self._roi_center
         ex, ey, ez = self._roi_axes()
-
-        def corner(sx, sy, sz):
-            return c + ex * (sx * h[0]) + ey * (sy * h[1]) + ez * (sz * h[2])
-
-        corners = np.array([
-            corner(-1, -1, -1), corner(1, -1, -1),
-            corner(1, -1, 1), corner(-1, -1, 1),
-            corner(-1, 1, -1), corner(1, 1, -1),
-            corner(1, 1, 1), corner(-1, 1, 1),
-        ], dtype=np.float32)
-
-        # 12 edges
-        edges = [
-            (0, 1), (1, 2), (2, 3), (3, 0),
-            (4, 5), (5, 6), (6, 7), (7, 4),
-            (0, 4), (1, 5), (2, 6), (3, 7),
-        ]
+        corners = self._corners_for_box(c, self._roi_size, self._roi_rotation)
 
         verts = []
         roi_color = (1.0, 0.5, 0.0)  # orange
-        for i, j in edges:
+        for i, j in _BOX_EDGES:
             verts.extend([*corners[i], *roi_color, *corners[j], *roi_color])
 
         # Face handle quads (center of each face, large enough to grab)
@@ -890,6 +1105,51 @@ class Viewer3D(QOpenGLWidget):
             GL.glBindVertexArray(0)
         except Exception:
             pass
+
+    def _build_roi_boxes_buffers(self):
+        """Build green wireframes for all non-active ROI boxes."""
+        if GL is None or not self._gl_initialized:
+            return
+
+        verts = []
+        box_color = (0.0, 0.85, 0.45)
+        for center, size, angle in self._roi_boxes:
+            corners = self._corners_for_box(center, size, angle)
+            for i, j in _BOX_EDGES:
+                verts.extend([*corners[i], *box_color, *corners[j], *box_color])
+
+        self._roi_boxes_count = len(verts) // 6
+        if not verts:
+            return
+
+        arr = np.array(verts, dtype=np.float32)
+        try:
+            self.makeCurrent()
+            GL.glBindVertexArray(self._roi_boxes_vao)
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, self._roi_boxes_vbo)
+            GL.glBufferData(GL.GL_ARRAY_BUFFER, arr.nbytes, arr, GL.GL_STATIC_DRAW)
+            GL.glEnableVertexAttribArray(0)
+            GL.glVertexAttribPointer(0, 3, GL.GL_FLOAT, GL.GL_FALSE, 24, GL.GLvoidp(0))
+            GL.glEnableVertexAttribArray(1)
+            GL.glVertexAttribPointer(1, 3, GL.GL_FLOAT, GL.GL_FALSE, 24, GL.GLvoidp(12))
+            GL.glBindBuffer(GL.GL_ARRAY_BUFFER, 0)
+            GL.glBindVertexArray(0)
+        except Exception:
+            pass
+
+    def _draw_roi_boxes(self, mvp):
+        if self._roi_boxes_count <= 0:
+            return
+
+        GL.glUseProgram(self._line_program)
+        loc_mvp = GL.glGetUniformLocation(self._line_program, "u_mvp")
+        GL.glUniformMatrix4fv(loc_mvp, 1, GL.GL_TRUE, mvp)
+        GL.glDisable(GL.GL_DEPTH_TEST)
+        GL.glBindVertexArray(self._roi_boxes_vao)
+        GL.glDrawArrays(GL.GL_LINES, 0, self._roi_boxes_count)
+        GL.glBindVertexArray(0)
+        GL.glEnable(GL.GL_DEPTH_TEST)
+        GL.glUseProgram(0)
 
     def _draw_roi(self, mvp):
         if self._roi_count <= 0:
@@ -1099,6 +1359,7 @@ class Viewer3D(QOpenGLWidget):
                     self.camera.target = self._points[idx].copy()
             self._drag_start_target = self.camera.target.copy()
         elif event.button() == Qt.MouseButton.RightButton:
+            self._right_drag_moved = False
             self._drag_start_target = self.camera.target.copy()
 
         event.accept()
@@ -1149,6 +1410,8 @@ class Viewer3D(QOpenGLWidget):
             self.camera.elevation = max(-89.0, min(89.0, self.camera.elevation))
         elif self._mouse_button == Qt.MouseButton.RightButton:
             # Pan — correct screen-space vectors
+            if (event.pos() - self._drag_start_mouse).manhattanLength() > QApplication.startDragDistance():
+                self._right_drag_moved = True
             sens = self.camera.distance * 0.002
             az_r = math.radians(self.camera.azimuth)
             el_r = math.radians(self.camera.elevation)
@@ -1209,6 +1472,21 @@ class Viewer3D(QOpenGLWidget):
             self._mouse_button = Qt.MouseButton.NoButton
             return
 
+        if event.button() == Qt.MouseButton.RightButton and self._mouse_button == Qt.MouseButton.RightButton:
+            # A right click opens the menu; a right drag is a pan and must not.
+            show_menu = not self._right_drag_moved
+            if show_menu and self._drag_start_target is not None:
+                # Undo any sub-threshold pan from the press/release jitter.
+                self.camera.target = self._drag_start_target.copy()
+                self.update()
+            self._right_drag_moved = False
+            self._mouse_pressed = False
+            self._mouse_button = Qt.MouseButton.NoButton
+            event.accept()
+            if show_menu:
+                self._show_context_menu(event.pos())
+            return
+
         self._mouse_pressed = False
         self._mouse_button = Qt.MouseButton.NoButton
         event.accept()
@@ -1235,6 +1513,7 @@ class Viewer3D(QOpenGLWidget):
         if self._roi_hover_axis >= 0:
             self._roi_hover_axis = -1
             self.update()
+        self.mouse_left.emit()
         super().leaveEvent(event)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -1465,13 +1744,12 @@ class Viewer3D(QOpenGLWidget):
 
     def _update_hover(self, mouse_pos):
         """Find nearest point under the mouse cursor."""
-        if self._roi_edit_mode or len(self._points) == 0 or len(self._points) > 200000:
+        if self._roi_edit_mode or len(self._hover_points) == 0:
             return
         ray_origin, ray_dir = self.screen_to_ray(mouse_pos)
 
-        # Brute-force nearest point along ray (for small clouds)
-        # For large clouds, this should use a spatial index
-        points = self._points
+        # Use the capped hover subset so huge clouds stay responsive.
+        points = self._hover_points
         to_points = points - ray_origin
         t = np.dot(to_points, ray_dir)
         near_mask = (t > 0)

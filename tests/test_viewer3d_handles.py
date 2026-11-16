@@ -236,3 +236,98 @@ def test_mouse_move_does_not_crash(_qapp):
     # Should not raise (previously called self.viewport() which does not exist
     # on QOpenGLWidget).
     v.mouseMoveEvent(event)
+
+
+def _mouse_event(kind, pos, button, buttons):
+    from PyQt6.QtGui import QMouseEvent
+    from PyQt6.QtCore import QPointF, Qt
+
+    return QMouseEvent(
+        kind,
+        QPointF(*pos),
+        button,
+        buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+
+def _right_press_move_release(v, pressed, moved, released):
+    from PyQt6.QtCore import QEvent, Qt
+
+    v.mousePressEvent(_mouse_event(
+        QEvent.Type.MouseButtonPress, pressed,
+        Qt.MouseButton.RightButton, Qt.MouseButton.RightButton,
+    ))
+    v.mouseMoveEvent(_mouse_event(
+        QEvent.Type.MouseMove, moved,
+        Qt.MouseButton.NoButton, Qt.MouseButton.RightButton,
+    ))
+    v.mouseReleaseEvent(_mouse_event(
+        QEvent.Type.MouseButtonRelease, released,
+        Qt.MouseButton.RightButton, Qt.MouseButton.NoButton,
+    ))
+
+
+def test_right_drag_pans_without_context_menu(_qapp, monkeypatch):
+    v = _make_viewer(_qapp)
+    opened = []
+    monkeypatch.setattr(v, "_show_context_menu", lambda pos: opened.append(pos))
+    target_before = v.camera.target.copy()
+
+    _right_press_move_release(v, (200, 200), (260, 230), (260, 230))
+
+    assert opened == []
+    assert not np.allclose(v.camera.target, target_before)
+    assert v._mouse_pressed is False
+
+
+def test_right_drag_and_return_does_not_open_context_menu(_qapp, monkeypatch):
+    v = _make_viewer(_qapp)
+    opened = []
+    monkeypatch.setattr(v, "_show_context_menu", lambda pos: opened.append(pos))
+
+    _right_press_move_release(v, (200, 200), (260, 230), (200, 200))
+
+    assert opened == []
+    assert v._mouse_pressed is False
+
+
+def test_right_click_without_drag_opens_context_menu(_qapp, monkeypatch):
+    v = _make_viewer(_qapp)
+    opened = []
+    monkeypatch.setattr(v, "_show_context_menu", lambda pos: opened.append(pos))
+    target_before = v.camera.target.copy()
+
+    _right_press_move_release(v, (200, 200), (202, 201), (202, 201))
+
+    assert len(opened) == 1
+    # Sub-threshold jitter must not leave the camera panned.
+    assert np.allclose(v.camera.target, target_before)
+    assert v._mouse_pressed is False
+
+
+def test_set_roi_boxes_stores_only_inactive_boxes(_qapp):
+    v = _make_viewer(_qapp)
+    boxes = [
+        {"center": [0.0, 0.0, 0.0], "size": [10.0, 10.0, 10.0], "rotation": 0.0},
+        {"center": [40.0, 0.0, 0.0], "size": [10.0, 10.0, 10.0], "rotation": 15.0},
+    ]
+
+    v.set_roi_boxes(boxes, active_index=0)
+
+    assert len(v._roi_boxes) == 1
+    assert np.allclose(v._roi_boxes[0][0], [40.0, 0.0, 0.0])
+    assert v._roi_boxes[0][2] == pytest.approx(15.0)
+    assert v._roi_boxes_visible is True
+
+    v.show_roi(False)
+    assert v._roi_boxes_visible is False
+
+
+def test_hover_points_are_capped_for_large_clouds(_qapp):
+    v = _make_viewer(_qapp)
+    points = np.zeros((250_001, 3), dtype=np.float32)
+
+    v.set_data(points)
+
+    assert 0 < len(v._hover_points) <= 200_000

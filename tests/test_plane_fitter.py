@@ -114,6 +114,58 @@ def test_plane_fitter_polygon_overlay():
     assert any(e.ref_id == "plane_normal" for e in layer.elements)
 
 
+def _plane_overlay_tool(**params):
+    depth = _make_depth_plane(200, 200)
+    vimg = VisionImage(depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0)
+    ensure_pointcloud_data(vimg, target_points=100_000)
+
+    tool = PlaneFitter()
+    tool.set_input("input image", vimg)
+    tool.params["rois"] = [
+        {"roi": [50.0, 50.0, 100.0, 100.0, 0.0], "z_min": 0.0, "z_max": 1.0}
+    ]
+    tool.params["method"] = "lsq"
+    tool.params.update(params)
+    tool.run()
+    return tool
+
+
+def _overlay_ref_ids(tool):
+    layer = tool.outputs["output image"].get_overlay_layer("default")
+    return {element.ref_id for element in layer.elements if element.ref_id}
+
+
+def test_plane_overlay_can_be_hidden():
+    tool = _plane_overlay_tool(show_plane=False)
+    ids = _overlay_ref_ids(tool)
+
+    assert "plane_polygon" not in ids
+    assert "plane_polygon_3d" not in ids
+    assert "plane_normal" not in ids
+    assert "plane_roi" in ids
+
+
+def test_search_roi_overlay_can_be_hidden():
+    tool = _plane_overlay_tool(show_search_roi=False)
+    ids = _overlay_ref_ids(tool)
+
+    assert "plane_polygon" in ids
+    assert "plane_normal" in ids
+    assert "plane_roi" not in ids
+
+
+def test_master_overlay_switch_hides_plane_and_roi():
+    tool = _plane_overlay_tool(show_overlays=False)
+    ids = _overlay_ref_ids(tool)
+
+    assert not {
+        "plane_polygon",
+        "plane_polygon_3d",
+        "plane_normal",
+        "plane_roi",
+    } & ids
+
+
 def test_plane_fitter_polygon_is_bounded():
     """The fitted-plane polygon must stay inside a small margin around the image."""
     depth = _make_depth_plane(200, 200)

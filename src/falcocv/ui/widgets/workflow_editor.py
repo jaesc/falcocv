@@ -180,6 +180,11 @@ class WorkflowEditor(QWidget):
         else:
             self.viewer_3d = None
         self.viewer = self.viewer_2d
+        self.viewer_2d.mouse_moved.connect(self._on_viewer_mouse_moved)
+        self.viewer_2d.mouse_left.connect(self._clear_pointer_readout)
+        if self.viewer_3d is not None:
+            self.viewer_3d.mouse_moved.connect(self._on_viewer3d_mouse_moved)
+            self.viewer_3d.mouse_left.connect(self._clear_pointer_readout)
         viewer_layout.addWidget(self.viewer_stack)
         
         self.splitter.addWidget(viewer_container)
@@ -532,6 +537,7 @@ class WorkflowEditor(QWidget):
         return None, None
 
     def update_viewer_image(self):
+        self._clear_pointer_readout()
         selection = self.record_selector.currentText()
         if not selection:
             self.viewer.set_image(None)
@@ -748,6 +754,53 @@ class WorkflowEditor(QWidget):
     def set_web_status(self, text: str, color_hex: str):
         self.label_web.setText(text)
         self.label_web.setStyleSheet(f"color: {color_hex}; font-family: Consolas, monospace; font-size: 10px;")
+
+    @staticmethod
+    def _format_pixel_value(value) -> str:
+        if value is None:
+            return "-"
+        arr = np.asarray(value)
+        if arr.ndim == 0:
+            item = arr.item()
+            if isinstance(item, (float, np.floating)):
+                return f"{float(item):.6g}"
+            return str(item)
+        flat = arr.reshape(-1)
+        if flat.size == 0:
+            return "-"
+        if flat.size >= 3:
+            # ImageViewer keeps OpenCV's BGR channel order.
+            r, g, b = int(flat[2]), int(flat[1]), int(flat[0])
+            if flat.size >= 4:
+                return f"({r},{g},{b},{int(flat[3])})"
+            return f"({r},{g},{b})"
+
+        def _fmt(item):
+            if isinstance(item, (float, np.floating)):
+                return f"{float(item):.6g}"
+            return str(item)
+
+        return ", ".join(_fmt(item) for item in flat)
+
+    def _clear_pointer_readout(self):
+        self.label_coords.setText("X,Y: -, -")
+        self.label_value.setText("VALUE: -")
+
+    def _on_viewer_mouse_moved(self, x, y, value):
+        if x < 0 or y < 0:
+            self._clear_pointer_readout()
+            return
+        self.label_coords.setText(f"X,Y: {int(x)}, {int(y)}")
+        self.label_value.setText(
+            f"VALUE: {self._format_pixel_value(value)}"
+        )
+
+    def _on_viewer3d_mouse_moved(self, x, y, z):
+        if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+            self._clear_pointer_readout()
+            return
+        self.label_coords.setText(f"X,Y: {x:.1f}, {y:.1f}")
+        self.label_value.setText(f"VALUE: Z {z:.1f}")
 
     def _port_name_from_record(self, record) -> str:
         return ""

@@ -469,6 +469,7 @@ class HeightBlobs3DConfig(QWidget):
             bbox_center=cloud.get("bbox_center"),
             bbox_size=cloud.get("bbox_size"),
         )
+        self.roi_editor._update_viewer_3d_roi()
 
     def on_config_closed(self):
         save_params_splitter(self.content_splitter, "HeightBlobs3D")
