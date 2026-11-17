@@ -1109,8 +1109,9 @@ TOOL_HELP["Height Blobs 3D"] = {
     "purpose": (
         "Segments the 3D ROI into regions that rise above a reference plane and "
         "measures each one. The tip is the centroid of the band just below the "
-        "highest point, expressed in the frame of the plane, so the result does "
-        "not depend on how the part is tilted."
+        "highest point, in calibrated world coordinates corrected by the image "
+        "fixture; h is the signed height above the plane. ROIs only select the "
+        "search region and never define coordinate origins."
     ),
     "inputs": [
         {"name": "input image", "type": "VisionImage (depth)",
@@ -1124,11 +1125,9 @@ TOOL_HELP["Height Blobs 3D"] = {
         {"name": "binary mask", "type": "VisionImage",
          "description": "Mask used for the segmentation, for tuning the thresholds."},
         {"name": "results", "type": "ToolResults[HeightBlobResult]",
-         "description": "One entry per blob: u, v, h, area, volume and height stats."},
+         "description": "One entry per blob: x, y, z (world/fixture mm), h (plane height), area, volume and height stats."},
         {"name": "count", "type": "int",
          "description": "Number of measured height blobs."},
-        {"name": "results", "type": "ToolResults[HeightBlobResult]",
-         "description": "Measured features with u, v, h, depth, area, volume and height statistics."},
         {"name": "warnings", "type": "list[str]",
          "description": "Hints such as 'apply a negative plane_offset'."},
     ],
@@ -1141,7 +1140,7 @@ TOOL_HELP["Height Blobs 3D"] = {
         {"name": "direction", "default": '"above"',
          "description": "above measures regions on the +Z/up side of the plane; below measures "
                         "regions on the other side. The tip is always the furthest point along the "
-                        "measurement direction and is reported as a positive 'depth'."},
+                        "measurement direction; h is signed (negative for below)."},
         {"name": "min_height", "default": "0.2",
          "description": "Minimum height above the plane for a pixel to belong to a blob."},
         {"name": "seed_height", "default": "0.5",
@@ -1164,8 +1163,8 @@ TOOL_HELP["Height Blobs 3D"] = {
          "description": "Band under the highest point used to compute the tip position."},
         {"name": "tip_stat", "default": '"mean"',
          "description": "mean or median of the tip band."},
-        {"name": "sort_mode", "default": '"u"',
-         "description": "none, u, v, h, area or grid. grid automatically detects the row/column orientation, then orders rows and columns."},
+        {"name": "sort_mode", "default": '"x"',
+         "description": "none, x, y, h, area or grid. grid automatically detects the row/column orientation, then orders rows and columns."},
         {"name": "sort_descending", "default": "False",
          "description": "Reverse the order."},
     ],

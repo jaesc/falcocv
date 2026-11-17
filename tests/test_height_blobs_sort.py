@@ -8,12 +8,13 @@ from falcocv.core.features import FeaturePoint
 from falcocv.tools.height_blobs.logic import HeightBlobs3D
 
 
-def _feature(feature_id, u, v):
+def _feature(feature_id, x, y):
     return FeaturePoint(
         id=feature_id,
         index=0,
-        u=u,
-        v=v,
+        x=x,
+        y=y,
+        z=0.0,
         h=0.0,
         area_px=1,
         area_mm2=1.0,
@@ -31,13 +32,13 @@ def _grid(angle_deg, rows=4, cols=4, step=2.0, jitter=0.0):
     features = []
     for row in range(rows):
         for column in range(cols):
-            u = column * step
-            v = row * step
+            x = column * step
+            y = row * step
             features.append(
                 _feature(
                     row * cols + column,
-                    cosine * u - sine * v + jitter,
-                    sine * u + cosine * v - jitter,
+                    cosine * x - sine * y + jitter,
+                    sine * x + cosine * y - jitter,
                 )
             )
     return features

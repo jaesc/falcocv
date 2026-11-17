@@ -27,15 +27,21 @@ def _disc(depth, cx, cy, radius, z):
     depth[mask > 0] = z
 
 
-def _tool(depth, plane=None, **params):
+def _tool(depth, plane=None, calib=(1.0, 1.0, 1.0, 0.0), fixture=None, roi=None, **params):
     image = VisionImage(
-        depth, scale_x=1.0, scale_y=1.0, scale_z=1.0, offset_z=0.0
+        depth,
+        scale_x=calib[0],
+        scale_y=calib[1],
+        scale_z=calib[2],
+        offset_z=calib[3],
     )
+    if fixture is not None:
+        image.apply_fixture(*fixture)
     tool = HeightBlobs3D()
     tool.set_input("input image", image)
     tool.set_input("reference plane", plane or _plane())
     tool.params["rois"] = [
-        {"roi": [0.0, 0.0, float(WIDTH), float(HEIGHT), 0.0],
+        {"roi": list(roi or [0.0, 0.0, float(WIDTH), float(HEIGHT), 0.0]),
          "z_min": 0.0, "z_max": 1.0}
     ]
     for key, value in params.items():
@@ -60,16 +66,16 @@ def test_eight_pins_are_detected():
         assert feature.touches_border is False
 
 
-def test_features_are_sorted_along_u():
+def test_features_are_sorted_along_x():
     depth = np.full((HEIGHT, WIDTH), BASE_Z, dtype=np.float32)
     for index in (5, 1, 6, 2):
         _disc(depth, 20 + index * 15, 60, 3, BASE_Z + 1.5)
 
-    tool = _tool(depth, sort_mode="u")
-    u_values = [feature.u for feature in tool.outputs["results"]]
-    assert u_values == sorted(u_values)
+    tool = _tool(depth, sort_mode="x")
+    x_values = [feature.x for feature in tool.outputs["results"]]
+    assert x_values == sorted(x_values)
     assert [feature.index for feature in tool.outputs["results"]] == list(
-        range(len(u_values))
+        range(len(x_values))
     )
 
 
@@ -141,7 +147,6 @@ def test_direction_below_measures_pins_under_the_plane():
     assert len(features) == 4
     for feature in features:
         assert feature.h == pytest.approx(-2.0, abs=0.05)
-        assert feature.depth == pytest.approx(2.0, abs=0.05)
 
 
 def test_below_tip_is_the_deepest_point():
@@ -157,7 +162,6 @@ def test_below_tip_is_the_deepest_point():
     assert len(features) == 1
     feature = features[0]
     assert feature.h == pytest.approx(-4.0, abs=0.1)
-    assert feature.depth == pytest.approx(4.0, abs=0.1)
 
 
 def test_warning_mentions_the_direction():
@@ -294,3 +298,121 @@ def test_overlay_visibility_options_filter_elements():
 
     no_overlays = _overlay_tool(show_overlays=False)
     assert _blob_overlays(no_overlays) == []
+
+
+def test_xy_are_calibrated_world_coordinates():
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+    plane = _plane(BASE_Z)
+
+    tool = _tool(depth, plane=plane, calib=(0.5, 2.0, 1.0, 0.0))
+    feature = tool.outputs["results"][0]
+
+    assert feature.x == pytest.approx((WIDTH - 1 - 80) * 0.5, abs=1.0)
+    assert feature.y == pytest.approx(60 * 2.0, abs=2.0)
+    assert feature.z == pytest.approx(BASE_Z + 2.0, abs=0.1)
+    assert feature.h == pytest.approx(2.0, abs=0.1)
+
+
+def test_fixture_translates_xy_in_mm():
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+
+    tool = _tool(depth, fixture=(30.0, 40.0, 0.0))
+    feature = tool.outputs["results"][0]
+
+    expected_x = 30.0 - 80.0
+    expected_y = 60.0 - 40.0
+    assert feature.x == pytest.approx(expected_x, abs=1.0)
+    assert feature.y == pytest.approx(expected_y, abs=1.0)
+    assert feature.z == pytest.approx(BASE_Z + 2.0, abs=0.1)
+
+
+def test_fixture_rotates_xy_in_mm_and_leaves_z():
+    import math
+
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+
+    fixture = (30.0, 40.0, 30.0)
+    # Disc image center (80,60) in world deltas from the fixture origin.
+    radians = math.radians(fixture[2])
+    dx, dy = fixture[0] - 80.0, 60.0 - fixture[1]
+    expected_x = math.cos(radians) * dx - math.sin(radians) * dy
+    expected_y = math.sin(radians) * dx + math.cos(radians) * dy
+    # ROI is expressed in fixture/image coordinates (right/down).
+    roi_dx, roi_dy = 80.0 - fixture[0], 60.0 - fixture[1]
+    roi_x = math.cos(radians) * roi_dx + math.sin(radians) * roi_dy
+    roi_y = -math.sin(radians) * roi_dx + math.cos(radians) * roi_dy
+    roi = [roi_x - 10.0, roi_y - 10.0, 20.0, 20.0, 0.0]
+
+    tool = _tool(depth, fixture=fixture, roi=roi)
+    feature = tool.outputs["results"][0]
+
+    assert feature.x == pytest.approx(expected_x, abs=1.0)
+    assert feature.y == pytest.approx(expected_y, abs=1.0)
+    assert feature.z == pytest.approx(BASE_Z + 2.0, abs=0.1)
+
+
+def test_roi_does_not_change_the_coordinate_origin():
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+
+    full = _tool(depth)
+    cropped = _tool(depth, roi=[45.0, 35.0, 70.0, 50.0, 0.0])
+
+    a = full.outputs["results"][0]
+    b = cropped.outputs["results"][0]
+    assert a.x == pytest.approx(b.x, abs=1.0)
+    assert a.y == pytest.approx(b.y, abs=1.0)
+    assert a.z == pytest.approx(b.z, abs=0.1)
+    assert a.h == pytest.approx(b.h, abs=0.1)
+
+
+def test_tilted_plane_does_not_project_xy():
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+
+    flat = _plane(BASE_Z)
+    normal = np.array([0.3, 0.1, 1.0], dtype=np.float64)
+    normal /= np.linalg.norm(normal)
+    pin = np.array(
+        [WIDTH - 1 - 80.0, 60.0, BASE_Z + 2.0], dtype=np.float64
+    )
+    tilted = PlaneModel(
+        normal=tuple(normal.tolist()),
+        distance=float(normal @ pin - 2.0),
+        center=tuple(pin.tolist()),
+    )
+
+    a = _tool(depth, plane=flat, tip_band=1e6).outputs["results"][0]
+    b = _tool(depth, plane=tilted, tip_band=1e6).outputs["results"][0]
+
+    assert a.x == pytest.approx(b.x, abs=1.0)
+    assert a.y == pytest.approx(b.y, abs=1.0)
+    assert a.h == pytest.approx(2.0, abs=0.1)
+    assert b.h == pytest.approx(2.0, abs=0.1)
+
+
+def test_3d_tip_overlay_uses_camera_world_with_fixture():
+    from falcocv.core.overlay_layer import OverlayType
+
+    depth = np.zeros((HEIGHT, WIDTH), dtype=np.float32)
+    _disc(depth, 80, 60, 4, BASE_Z + 2.0)
+
+    tool = _tool(depth, fixture=(30.0, 40.0, 0.0))
+    feature = tool.outputs["results"][0]
+    assert feature.x == pytest.approx(-50.0, abs=1.0)
+    assert feature.y == pytest.approx(20.0, abs=1.0)
+
+    layer = tool.outputs["output image"].get_overlay_layer("default")
+    tips = [
+        element for element in layer.elements
+        if element.element_type == OverlayType.WORLD_POINTS
+        and element.ref_id == "blob_tips"
+    ]
+    assert len(tips) == 1
+    point = tips[0].data["world_points"][0]
+    assert point[0] == pytest.approx(WIDTH - 1 - 80.0, abs=1.0)
+    assert point[1] == pytest.approx(60.0, abs=1.0)
+    assert point[2] == pytest.approx(BASE_Z + 2.0, abs=0.1)

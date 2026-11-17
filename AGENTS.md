@@ -384,9 +384,11 @@ cpp/bin/       → local kernel build output (gitignored)
   `z = depth*z_res + offset_z`), not from the strided cloud, so thin pins keep
   full resolution.  `plane_offset` shifts the plane along +normal (positive =
   up/+Z); a negative value is how features below the fitted surface are
-  measured.  The tip is the centroid of the `tip_band` under the maximum,
-  expressed in `PlaneFrame` (u, v in-plane, h along the normal), which makes
-  the measurement tilt-invariant.  Blob statistics run on each component's
+  measured.  The tip is the centroid of the `tip_band` under the maximum.
+  Coordinates are `x/y/z` in calibrated world millimetres, with the image
+  fixture applied to X/Y when present; `h` is the signed height above the
+  plane.  ROIs only select the search region and never define coordinate
+  origins.  Blob statistics run on each component's
   bounding box, never over the whole ROI crop: a 13 MP ROI went from 2.9 s to
   0.26 s with that change.  The public structured output is `results` typed
   `RESULTS`; `count` mirrors the result count.  There is no separate `features`

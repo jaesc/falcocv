@@ -1,25 +1,25 @@
 """Measured 3D features shared between tools.
 
-A feature is one detected region (a pin tip, a pad, a hole) expressed in the
-frame of the reference plane, so downstream tools can compare it with nominal
-coordinates without worrying about how the part is tilted.
+A feature is one detected region (a pin tip, a pad, a hole) in calibrated
+world coordinates, corrected by the image fixture when one is present.  ``h``
+is its signed height above the reference plane.  This lets downstream tools
+compare positions with nominal coordinates without using ROIs as origins.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from falcocv.core.plane_fit import PlaneFrame
-
 
 @dataclass(frozen=True)
 class FeaturePoint:
-    """One measured region, in the plane frame plus blob statistics."""
+    """One measured region, in calibrated world/fixture coordinates."""
 
     id: int                  # connected-component label before sorting
     index: int               # position after the configured sort
-    u: float                 # in-plane position along the frame X axis
-    v: float                 # in-plane position along the frame Y axis
+    x: float                 # calibrated world/fixture X (range image aligned)
+    y: float                 # calibrated world/fixture Y (range image aligned)
+    z: float                 # calibrated world Z
     h: float                 # signed tip height above the (offset) plane
     area_px: int
     area_mm2: float
@@ -30,21 +30,3 @@ class FeaturePoint:
     points: int
     touches_border: bool = False
     contour_2d: tuple[tuple[float, float], ...] = ()
-    depth: float = 0.0       # tip distance along the measurement direction
-
-
-@dataclass(frozen=True)
-class FeatureSet:
-    """Features plus the frame they are expressed in."""
-
-    frame: PlaneFrame
-    points: tuple[FeaturePoint, ...] = ()
-
-    def __len__(self) -> int:
-        return len(self.points)
-
-    def __iter__(self):
-        return iter(self.points)
-
-    def __getitem__(self, item):
-        return self.points[item]
