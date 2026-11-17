@@ -48,7 +48,13 @@ algorithm. Existing saved ranges are not rewritten automatically; press
 - If not connected, a horizontal **capture-zero plane** is used at
   `z = offset_z` (raw depth zero after calibration). A warning is emitted.
 - `direction="above"` measures +Z/up; `direction="below"` measures the other
-  side.
+  side. `h` is signed, so it is negative for `below`.
+- Coordinates follow **calibration first, fixture second**:
+  - `x/y` are calibrated world millimetres; when the input image has a
+    fixture, X/Y are corrected by the fixture pose.
+  - `z` is the calibrated world range coordinate.
+  - `h` is the signed height above the (offset) plane.
+  - ROIs only select the search region and never define coordinate origins.
 - The tool prefix is `[3DBL]`.
 - Public outputs are `output image`, `binary mask`, `count` and `results`
   (`RESULTS`). The results contain the measured feature fields; there is no

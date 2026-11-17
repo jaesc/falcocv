@@ -30,6 +30,7 @@ from falcocv.core.pointcloud_utils import (
 class WorkflowEditor(QWidget):
     _global_show_overlays = True
     workflow_changed = pyqtSignal()
+    block_generated = pyqtSignal(object)
 
     def __init__(self, workflow=None, parent=None):
         super().__init__(parent)
@@ -53,6 +54,8 @@ class WorkflowEditor(QWidget):
         self.tree.tool_selected.connect(self.on_tool_selected)
         self.tree.order_changed.connect(self.on_reorder)
         self.tree.tool_deleted.connect(self.on_deletion)
+        self.tree.tools_deleted.connect(self.on_deletions)
+        self.tree.generate_block_requested.connect(self.on_generate_block)
         self.tree.tool_dropped.connect(self.handle_add_tool)
         self.tree.tool_pasted.connect(self.on_tool_pasted)
 
@@ -180,6 +183,11 @@ class WorkflowEditor(QWidget):
         else:
             self.viewer_3d = None
         self.viewer = self.viewer_2d
+        self.viewer_2d.mouse_moved.connect(self._on_viewer_mouse_moved)
+        self.viewer_2d.mouse_left.connect(self._clear_pointer_readout)
+        if self.viewer_3d is not None:
+            self.viewer_3d.mouse_moved.connect(self._on_viewer3d_mouse_moved)
+            self.viewer_3d.mouse_left.connect(self._clear_pointer_readout)
         viewer_layout.addWidget(self.viewer_stack)
         
         self.splitter.addWidget(viewer_container)
@@ -345,6 +353,72 @@ class WorkflowEditor(QWidget):
         self.refresh_ui()
         self._mark_parent_dirty()
 
+    def on_generate_block(self, tools):
+        """Create a Block from the selected contiguous tools."""
+        if self._block_structure_edit_if_busy():
+            return
+
+        tools = list(tools)
+        if len(tools) < 2:
+            return
+
+        order = {id(tool): index for index, tool in enumerate(self.workflow.tools)}
+        indices = [order.get(id(tool)) for tool in tools]
+        if any(index is None for index in indices):
+            return
+        first = min(indices)
+        if sorted(indices) != list(range(first, first + len(indices))):
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self,
+                "Generate Block",
+                "The workflow runs in order. Select a contiguous range of "
+                "tools, without unselected tools in between, to create a Block.",
+            )
+            return
+
+        from PyQt6.QtWidgets import QDialog, QMessageBox
+        from falcocv.tools.block.builder import (
+            BlockBuildError,
+            build_block_from_tools,
+        )
+        from falcocv.ui.widgets.generate_block_dialog import GenerateBlockDialog
+
+        dialog = GenerateBlockDialog(
+            [tool.name for tool in tools],
+            self.tree._unique_name("Block"),
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        try:
+            block = build_block_from_tools(
+                self.workflow,
+                tools,
+                dialog.block_name(),
+                keep_originals=dialog.keep_originals,
+            )
+        except BlockBuildError as exc:
+            QMessageBox.warning(self, "Generate Block", str(exc))
+            return
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self,
+                "Generate Block",
+                f"Could not create the Block: {exc}",
+            )
+            return
+
+        self._bind_tool(block)
+        self.refresh_ui()
+        self.tree._restore_selection(block.uuid)
+        self._mark_parent_dirty()
+        self.controller.mark_dirty()
+        self.block_generated.emit(block)
+
     def setup_tool_connections(self, tool):
         self._bind_tool(tool)
 
@@ -404,6 +478,24 @@ class WorkflowEditor(QWidget):
         self.controller.mark_dirty()
         
         if was_looping: self.engine.start_loop()
+
+    def on_deletions(self, tools):
+        """Delete several selected tools in one structure change."""
+        if self._block_structure_edit_if_busy():
+            self.refresh_ui()
+            return
+        was_looping = self.engine.is_looping
+        if was_looping:
+            self.engine.stop_loop()
+
+        for tool in list(tools):
+            self.workflow.remove_tool(tool)
+        self.refresh_ui()
+        self._mark_parent_dirty()
+        self.controller.mark_dirty()
+
+        if was_looping:
+            self.engine.start_loop()
 
     def refresh_ui(self):
         """Total rebuild of the UI structure."""
@@ -532,6 +624,7 @@ class WorkflowEditor(QWidget):
         return None, None
 
     def update_viewer_image(self):
+        self._clear_pointer_readout()
         selection = self.record_selector.currentText()
         if not selection:
             self.viewer.set_image(None)
@@ -748,6 +841,53 @@ class WorkflowEditor(QWidget):
     def set_web_status(self, text: str, color_hex: str):
         self.label_web.setText(text)
         self.label_web.setStyleSheet(f"color: {color_hex}; font-family: Consolas, monospace; font-size: 10px;")
+
+    @staticmethod
+    def _format_pixel_value(value) -> str:
+        if value is None:
+            return "-"
+        arr = np.asarray(value)
+        if arr.ndim == 0:
+            item = arr.item()
+            if isinstance(item, (float, np.floating)):
+                return f"{float(item):.6g}"
+            return str(item)
+        flat = arr.reshape(-1)
+        if flat.size == 0:
+            return "-"
+        if flat.size >= 3:
+            # ImageViewer keeps OpenCV's BGR channel order.
+            r, g, b = int(flat[2]), int(flat[1]), int(flat[0])
+            if flat.size >= 4:
+                return f"({r},{g},{b},{int(flat[3])})"
+            return f"({r},{g},{b})"
+
+        def _fmt(item):
+            if isinstance(item, (float, np.floating)):
+                return f"{float(item):.6g}"
+            return str(item)
+
+        return ", ".join(_fmt(item) for item in flat)
+
+    def _clear_pointer_readout(self):
+        self.label_coords.setText("X,Y: -, -")
+        self.label_value.setText("VALUE: -")
+
+    def _on_viewer_mouse_moved(self, x, y, value):
+        if x < 0 or y < 0:
+            self._clear_pointer_readout()
+            return
+        self.label_coords.setText(f"X,Y: {int(x)}, {int(y)}")
+        self.label_value.setText(
+            f"VALUE: {self._format_pixel_value(value)}"
+        )
+
+    def _on_viewer3d_mouse_moved(self, x, y, z):
+        if not (np.isfinite(x) and np.isfinite(y) and np.isfinite(z)):
+            self._clear_pointer_readout()
+            return
+        self.label_coords.setText(f"X,Y: {x:.1f}, {y:.1f}")
+        self.label_value.setText(f"VALUE: Z {z:.1f}")
 
     def _port_name_from_record(self, record) -> str:
         return ""

@@ -203,6 +203,24 @@ class PlaneFitterConfig(QWidget):
         self.chk_draw_overlays.toggled.connect(self._on_draw_overlays)
         layout.addWidget(self.chk_draw_overlays)
 
+        self.chk_plane = QCheckBox("Show plane")
+        self.chk_plane.setToolTip(
+            "Draw the fitted plane polygon and its normal"
+        )
+        self.chk_plane.setChecked(bool(self.tool.params.get("show_plane", True)))
+        self.chk_plane.toggled.connect(self._on_show_plane)
+        layout.addWidget(self.chk_plane)
+
+        self.chk_search_roi = QCheckBox("Show Search ROI")
+        self.chk_search_roi.setToolTip(
+            "Draw the ROIs used to fit the plane"
+        )
+        self.chk_search_roi.setChecked(
+            bool(self.tool.params.get("show_search_roi", True))
+        )
+        self.chk_search_roi.toggled.connect(self._on_show_search_roi)
+        layout.addWidget(self.chk_search_roi)
+
         self.chk_copy_overlays = QCheckBox("Copy overlays to input")
         self.chk_copy_overlays.setToolTip(
             "Copy the plane polygon, normal and ROI outlines to the input image"
@@ -297,6 +315,16 @@ class PlaneFitterConfig(QWidget):
     def _on_draw_overlays(self, checked):
         self.tool.params["show_overlays"] = bool(checked)
         self._set_overlay_checkboxes(checked)
+        self.tool.mark_dirty()
+        self.update_viewer()
+
+    def _on_show_plane(self, checked):
+        self.tool.params["show_plane"] = bool(checked)
+        self.tool.mark_dirty()
+        self.update_viewer()
+
+    def _on_show_search_roi(self, checked):
+        self.tool.params["show_search_roi"] = bool(checked)
         self.tool.mark_dirty()
         self.update_viewer()
 
@@ -459,6 +487,15 @@ class PlaneFitterConfig(QWidget):
             self.chk_draw_overlays.blockSignals(True)
             self.chk_draw_overlays.setChecked(overlays_on)
             self.chk_draw_overlays.blockSignals(False)
+        for name, attr, default in (
+            ("show_plane", "chk_plane", True),
+            ("show_search_roi", "chk_search_roi", True),
+        ):
+            if hasattr(self, attr):
+                checkbox = getattr(self, attr)
+                checkbox.blockSignals(True)
+                checkbox.setChecked(bool(self.tool.params.get(name, default)))
+                checkbox.blockSignals(False)
         if hasattr(self, "chk_copy_overlays"):
             self.chk_copy_overlays.blockSignals(True)
             self.chk_copy_overlays.setChecked(

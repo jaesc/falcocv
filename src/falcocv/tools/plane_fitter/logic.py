@@ -43,6 +43,8 @@ class PlaneFitter(BaseTool):
             "auto_z_margin": 3.0,
             "copy_overlays_to_input": True,
             "show_overlays": True,
+            "show_plane": True,
+            "show_search_roi": True,
         }
         self.inputs = {"input image": None}
         self.outputs = {
@@ -184,9 +186,13 @@ class PlaneFitter(BaseTool):
         layer.elements = [e for e in layer.elements if e.source_tool != self.name]
 
         show_overlays = bool(self.params.get("show_overlays", True))
+        show_plane = show_overlays and bool(self.params.get("show_plane", True))
+        show_search_roi = show_overlays and bool(
+            self.params.get("show_search_roi", True)
+        )
 
         # Plane polygon overlay (semi-transparent filled quadrilateral)
-        if show_overlays and polygon_2d is not None and len(polygon_2d) >= 3:
+        if show_plane and polygon_2d is not None and len(polygon_2d) >= 3:
             pts = [[float(p[0]), float(p[1])] for p in polygon_2d]
             layer.add_polygon(
                 pts,
@@ -214,7 +220,7 @@ class PlaneFitter(BaseTool):
                                     ref_id="plane_polygon_3d")
 
         # Normal arrow projected to 2D
-        if show_overlays and abs(scale_x) > 1e-12 and abs(scale_y) > 1e-12 and depth is not None:
+        if show_plane and abs(scale_x) > 1e-12 and abs(scale_y) > 1e-12 and depth is not None:
             h, w = depth.shape[:2]
             arrow_len = min(w * scale_x, h * scale_y) * 0.25
             # Undo the world-X mirroring used by the point cloud:
@@ -239,7 +245,7 @@ class PlaneFitter(BaseTool):
 
         # ROI overlays — must use absolute image coords so they align with the
         # displayed range image, even when the stored ROIs are in fixture coords.
-        if show_overlays:
+        if show_search_roi:
             for roi_entry in rois_abs:
                 roi_2d = roi_entry.get("roi", [0, 0, 0, 0, 0])
                 if roi_2d[2] > 0 and roi_2d[3] > 0:

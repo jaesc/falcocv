@@ -1,8 +1,10 @@
 """3D blob measurement above a reference plane.
 
-Each connected region of the height mask is one feature: its tip is the
-centroid of the band just below the highest point, expressed in the frame of
-the reference plane so tilt does not bias the measurement.
+Each connected region of the height mask is one feature.  Its tip is the
+centroid of the band just below the highest point, expressed in calibrated
+world coordinates (and corrected by the image fixture when one is present).
+``h`` is the signed height above the reference plane.  ROIs only select the
+search region; they never define coordinate origins.
 """
 
 from __future__ import annotations
@@ -12,6 +14,11 @@ import math
 import cv2
 import numpy as np
 
+from falcocv.core.coordinates import (
+    fixture_to_world_xy,
+    fixture_transform,
+    world_to_fixture_xy,
+)
 from falcocv.core.features import FeaturePoint
 from falcocv.core.plane_fit import PlaneModel
 from falcocv.core.port_types import IMAGE, PLANE, RESULTS
@@ -21,7 +28,7 @@ from falcocv.core.tool_base import BaseTool, ToolResult, ToolResults
 from falcocv.core.tool_registry import register_tool
 from falcocv.core.vision_image import VisionImage
 
-SORT_MODES = ("none", "u", "v", "h", "area", "grid")
+SORT_MODES = ("none", "x", "y", "h", "area", "grid")
 
 
 class HeightBlobResult(ToolResult):
@@ -29,10 +36,10 @@ class HeightBlobResult(ToolResult):
         super().__init__(
             id=feature.id,
             index=feature.index,
-            u=feature.u,
-            v=feature.v,
+            x=feature.x,
+            y=feature.y,
+            z=feature.z,
             h=feature.h,
-            depth=feature.depth,
             area_px=feature.area_px,
             area_mm2=feature.area_mm2,
             volume_mm3=feature.volume_mm3,
@@ -79,7 +86,7 @@ class HeightBlobs3D(BaseTool):
             "watershed_erode_px": 2,
             "tip_band": 0.05,
             "tip_stat": "mean",
-            "sort_mode": "u",
+            "sort_mode": "x",
             "sort_descending": False,
             "show_overlays": True,
             "show_search_roi": True,
@@ -307,12 +314,7 @@ class HeightBlobs3D(BaseTool):
             self._publish_empty(img, plane)
             return
 
-        angle_hint = None
-        if entries:
-            roi_angle = float(entries[0][0][4]) if len(entries[0][0]) >= 5 else 0.0
-            radians = math.radians(roi_angle)
-            angle_hint = (math.cos(radians), -math.sin(radians), 0.0)
-        frame = plane.frame(angle_hint)
+        fixture = fixture_transform(img, depth_w)
 
         pixel_area = abs(scale_x * scale_y)
         eroded = cv2.erode(footprint, np.ones((3, 3), np.uint8))
@@ -350,14 +352,23 @@ class HeightBlobs3D(BaseTool):
                 ],
                 axis=1,
             )
-            u_values, v_values, h_values = frame.to_plane(world_points)
+            x_values, y_values = world_to_fixture_xy(
+                world_points[:, 0], world_points[:, 1], fixture
+            )
+            z_values = world_points[:, 2]
+            h_values = (
+                world_points @ np.asarray(plane.normal, dtype=np.float64)
+                - float(plane.distance)
+            )
             if tip_stat == "median":
-                u = float(np.median(u_values))
-                v = float(np.median(v_values))
+                x = float(np.median(x_values))
+                y = float(np.median(y_values))
+                z = float(np.median(z_values))
                 h = float(np.median(h_values))
             else:
-                u = float(np.mean(u_values))
-                v = float(np.mean(v_values))
+                x = float(np.mean(x_values))
+                y = float(np.mean(y_values))
+                z = float(np.mean(z_values))
                 h = float(np.mean(h_values))
 
             area_px = int(np.count_nonzero(region))
@@ -378,10 +389,10 @@ class HeightBlobs3D(BaseTool):
             features.append(FeaturePoint(
                 id=int(label),
                 index=0,
-                u=u,
-                v=v,
+                x=x,
+                y=y,
+                z=z,
                 h=h,
-                depth=sign * h,
                 area_px=area_px,
                 area_mm2=float(area_px) * pixel_area,
                 volume_mm3=float(np.sum(np.clip(values, 0.0, None))) * pixel_area,
@@ -401,7 +412,7 @@ class HeightBlobs3D(BaseTool):
         )
         self.outputs["binary mask"] = self._mask_image(mask, img)
         self.outputs["output image"] = self._draw_overlays(
-            img, features, frame
+            img, features, fixture
         )
         self.data_changed.emit()
 
@@ -416,7 +427,7 @@ class HeightBlobs3D(BaseTool):
     def _publish_empty(self, img, plane) -> None:
         self.outputs["count"] = 0
         self.outputs["results"] = ToolResults()
-        self.outputs["output image"] = self._draw_overlays(img, [], None)
+        self.outputs["output image"] = self._draw_overlays(img, [])
         self.data_changed.emit()
 
     @staticmethod
@@ -424,7 +435,7 @@ class HeightBlobs3D(BaseTool):
         display = (mask * 255).astype(np.uint8)
         return VisionImage(display)
 
-    def _draw_overlays(self, img, features, frame):
+    def _draw_overlays(self, img, features, fixture=None):
         out = VisionImage(
             img.data,
             x=img.x,
@@ -499,16 +510,18 @@ class HeightBlobs3D(BaseTool):
                         font_scale=0.5,
                         thickness=1,
                     )
-            if show_centroids and frame is not None and features:
-                u_values = np.array([feature.u for feature in features])
-                v_values = np.array([feature.v for feature in features])
-                h_values = np.array([feature.h for feature in features])
-                world_points = frame.to_world(u_values, v_values, h_values)
+            if show_centroids and features:
+                fixture_x = np.array([feature.x for feature in features])
+                fixture_y = np.array([feature.y for feature in features])
+                world_x, world_y = fixture_to_world_xy(
+                    fixture_x, fixture_y, fixture
+                )
+                world_points = [
+                    (float(x), float(y), float(feature.z))
+                    for x, y, feature in zip(world_x, world_y, features)
+                ]
                 layer.add_world_points(
-                    [
-                        tuple(float(value) for value in point)
-                        for point in world_points
-                    ],
+                    world_points,
                     color=(0, 220, 255),
                     point_size=6.0,
                     ref_id="blob_tips",
@@ -528,7 +541,7 @@ class HeightBlobs3D(BaseTool):
         if len(features) < 3:
             return 0.0
         points = np.asarray(
-            [(f.u, f.v) for f in features], dtype=np.float64
+            [(f.x, f.y) for f in features], dtype=np.float64
         )
         delta = points[:, None, :] - points[None, :, :]
         distance = np.hypot(delta[..., 0], delta[..., 1])
@@ -549,15 +562,15 @@ class HeightBlobs3D(BaseTool):
     def _grid_order(self, features):
         """Order a matrix of blobs by rows and then by columns."""
         if len(features) < 3:
-            return sorted(features, key=lambda f: (f.v, f.u, f.id))
+            return sorted(features, key=lambda f: (f.y, f.x, f.id))
         angle = math.radians(self._grid_angle(features))
         cosine = math.cos(angle)
         sine = math.sin(angle)
 
         def coordinates(feature):
             # ``column`` runs along the matrix rows; ``row`` groups them.
-            column = cosine * feature.u + sine * feature.v
-            row = -sine * feature.u + cosine * feature.v
+            column = cosine * feature.x + sine * feature.y
+            row = -sine * feature.x + cosine * feature.y
             return row, column, feature
 
         ordered = sorted(
@@ -597,9 +610,9 @@ class HeightBlobs3D(BaseTool):
         ]
 
     def _sort(self, features):
-        mode = str(self.params.get("sort_mode", "u"))
+        mode = str(self.params.get("sort_mode", "x"))
         if mode not in SORT_MODES:
-            mode = "u"
+            mode = "x"
         descending = bool(self.params.get("sort_descending", False))
 
         if mode == "none":
@@ -610,12 +623,12 @@ class HeightBlobs3D(BaseTool):
                 ordered.reverse()
         else:
             def key(feature):
-                if mode == "u":
-                    return (feature.u, feature.id)
-                if mode == "v":
-                    return (feature.v, feature.id)
+                if mode == "x":
+                    return (feature.x, feature.id)
+                if mode == "y":
+                    return (feature.y, feature.id)
                 if mode == "h":
-                    return (feature.depth, feature.id)
+                    return (feature.h, feature.id)
                 return (feature.area_px, feature.id)
 
             ordered = sorted(features, key=key, reverse=descending)

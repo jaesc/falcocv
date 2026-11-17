@@ -340,7 +340,7 @@ class HeightBlobs3DConfig(QWidget):
         layout.addWidget(self.label_count)
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["#", "u", "v", "h", "depth", "area"]
+            ["#", "x", "y", "z", "h", "area"]
         )
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
@@ -394,10 +394,10 @@ class HeightBlobs3DConfig(QWidget):
         for row, result in enumerate(results):
             values = (
                 result.get("index"),
-                f"{result.get('u', 0.0):.3f}",
-                f"{result.get('v', 0.0):.3f}",
+                f"{result.get('x', 0.0):.3f}",
+                f"{result.get('y', 0.0):.3f}",
+                f"{result.get('z', 0.0):.3f}",
                 f"{result.get('h', 0.0):.3f}",
-                f"{result.get('depth', 0.0):.3f}",
                 f"{result.get('area_mm2', 0.0):.3f}",
             )
             for column, value in enumerate(values):
@@ -469,6 +469,7 @@ class HeightBlobs3DConfig(QWidget):
             bbox_center=cloud.get("bbox_center"),
             bbox_size=cloud.get("bbox_size"),
         )
+        self.roi_editor._update_viewer_3d_roi()
 
     def on_config_closed(self):
         save_params_splitter(self.content_splitter, "HeightBlobs3D")

@@ -245,17 +245,8 @@ class RoiEditor3DWidget(QGroupBox):
             self.spin_z_max.setValue(z_max)
             self.spin_z_max.blockSignals(False)
 
-    def _update_viewer_3d_roi(self):
-        if self.viewer_3d is None or self.tool is None:
-            return
-        if hasattr(self.viewer_3d, 'isVisible') and not self.viewer_3d.isVisible():
-            return
-        rois = self.tool.params.get("rois", [])
-        if not rois or self._active_index >= len(rois):
-            self.viewer_3d.show_roi(False)
-            return
-
-        entry = rois[self._active_index]
+    def _roi_entry_box(self, entry):
+        """Return (center_3d, size_3d, angle_world) for one ROI entry."""
         roi_fixture = entry.get("roi", [0, 0, 0, 0, 0])
         z_min = float(entry.get("z_min", 0.0))
         z_max = float(entry.get("z_max", 1.0))
@@ -290,9 +281,39 @@ class RoiEditor3DWidget(QGroupBox):
         sz = max(display_z_max - display_z_min, 1e-6)
         center_3d[2] = cz
         size_3d[2] = sz
+        return center_3d, size_3d, angle_world
+
+    def _update_viewer_3d_roi(self):
+        if self.viewer_3d is None or self.tool is None:
+            return
+        rois = self.tool.params.get("rois", [])
+        if not rois or self._active_index >= len(rois):
+            if hasattr(self.viewer_3d, "set_roi_boxes"):
+                self.viewer_3d.set_roi_boxes([])
+            self.viewer_3d.show_roi(False)
+            return
+
+        boxes = []
+        for entry in rois:
+            center_3d, size_3d, angle_world = self._roi_entry_box(entry)
+            boxes.append({
+                "center": center_3d.tolist(),
+                "size": size_3d.tolist(),
+                "rotation": angle_world,
+            })
+
+        # Draw every ROI; the active one keeps the editable orange box and the
+        # rest are shown as green wireframes.
+        if hasattr(self.viewer_3d, "set_roi_boxes"):
+            self.viewer_3d.set_roi_boxes(boxes, self._active_index)
+
+        active = boxes[self._active_index] if self._active_index < len(boxes) else None
+        if active is None:
+            self.viewer_3d.show_roi(False)
+            return
 
         self.viewer_3d.set_roi(
-            center_3d.tolist(), size_3d.tolist(), rotation=angle_world
+            active["center"], active["size"], rotation=active["rotation"]
         )
         self.viewer_3d.show_roi(True)
 
