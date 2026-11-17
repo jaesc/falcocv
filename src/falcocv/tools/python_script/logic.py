@@ -1,7 +1,7 @@
 import os
 import sys
 import importlib.util
-from falcocv.core.tool_base import BaseTool, CallbackList
+from falcocv.core.tool_base import BaseTool, ToolSignal
 from falcocv.core.port_types import (
     ANY,
     IMAGE,
@@ -20,11 +20,13 @@ _PY_VER = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.
 @register_tool(prefix="[PYTH]", default_name="Python Script", group="Logic")
 class PythonScriptTool(BaseTool):
     supports_manual_run = False
-    debugger_paused = CallbackList()
-    debugger_resumed = CallbackList()
 
     def __init__(self, name="Python Script"):
         super().__init__(name)
+        # Debugger callbacks run on the workflow thread; ToolSignal marshals
+        # them to the GUI thread through the installed dispatcher.
+        self.debugger_paused = ToolSignal()
+        self.debugger_resumed = ToolSignal()
         self.params = {"script_path": "", "script_code": ""}
         self.port_metadata = {
             "inputs": {"input image": IMAGE},

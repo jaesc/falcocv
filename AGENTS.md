@@ -465,6 +465,13 @@ cpp/bin/       → local kernel build output (gitignored)
   ~6.6 kpx, RMS 0.04 px on the synthetic line), so set `max_radius` to catch
   it; the core keeps a hard `_MAX_RADIUS = 1e7` safety only.  A configured
   `min_radius > max_radius` is a configuration error.
+- **Python Script debugger threading** -> `debugger_paused`/`debugger_resumed`
+  are per-instance `ToolSignal`s so the dispatcher marshals them to the GUI
+  thread; the config's `_qt_wait` only pumps events on the GUI thread and
+  blocks otherwise.  Never call `QApplication.processEvents()` from a worker
+  thread and never paint a widget from a debugger callback: with the background
+  execution service a breakpoint pause happens on the workflow thread, and
+  touching Qt there crashes inside `Qt6Gui.dll`.
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
   `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
   the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.

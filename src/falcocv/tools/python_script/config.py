@@ -2,8 +2,8 @@ import os
 import sys
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QLabel, QLineEdit, QFileDialog,
-                             QTabWidget, QSplitter)
-from PyQt6.QtCore import Qt, QTimer
+                             QTabWidget, QSplitter, QApplication)
+from PyQt6.QtCore import Qt, QTimer, QThread
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.Qsci import QsciScintilla
 from falcocv.ui.style import INFO, SUCCESS, WARNING, ALT_BG, BORDER, TEXT, TEXT_MUTED, SCRIPT_BG
@@ -14,6 +14,22 @@ from falcocv.ui.widgets.port_table import PortTable
 from falcocv.core.tool_base import BaseTool
 
 _PY_VER = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
+
+def _qt_wait(event):
+    """Wait for the debugger event without breaking Qt thread affinity.
+
+    Synchronous runs happen on the GUI thread, so the event loop has to be
+    pumped manually or the UI freezes.  With the background execution service
+    the debugger pauses on a worker thread; ``processEvents`` is illegal there,
+    so only block and let the GUI thread handle the queued pause signal.
+    """
+    app = QApplication.instance()
+    if app is None or QThread.currentThread() is not app.thread():
+        event.wait()
+        return
+    while not event.wait(0.05):
+        QApplication.processEvents()
 
 DEFAULT_TEMPLATE = '''# FalcoCV Custom Tool Template
 #
@@ -229,13 +245,8 @@ class PythonScriptConfig(QWidget):
         self.debug_toolbar.stop_requested.connect(self._on_debug_stop)
         debug_lyt.addWidget(self.debug_toolbar)
 
-        # Inject Qt wait strategy so debugger pause doesn't freeze the UI
-        from PyQt6.QtWidgets import QApplication
-
-        def _qt_wait(event):
-            while not event.wait(0.05):
-                QApplication.processEvents()
-
+        # Inject the Qt-aware wait strategy so a synchronous pause does not
+        # freeze the UI; on a worker thread it just blocks.
         self.tool._debugger.set_wait_strategy(_qt_wait)
 
         # Horizontal splitter: locals (left) | watch (right)
