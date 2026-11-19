@@ -5,6 +5,10 @@ Each tool entry is a dict with keys:
   name, category, purpose,
   inputs, outputs, params, result (optional),
   notes (optional), see_also (optional)
+
+Application guides (install, CLI, HMI, web, user libraries, ...) live in
+``falcocv.ui.app_help`` and are merged into ``TOOL_HELP`` at the end of this
+module, so the dialog and the tests use one lookup table.
 """
 
 TOOL_HELP = {}
@@ -33,6 +37,8 @@ TYPE_TO_HELP_KEY = {
     "Classifier": "Classifier",
     "AnomalyDetector": "Anomaly Detector",
     "OCR": "OCR",
+    "PlaneFitter": "Plane Fitter",
+    "HeightBlobs3D": "Height Blobs 3D",
 }
 
 
@@ -2197,3 +2203,107 @@ TOOL_HELP["Shape Match"] = {
     ),
     "see_also": ["Template Match", "Measurement"],
 }
+
+TOOL_HELP["Plane Fitter"] = {
+    "name": "Plane Fitter",
+    "category": "3D",
+    "purpose": (
+        "Fits a plane to the depth data inside one or more 3D ROIs and publishes a "
+        "reference plane for the other 3D tools. Use it to measure heights relative "
+        "to a surface even when the part or the camera is tilted."
+    ),
+    "inputs": [
+        {"name": "input image", "type": "VisionImage (depth)",
+         "description": "Depth image with calibration data so pixels map to world millimetres."},
+    ],
+    "outputs": [
+        {"name": "output image", "type": "VisionImage",
+         "description": "Input image plus the fitted plane and ROI overlays."},
+        {"name": "results", "type": "ToolResults[PlaneFitResult]",
+         "description": "normal, center, distance, inliers, RMS error and point counts."},
+        {"name": "plane", "type": "PlaneModel",
+         "description": "Reference plane consumed by Height Blobs 3D through its reference plane port."},
+    ],
+    "params": [
+        {"name": "rois", "default": "[]",
+         "description": "3D ROIs [x, y, w, h, angle, z_min, z_max] in fixture coordinates. "
+                        "A z range of 0..1 means automatic."},
+        {"name": "method", "default": '"ransac"',
+         "description": "ransac rejects outliers (default); lsq is a plain least-squares fit."},
+        {"name": "distance_threshold", "default": "1.0",
+         "description": "RANSAC inlier distance in world units."},
+        {"name": "max_iterations", "default": "100", "description": "RANSAC iterations."},
+        {"name": "min_points", "default": "10",
+         "description": "Minimum valid points required to publish a plane."},
+        {"name": "max_fit_points", "default": "50000",
+         "description": "Cap on the points sampled for the fit."},
+        {"name": "auto_z_margin", "default": "3.0",
+         "description": "Expands the automatic Z band on both sides when Auto-fit Z runs. "
+                        "0 disables the margin."},
+        {"name": "show_overlays", "default": "True", "description": "Master overlay switch."},
+        {"name": "show_plane", "default": "True", "description": "Draw the fitted plane polygon."},
+        {"name": "show_search_roi", "default": "True", "description": "Draw the search ROIs."},
+        {"name": "copy_overlays_to_input", "default": "True",
+         "description": "Publish the overlays to the input image for downstream tools."},
+    ],
+    "result": {
+        "class": "PlaneFitResult",
+        "fields": [
+            {"name": "normal", "type": "list[float]", "description": "Unit normal pointing to +Z/up."},
+            {"name": "center", "type": "list[float]", "description": "A point on the plane."},
+            {"name": "distance", "type": "float", "description": "Plane offset along the normal."},
+            {"name": "inlier_count", "type": "int", "description": "Points inside the RANSAC threshold."},
+            {"name": "inlier_ratio", "type": "float", "description": "Inliers divided by sampled points."},
+            {"name": "rms_error", "type": "float", "description": "Residual RMS of the inliers."},
+            {"name": "total_points", "type": "int", "description": "Valid points considered."},
+        ],
+    },
+    "notes": (
+        "The normal always points to +Z/up, so "
+        "<code>plane.height(point) &gt; 0</code> means the point is above the plane; "
+        "consumers must not flip the sign again. When every ROI has a fixed Z range the "
+        "native fit skips the full-image depth scan, which is much faster on large frames. "
+        "Calibration is a guard: a consumer with a different calibration gets a warning."
+    ),
+    "see_also": ["Height Blobs 3D", "3D & Depth", "Depth/Range Loader"],
+}
+
+TOOL_HELP["Fixture Overlay"] = {
+    "name": "Fixture Overlay",
+    "category": "Processing",
+    "purpose": (
+        "Creates a fixture from an overlay element produced by an earlier tool (an edge "
+        "point, a fitted line or circle, a blob centroid, a matcher pose...). Downstream "
+        "ROIs and measurements are then expressed relative to that part feature instead of "
+        "the image origin."
+    ),
+    "inputs": [
+        {"name": "input image", "type": "VisionImage",
+         "description": "Image with the overlays published by the upstream tool."},
+    ],
+    "outputs": [
+        {"name": "output image", "type": "VisionImage",
+         "description": "Same pixels with x/y/angle set to the selected fixture."},
+    ],
+    "params": [
+        {"name": "selected_source_tool", "default": "None",
+         "description": "Tool that produced the element (source_tool of the overlay)."},
+        {"name": "selected_ref_id", "default": "None",
+         "description": "Reference id of the element inside that tool (for example 'edge1')."},
+        {"name": "selected_type", "default": "None",
+         "description": "Overlay type: POINT, LINE, CIRCLE, ROI, CONTOUR or POLYGON."},
+    ],
+    "notes": (
+        "Choose the element in the configuration dropdown; the tool copies the input image "
+        "and sets its fixture from the element's centre and angle. If the element is missing "
+        "the tool reports an error instead of keeping a stale fixture. ROIs are stored in "
+        "fixture coordinates, so a rotated fixture keeps its ROIs upright."
+    ),
+    "see_also": ["Vision Editor", "Edge Detection", "Line Fit", "Shape Match"],
+}
+
+# Application guides live in their own module; merge them so the help dialog
+# and every lookup see a single mapping.
+from falcocv.ui.app_help import APP_HELP  # noqa: E402
+
+TOOL_HELP.update(APP_HELP)

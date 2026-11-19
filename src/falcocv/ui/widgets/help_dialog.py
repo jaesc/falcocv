@@ -4,12 +4,13 @@ Uses QTextBrowser with Markdown + embedded HTML <font color> for highlighting.
 """
 
 import re
+from urllib.parse import unquote
 
 from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QVBoxLayout, QListWidget,
                               QListWidgetItem, QPushButton, QWidget, QLabel,
-                              QTextBrowser)
-from PyQt6.QtCore import Qt, QSize, QTimer
-from PyQt6.QtGui import QFont, QColor
+                              QTextBrowser, QLineEdit)
+from PyQt6.QtCore import Qt, QSize, QTimer, QUrl
+from PyQt6.QtGui import QFont, QColor, QDesktopServices
 
 from falcocv.ui.view_state import restore_window, save_window
 from falcocv.ui.style import (DARK_BG, ALT_BG, TEXT, TEXT_MUTED, BORDER, HIGHLIGHT,
@@ -22,6 +23,9 @@ from falcocv.ui.tool_help import TOOL_HELP, TYPE_TO_HELP_KEY
 # ── Category ordering ──────────────────────────────────────────────────────
 
 _CATEGORIES = [
+    "Getting Started",
+    "Guides",
+    "Reference",
     "Acquisition",
     "Processing",
     "Inspection",
@@ -104,10 +108,67 @@ def highlight_python(text: str) -> str:
 
 # ── HTML generation (we use setHtml, not setMarkdown) ──────────────────────
 
+def _highlight_blocks(html: str, code_block) -> str:
+    """Highlight inline code and code blocks in a help fragment."""
+    html = re.sub(
+        r'<code>(.*?)</code>',
+        lambda m: f'<code>{highlight_python(m.group(1))}</code>',
+        html,
+        flags=re.DOTALL,
+    )
+    return re.sub(
+        r'<pre>(.*?)</pre>',
+        lambda m: code_block(m.group(1)),
+        html,
+        flags=re.DOTALL,
+    )
+
+
+def _see_also_links(keys) -> str:
+    links = []
+    for key in keys:
+        if key in TOOL_HELP:
+            links.append(f'<a href="page:{key}">{key}</a>')
+        else:
+            links.append(f'<code>{highlight_python(key)}</code>')
+    return ", ".join(links)
+
+
+def _document(parts: list[str]) -> str:
+    style = (
+        f"body {{ background-color: {DARK_BG}; color: {TEXT}; "
+        f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; "
+        f"line-height: 1.7; padding: 12px; margin: 0; }}"
+        f"h2 {{ color: #7aa2f7; font-size: 20px; font-weight: 700; "
+        f"border-bottom: 2px solid #7aa2f7; padding-bottom: 8px; margin: 0 0 6px 0; }}"
+        f"h3 {{ color: #7aa2f7; font-size: 12px; font-weight: 700; "
+        f"text-transform: uppercase; letter-spacing: 1px; "
+        f"border-bottom: 1px solid {BORDER}; padding-bottom: 6px; "
+        f"margin: 24px 0 12px 0; }}"
+        f"h4 {{ color: #7aa2f7; font-size: 14px; font-weight: 600; "
+        f"margin: 18px 0 6px 0; }}"
+        f"p {{ line-height: 1.7; margin: 8px 0; }}"
+        f"ul, ol {{ margin: 8px 0 8px 22px; line-height: 1.7; }}"
+        f"table {{ border-collapse: collapse; width: 100%; margin: 10px 0; "
+        f"font-size: 13px; }}"
+        f"th {{ background-color: {ALT_BG}; color: #7aa2f7; text-align: left; "
+        f"padding: 7px 10px; border: 1px solid {BORDER}; "
+        f"font-size: 12px; font-weight: 600; }}"
+        f"td {{ padding: 7px 10px; border: 1px solid {BORDER}; "
+        f"border-top: none; vertical-align: top; }}"
+        f"tr:nth-child(even) td {{ background-color: {ALT_BG}; }}"
+        f"code {{ font-family: Consolas, monospace; font-size: 12.5px; }}"
+        f"a {{ color: {HIGHLIGHT}; text-decoration: none; }}"
+        f"hr {{ border: none; border-top: 1px solid {BORDER}; margin: 20px 0; }}"
+    )
+    body = "".join(parts)
+    return f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>{style}</style></head><body>{body}</body></html>'
+
+
 def _render_html(entry: dict) -> str:
     """Build an HTML document with <font color> syntax highlighting."""
     if not entry:
-        return "<html><body>Select a tool from the list.</body></html>"
+        return "<html><body>Select a page from the list.</body></html>"
 
     name = entry.get("name", "")
     purpose = entry.get("purpose", "")
@@ -147,159 +208,129 @@ def _render_html(entry: dict) -> str:
             f'{highlighted}</td></tr></table>'
         )
 
-    # Inputs
-    inputs = entry.get("inputs", [])
-    parts.append(_section("Inputs"))
-    if inputs:
-        rows = []
-        for i in inputs:
-            rows.append(
-                f'<td>{_code(i["name"])}</td>'
-                f'<td>{_muted(i["type"])}</td>'
-                f'<td>{i["description"]}</td>'
+    if entry.get("kind") == "guide":
+        for section in entry.get("sections", []):
+            parts.append(_section(section.get("title", "")))
+            parts.append(
+                _highlight_blocks(section.get("html", ""), _code_block)
             )
-        parts.append(_table(["Port", "Type", "Description"], rows))
     else:
-        parts.append(f'<p><font color="{TEXT_MUTED}">No input ports</font></p>')
-
-    # Outputs
-    outputs = entry.get("outputs", [])
-    parts.append(_section("Outputs"))
-    if outputs:
-        rows = []
-        for o in outputs:
-            rows.append(
-                f'<td>{_code(o["name"])}</td>'
-                f'<td>{_muted(o["type"])}</td>'
-                f'<td>{o["description"]}</td>'
-            )
-        parts.append(_table(["Port", "Type", "Description"], rows))
-    else:
-        parts.append(f'<p><font color="{TEXT_MUTED}">No output ports</font></p>')
-
-    # Parameters
-    params = entry.get("params", [])
-    if params:
-        parts.append(_section("Parameters"))
-        rows = []
-        for p in params:
-            default_val = str(p.get("default", ""))
-            rows.append(
-                f'<td>{_code(p["name"])}</td>'
-                f'<td>{_code(default_val)}</td>'
-                f'<td>{p["description"]}</td>'
-            )
-        parts.append(_table(["Parameter", "Default", "Description"], rows))
-
-    # Result fields
-    result = entry.get("result")
-    if result:
-        fields = result.get("fields", [])
-        if fields:
-            parts.append(_section(f'Result: {result["class"]}'))
+        # Inputs
+        inputs = entry.get("inputs", [])
+        parts.append(_section("Inputs"))
+        if inputs:
             rows = []
-            for f in fields:
+            for i in inputs:
                 rows.append(
-                    f'<td>{_code(f["name"])}</td>'
-                    f'<td>{_muted(f["type"])}</td>'
-                    f'<td>{f["description"]}</td>'
+                    f'<td>{_code(i["name"])}</td>'
+                    f'<td>{_muted(i["type"])}</td>'
+                    f'<td>{i["description"]}</td>'
                 )
-            parts.append(_table(["Field", "Type", "Description"], rows))
+            parts.append(_table(["Port", "Type", "Description"], rows))
+        else:
+            parts.append(f'<p><font color="{TEXT_MUTED}">No input ports</font></p>')
 
-    # Notes
-    notes = entry.get("notes")
-    if notes:
-        parts.append(_section("Usage Notes"))
-        # Highlight inline <code> in notes
-        notes = re.sub(
-            r'<code>(.*?)</code>',
-            lambda m: f'<code>{highlight_python(m.group(1))}</code>',
-            notes
-        )
-        # Wrap <pre> blocks with highlighted code
-        notes = re.sub(
-            r'<pre>(.*?)</pre>',
-            lambda m: _code_block(m.group(1)),
-            notes,
-            flags=re.DOTALL
-        )
-        parts.append(f'<div>{notes}</div>')
+        # Outputs
+        outputs = entry.get("outputs", [])
+        parts.append(_section("Outputs"))
+        if outputs:
+            rows = []
+            for o in outputs:
+                rows.append(
+                    f'<td>{_code(o["name"])}</td>'
+                    f'<td>{_muted(o["type"])}</td>'
+                    f'<td>{o["description"]}</td>'
+                )
+            parts.append(_table(["Port", "Type", "Description"], rows))
+        else:
+            parts.append(f'<p><font color="{TEXT_MUTED}">No output ports</font></p>')
 
-    # See also
+        # Parameters
+        params = entry.get("params", [])
+        if params:
+            parts.append(_section("Parameters"))
+            rows = []
+            for p in params:
+                default_val = str(p.get("default", ""))
+                rows.append(
+                    f'<td>{_code(p["name"])}</td>'
+                    f'<td>{_code(default_val)}</td>'
+                    f'<td>{p["description"]}</td>'
+                )
+            parts.append(_table(["Parameter", "Default", "Description"], rows))
+
+        # Result fields
+        result = entry.get("result")
+        if result:
+            fields = result.get("fields", [])
+            if fields:
+                parts.append(_section(f'Result: {result["class"]}'))
+                rows = []
+                for f in fields:
+                    rows.append(
+                        f'<td>{_code(f["name"])}</td>'
+                        f'<td>{_muted(f["type"])}</td>'
+                        f'<td>{f["description"]}</td>'
+                    )
+                parts.append(_table(["Field", "Type", "Description"], rows))
+
+        # Notes
+        notes = entry.get("notes")
+        if notes:
+            parts.append(_section("Usage Notes"))
+            parts.append(
+                f'<div>{_highlight_blocks(notes, _code_block)}</div>'
+            )
+
+        # Sub-sections
+        sub_sections = {
+            "filters": "Available Filters",
+            "calc_ops": "Operations",
+            "measurement_modes": "Measurement Modes",
+            "barcode_types": "Barcode Types",
+        }
+        for sub_key, sub_title in sub_sections.items():
+            sub_data = entry.get(sub_key)
+            if not sub_data:
+                continue
+            parts.append(_section(sub_title))
+            for sk, sv in sub_data.items():
+                parts.append(f'<hr><h4>{sv.get("name", sk)}</h4>')
+                if sv.get("how_it_works"):
+                    parts.append(f'<p><strong>How it works:</strong> {sv["how_it_works"]}</p>')
+                if sv.get("effect"):
+                    parts.append(f'<p><strong>Effect:</strong> {sv["effect"]}</p>')
+                sub_params = sv.get("params_detail", [])
+                if sub_params:
+                    rows = []
+                    for sp in sub_params:
+                        rows.append(
+                            f'<td>{_code(sp.get("name",""))}</td>'
+                            f'<td>{sp.get("detail","")}</td>'
+                        )
+                    parts.append(_table(["Parameter", "Detail"], rows))
+                if sv.get("when_to_use"):
+                    parts.append(f'<p><strong>When to use:</strong> {sv["when_to_use"]}</p>')
+                if sv.get("limitations"):
+                    parts.append(f'<p><strong>Limitations:</strong> {sv["limitations"]}</p>')
+
+    # See also (clickable page links when the target has a help page)
     see = entry.get("see_also")
     if see:
         parts.append(_section("See Also"))
-        items = ", ".join(_code(s) for s in see)
-        parts.append(f'<p>{items}</p>')
+        parts.append(f'<p>{_see_also_links(see)}</p>')
 
-    # Sub-sections
-    sub_sections = {
-        "filters": "Available Filters",
-        "calc_ops": "Operations",
-        "measurement_modes": "Measurement Modes",
-        "barcode_types": "Barcode Types",
-    }
-    for sub_key, sub_title in sub_sections.items():
-        sub_data = entry.get(sub_key)
-        if not sub_data:
-            continue
-        parts.append(_section(sub_title))
-        for sk, sv in sub_data.items():
-            parts.append(f'<hr><h4>{sv.get("name", sk)}</h4>')
-            if sv.get("how_it_works"):
-                parts.append(f'<p><strong>How it works:</strong> {sv["how_it_works"]}</p>')
-            if sv.get("effect"):
-                parts.append(f'<p><strong>Effect:</strong> {sv["effect"]}</p>')
-            sub_params = sv.get("params_detail", [])
-            if sub_params:
-                rows = []
-                for sp in sub_params:
-                    rows.append(
-                        f'<td>{_code(sp.get("name",""))}</td>'
-                        f'<td>{sp.get("detail","")}</td>'
-                    )
-                parts.append(_table(["Parameter", "Detail"], rows))
-            if sv.get("when_to_use"):
-                parts.append(f'<p><strong>When to use:</strong> {sv["when_to_use"]}</p>')
-            if sv.get("limitations"):
-                parts.append(f'<p><strong>Limitations:</strong> {sv["limitations"]}</p>')
-
-    style = (
-        f"body {{ background-color: {DARK_BG}; color: {TEXT}; "
-        f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; "
-        f"line-height: 1.7; padding: 12px; margin: 0; }}"
-        f"h2 {{ color: #7aa2f7; font-size: 20px; font-weight: 700; "
-        f"border-bottom: 2px solid #7aa2f7; padding-bottom: 8px; margin: 0 0 6px 0; }}"
-        f"h3 {{ color: #7aa2f7; font-size: 12px; font-weight: 700; "
-        f"text-transform: uppercase; letter-spacing: 1px; "
-        f"border-bottom: 1px solid {BORDER}; padding-bottom: 6px; "
-        f"margin: 24px 0 12px 0; }}"
-        f"h4 {{ color: #7aa2f7; font-size: 14px; font-weight: 600; "
-        f"margin: 18px 0 6px 0; }}"
-        f"p {{ line-height: 1.7; margin: 8px 0; }}"
-        f"table {{ border-collapse: collapse; width: 100%; margin: 10px 0; "
-        f"font-size: 13px; }}"
-        f"th {{ background-color: {ALT_BG}; color: #7aa2f7; text-align: left; "
-        f"padding: 7px 10px; border: 1px solid {BORDER}; "
-        f"font-size: 12px; font-weight: 600; }}"
-        f"td {{ padding: 7px 10px; border: 1px solid {BORDER}; "
-        f"border-top: none; vertical-align: top; }}"
-        f"tr:nth-child(even) td {{ background-color: {ALT_BG}; }}"
-        f"code {{ font-family: Consolas, monospace; font-size: 12.5px; }}"
-        f"hr {{ border: none; border-top: 1px solid {BORDER}; margin: 20px 0; }}"
-    )
-    body = "".join(parts)
-    return f'<!DOCTYPE html><html><head><meta charset="utf-8"><style>{style}</style></head><body>{body}</body></html>'
+    return _document(parts)
 
 
 # ── Dialog ─────────────────────────────────────────────────────────────────
 
 class ToolHelpDialog(QDialog):
-    """Modal dialog listing all tools with selectable documentation."""
+    """Modal dialog listing the application guides and every tool."""
 
     def __init__(self, parent=None, preselected_key: str = ""):
         super().__init__(parent)
-        self.setWindowTitle("Tool Reference")
+        self.setWindowTitle("FalcoCV Help")
         self.setMinimumSize(850, 600)
         self.resize(900, 650)
         self.setWindowFlags(
@@ -312,10 +343,26 @@ class ToolHelpDialog(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Left panel: tool list ─────────────────────────────────────
+        # ── Left panel: search + page list ────────────────────────────
+        left_panel = QWidget()
+        left_panel.setMinimumWidth(210)
+        left_panel.setMaximumWidth(300)
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(0)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search help…")
+        self.search.setClearButtonEnabled(True)
+        self.search.setStyleSheet(
+            f"QLineEdit {{ background-color: {ALT_BG}; color: {TEXT}; "
+            f"border: none; border-bottom: 1px solid {BORDER}; "
+            f"padding: 6px 10px; font-size: 12.5px; }}"
+        )
+        self.search.textChanged.connect(self._apply_filter)
+        left_layout.addWidget(self.search)
+
         self.list_widget = QListWidget()
-        self.list_widget.setMinimumWidth(200)
-        self.list_widget.setMaximumWidth(280)
         self.list_widget.setStyleSheet(
             f"QListWidget {{ background-color: {DARK_BG}; border: none; border-right: 1px solid {BORDER}; }}"
             f"QListWidget::item {{ padding: 8px 16px; color: {TEXT}; font-size: 12.5px; }}"
@@ -325,11 +372,14 @@ class ToolHelpDialog(QDialog):
 
         self.list_widget.blockSignals(True)
         self.list_widget.currentItemChanged.connect(self._on_selection_changed)
-        layout.addWidget(self.list_widget)
+        left_layout.addWidget(self.list_widget, 1)
+        layout.addWidget(left_panel)
 
         # ── Right panel: QTextBrowser with Markdown ─────────────────--
         self.browser = QTextBrowser()
-        self.browser.setOpenExternalLinks(True)
+        self.browser.setOpenLinks(False)
+        self.browser.setOpenExternalLinks(False)
+        self.browser.anchorClicked.connect(self._on_anchor)
         self.browser.setStyleSheet(
             f"QTextBrowser {{ background-color: {DARK_BG}; color: {TEXT}; border: none; "
             f"font-family: 'Segoe UI', system-ui, sans-serif; font-size: 14px; padding: 12px; }}"
@@ -368,13 +418,33 @@ class ToolHelpDialog(QDialog):
         save_window(self, "help")
         super().closeEvent(event)
 
-    def _populate(self):
-        """Build the categorized list from TOOL_HELP data."""
+    def _grouped(self, needle: str):
         grouped = {}
         for key, entry in TOOL_HELP.items():
-            cat = entry.get("category", "Other")
-            grouped.setdefault(cat, []).append((key, entry))
+            if needle and not self._matches(entry, needle):
+                continue
+            grouped.setdefault(entry.get("category", "Other"), []).append((key, entry))
+        return grouped
 
+    @staticmethod
+    def _matches(entry: dict, needle: str) -> bool:
+        chunks = [entry.get("name", ""), entry.get("purpose", "")]
+        for section in entry.get("sections", []):
+            chunks.append(section.get("title", ""))
+            chunks.append(re.sub(r"<[^>]+>", " ", section.get("html", "")))
+        for extra in ("notes",):
+            if entry.get(extra):
+                chunks.append(re.sub(r"<[^>]+>", " ", entry[extra]))
+        chunks.extend(entry.get("see_also", []))
+        return needle in " ".join(chunks).lower()
+
+    def _populate(self):
+        """Build the categorized list from TOOL_HELP data."""
+        self._fill(self._grouped(""))
+
+    def _fill(self, grouped):
+        self.list_widget.clear()
+        self._items = []
         first = True
         for cat in help_categories(grouped):
             items = grouped.get(cat, [])
@@ -405,6 +475,43 @@ class ToolHelpDialog(QDialog):
                 item.setData(Qt.ItemDataRole.UserRole, key)
                 self.list_widget.addItem(item)
                 self._items.append((key, entry))
+
+    def _apply_filter(self, text: str):
+        """Rebuild the list with the entries that match ``text``."""
+        self.list_widget.blockSignals(True)
+        try:
+            self._fill(self._grouped(text.strip().lower()))
+        finally:
+            self.list_widget.blockSignals(False)
+
+        if self._current_key and self._is_visible(self._current_key):
+            self._select_key(self._current_key)
+            return
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole):
+                self.list_widget.setCurrentItem(item)
+                break
+
+    def _is_visible(self, key: str) -> bool:
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item and item.data(Qt.ItemDataRole.UserRole) == key:
+                return True
+        return False
+
+    def _on_anchor(self, url: QUrl):
+        target = url.toString()
+        if target.startswith("page:"):
+            key = unquote(target[len("page:"):])
+            if key in TOOL_HELP:
+                self._select_key(key)
+                self._current_key = key
+                self._debounce_timer.stop()
+                self._pending_entry = TOOL_HELP.get(key, {})
+                self._do_render()
+            return
+        QDesktopServices.openUrl(url)
 
     def _select_key(self, key: str):
         for i in range(self.list_widget.count()):

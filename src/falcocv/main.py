@@ -102,7 +102,8 @@ except Exception:
 
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QSplitter, QMenu, QMessageBox, QDockWidget)
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QGuiApplication
+from PyQt6.QtGui import (QAction, QActionGroup, QColor, QIcon, QGuiApplication,
+                         QKeySequence, QShortcut)
 from PyQt6.QtCore import QRect, Qt, QTimer
 from falcocv.ui.style import ALT_BG, apply_qt_theme, BORDER, CAUTION, COMPACT_CSS, DARK_BG, SUCCESS, TEXT_DIM
 from falcocv.ui.window_geometry import load_window_geometry, save_window_geometry
@@ -639,17 +640,47 @@ class MainWindow(QMainWindow):
     def setup_help_menu(self):
         menubar = self.menuBar()
         help_menu = menubar.addMenu("Help")
-        ref_action = QAction("Tool Reference...", self)
-        ref_action.triggered.connect(self.show_tool_reference)
-        help_menu.addAction(ref_action)
+
+        reference = QAction("Help && Reference...", self)
+        reference.triggered.connect(lambda: self.show_help())
+        help_menu.addAction(reference)
+
+        starter = QAction("Getting Started", self)
+        starter.triggered.connect(lambda: self.show_help("Getting Started"))
+        help_menu.addAction(starter)
+
+        cli = QAction("Command Line", self)
+        cli.triggered.connect(lambda: self.show_help("Command Line"))
+        help_menu.addAction(cli)
+
+        troubles = QAction("Troubleshooting", self)
+        troubles.triggered.connect(lambda: self.show_help("Troubleshooting"))
+        help_menu.addAction(troubles)
+
+        help_menu.addSeparator()
+        data_action = QAction("Open user data folder", self)
+        data_action.triggered.connect(self.open_user_data_folder)
+        help_menu.addAction(data_action)
+
         help_menu.addSeparator()
         about_action = QAction("About FalcoCV", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
 
-    def show_tool_reference(self):
+        shortcut = QShortcut(QKeySequence("F1"), self)
+        shortcut.activated.connect(lambda: self.show_help())
+
+    def show_help(self, key: str = ""):
         from falcocv.ui.widgets.help_dialog import ToolHelpDialog
-        ToolHelpDialog(parent=self).exec()
+        ToolHelpDialog(parent=self, preselected_key=key).exec()
+
+    def open_user_data_folder(self):
+        from PyQt6.QtCore import QUrl
+        from PyQt6.QtGui import QDesktopServices
+
+        from falcocv.core.config_paths import state_dir
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(state_dir()))
 
     def show_about(self):
         from datetime import date

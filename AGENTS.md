@@ -562,6 +562,10 @@ no cross-compilation.
 - Server: `falcocv-server` or `python -m falcocv.web`; dashboard:
   `http://localhost:8000`; HMI: `http://localhost:8000/?id=<project_id>`.
 - Performance harness: `benchmarks/` (`python benchmarks/bench_tools.py`).
+- Help: tool pages live in `ui/tool_help.py`, application guides (install, CLI,
+  HMI, web, user libraries, 3D, troubleshooting) in `ui/app_help.py`, merged
+  into `TOOL_HELP`.  `tests/test_app_help.py` fails when a registered tool has
+  no page; the dialog has a search box and `page:<key>` internal links.
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
 ## Current handoff (2026-11-09)

@@ -798,6 +798,9 @@ class HMIDesignerDialog(QDialog):
         view_menu.addAction("Reset all views", self._reset_view_state)
 
         help_menu = menu_bar.addMenu("Help")
+        help_menu.addAction("Getting Started", lambda: self._open_help("Getting Started"))
+        help_menu.addAction("User Libraries", lambda: self._open_help("User Libraries"))
+        help_menu.addSeparator()
         help_menu.addAction("HMI Reference...", self._on_hmi_help)
         help_menu.addAction("HMI Communications...", self._on_hmi_comms_help)
         help_menu.addAction("HMI Scripting...", self._on_hmi_scripting_help)
@@ -968,6 +971,10 @@ class HMIDesignerDialog(QDialog):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.rows_spin.setValue(rs.value())
             self.cols_spin.setValue(cs.value())
+
+    def _open_help(self, key: str):
+        from falcocv.ui.widgets.help_dialog import ToolHelpDialog
+        ToolHelpDialog(parent=self, preselected_key=key).exec()
 
     def _on_hmi_help(self):
         from falcocv.ui.widgets.help_dialog import ToolHelpDialog
