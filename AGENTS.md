@@ -472,6 +472,12 @@ cpp/bin/       → local kernel build output (gitignored)
   thread and never paint a widget from a debugger callback: with the background
   execution service a breakpoint pause happens on the workflow thread, and
   touching Qt there crashes inside `Qt6Gui.dll`.
+- **Tool signals and threads** -> any signal connected to a widget must be a
+  `ToolSignal` (dispatched) or a Qt `pyqtSignal`; never a plain `CallbackList`
+  and never a class-level signal shared by every instance.  Tools emit
+  `data_changed`, `connection_changed` and `debugger_paused` from the workflow
+  thread, so the dispatcher is what keeps Qt on the GUI thread.
+  `tests/test_tool_signals.py` guards the class-level case.
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
   `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
   the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.

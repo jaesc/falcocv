@@ -10,7 +10,7 @@ from falcocv.core.tool_registry import register_tool
 from falcocv.core.config import ConfigManager
 from falcocv.core.vision_image import VisionImage
 
-from falcocv.core.tool_base import CallbackList
+from falcocv.core.tool_base import ToolSignal
 
 # ---------------------------------------------------------------------------
 # Harvesters is a runtime dependency; the guard keeps the rest of the app
@@ -34,10 +34,11 @@ class GigeCameraLoader(BaseTool):
     Acquires frames from a GigE Vision or USB3 Vision camera using Harvesters + GenTL.
     Supports persistent Custom GenICam features and Serial Number binding.
     """
-    connection_changed = CallbackList()
-
     def __init__(self, name="GigE Camera"):
         super().__init__(name)
+        # run() connects the camera on the workflow thread, so the signal must
+        # be dispatched to the GUI thread like data_changed.
+        self.connection_changed = ToolSignal()
         self.inputs = {}
         self.outputs = {"output image": None}
         
