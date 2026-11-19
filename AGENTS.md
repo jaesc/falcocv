@@ -477,7 +477,10 @@ cpp/bin/       → local kernel build output (gitignored)
   and never a class-level signal shared by every instance.  Tools emit
   `data_changed`, `connection_changed` and `debugger_paused` from the workflow
   thread, so the dispatcher is what keeps Qt on the GUI thread.
-  `tests/test_tool_signals.py` guards the class-level case.
+  `tests/test_tool_signals.py` guards the class-level case; `CallbackList.emit`
+  warns once per signal (`RuntimeWarning`) when a GUI widget slot would run off
+  the GUI thread, and `FALCOCV_STRICT_SIGNALS=1` turns that warning into an
+  error for CI.
 - **Global wheel guard** -> `ui/wheel_guard.py` is installed once from
   `apply_qt_theme`.  The wheel over `QAbstractSpinBox`/`QComboBox` never changes
   the value; it is forwarded to the nearest `QAbstractScrollArea` viewport.

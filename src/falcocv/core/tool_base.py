@@ -1,8 +1,14 @@
 import abc
-import uuid
+import os
+import sys
+import threading
 import time
+import uuid
+import warnings
 
 from falcocv.core.port_types import normalize_kind
+
+_STRICT_SIGNALS_ENV = "FALCOCV_STRICT_SIGNALS"
 
 
 class ToolResult:
@@ -29,6 +35,10 @@ class ToolResult:
 
 
 class CallbackList(list):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._off_thread_warned = False
+
     def connect(self, cb):
         if cb not in self:
             self.append(cb)
@@ -52,8 +62,58 @@ class CallbackList(list):
         self[:] = [cb for cb in self if callback_owner(cb) is not owner]
 
     def emit(self, *args, **kwargs):
+        self._check_off_thread_widgets()
         for cb in self:
             cb(*args, **kwargs)
+
+    def _check_off_thread_widgets(self):
+        """Warn when a GUI widget slot would run off the GUI thread.
+
+        Only ``QObject`` callbacks that live in the GUI thread are flagged;
+        plain functions, lambdas and worker-side logic are legitimate
+        off-thread callbacks.  Set ``FALCOCV_STRICT_SIGNALS=1`` to raise.
+        """
+        if self._off_thread_warned or "PyQt6.QtCore" not in sys.modules:
+            return
+        try:
+            from PyQt6.QtCore import QObject, QThread
+            from PyQt6.QtWidgets import QApplication
+        except Exception:
+            return
+        app = QApplication.instance()
+        if app is None:
+            return
+        gui_thread = app.thread()
+        if QThread.currentThread() is gui_thread:
+            return
+
+        offenders = []
+        for cb in self:
+            owner = getattr(cb, "__self__", None)
+            if not isinstance(owner, QObject):
+                continue
+            try:
+                if owner.thread() is not gui_thread:
+                    continue
+            except RuntimeError:
+                # The C++ object is already gone.
+                continue
+            name = getattr(cb, "__name__", "<callback>")
+            offenders.append(f"{type(owner).__name__}.{name}")
+
+        if not offenders:
+            return
+
+        self._off_thread_warned = True
+        message = (
+            "CallbackList emitted from a non-GUI thread "
+            f"({threading.current_thread().name}) with GUI-widget callbacks: "
+            + ", ".join(offenders)
+            + ". Use a ToolSignal (dispatched) or a Qt signal instead."
+        )
+        if os.environ.get(_STRICT_SIGNALS_ENV):
+            raise RuntimeError(message)
+        warnings.warn(message, RuntimeWarning, stacklevel=3)
 
 
 #: Optional hook installed by the Qt UI.  Tool signals are emitted from worker
