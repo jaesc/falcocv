@@ -81,13 +81,66 @@ TestPyPI and PyPI are separate accounts.
 
 3. Repeat on <https://pypi.org/account/register/> and
    <https://pypi.org/manage/account/publishing/> with environment `pypi`.
+   The automatic tag release uses the **Release** workflow, so add a second
+   publisher for the same project with:
+
+   | Field | Value |
+   |---|---|
+   | PyPI Project Name | `falcocv` |
+   | Owner | `jaesc` |
+   | Repository name | `falcocv` |
+   | Workflow name | `release.yml` |
+   | Environment name | `pypi` |
+
+   PyPI allows multiple trusted publishers for one project, so the manual
+   `publish.yml` fallback keeps working.
+
 4. Recommended: create the GitHub environments `testpypi` and `pypi`
    (Settings → Environments) and add required reviewers to `pypi`.
 
-No API token is stored anywhere: the `Publish` workflow authenticates with
-OIDC (`id-token: write`).
+No API token is stored anywhere: the `Publish` and `Release` workflows
+authenticate with OIDC (`id-token: write`).
 
-## 5. Publish a release candidate
+## 5. Automatic release from a tag
+
+Pushing a tag that matches `src/falcocv/version.py` (for example `v1.3.0`)
+runs **Actions → Release**. It builds, in parallel:
+
+- CPython 3.13 wheels for Windows x64 and Linux x86_64 (manylinux_2_34),
+- the sdist,
+- the Windows standalone bundle, ZIP and Inno Setup installer,
+- the Linux standalone bundle, ZIP and AppImage.
+
+Then it:
+
+1. publishes the wheels and sdist to PyPI;
+2. generates `SHA256SUMS.txt`;
+3. signs `SHA256SUMS.txt` and the AppImage with the FalcoCV GPG key when both
+   GPG secrets exist;
+4. creates or updates the GitHub release and uploads every asset.
+
+Windows Authenticode signing is added once SignPath Foundation approves the
+project. Until then the Windows binaries are unsigned and the release still
+succeeds.
+
+### GPG secrets (one-time setup)
+
+Generate or import the release key and add two repository secrets
+(Settings → Secrets and variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `GPG_PRIVATE_KEY` | ASCII-armored private key (`gpg --armor --export-secret-keys <fingerprint>`) |
+| `GPG_PASSPHRASE` | passphrase of that key |
+
+The matching public key is committed as `docs/FALCOCV_GPG_KEY.asc`. Its
+fingerprint must match the one in `docs/DOWNLOAD.md`
+(`3F5717C512E646A37E22D6B7B2BE6A6DB85C6837`).
+
+If either secret is missing, the release is still published without the GPG
+signatures; the signing step is skipped.
+
+## 6. Publish a release candidate
 
 Actions → **Publish** → *Run workflow* → target `testpypi`.
 
@@ -107,18 +160,28 @@ Check `falcocv` (editor), `falcocv-server`, a real job through
 `falcocv run job.cvj --output results.json`, and the first-run model download on
 Windows and Linux.
 
-## 6. Publish the stable release
+## 7. Publish the stable release
 
-1. Bump `src/falcocv/version.py` only (for example `1.1.0` → `1.2.0`);
-   `pyproject.toml` reads the version dynamically from that file. Commit and
-   tag the release.
-2. Actions → **Publish** → *Run workflow* → target `pypi`.
-3. Create the GitHub release.
+1. Bump `src/falcocv/version.py` only (for example `1.2.0` → `1.3.0`);
+   `pyproject.toml` reads the version dynamically from that file.
+2. Commit and push `main`.
+3. Create and push the tag:
 
-Manual upload with a token remains possible as a fallback:
-`twine upload --repository testpypi dist/*` and `twine upload dist/*`.
+   ```bash
+   git tag v1.3.0
+   git push origin v1.3.0
+   ```
 
-## 6. Post-release smoke test
+4. **Actions → Release** builds every artifact, publishes to PyPI and creates
+   the GitHub release. The tag must match `version.py`, otherwise the workflow
+   stops before publishing.
+
+The older manual path remains available as a fallback: Actions → **Publish** →
+target `pypi`, then create the GitHub release manually. Manual upload with a
+token also works: `twine upload --repository testpypi dist/*` and
+`twine upload dist/*`.
+
+## 8. Post-release smoke test
 
 In a clean environment:
 

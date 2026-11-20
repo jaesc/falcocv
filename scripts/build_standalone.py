@@ -240,12 +240,12 @@ def build_appimage(bundle: Path) -> None:
 
 
 def make_zip(bundle: Path, version: str) -> Path:
-    platform = "windows" if sys.platform == "win32" else "linux"
-    archive = bundle.parent / f"FalcoCV-{version}-{platform}-x86_64"
+    platform = "windows-x64" if sys.platform == "win32" else "linux-x86_64"
+    archive = bundle.parent / f"FalcoCV-{version}-{platform}"
     # compresslevel=1 keeps the release build in the "minutes" budget.
     import zipfile
 
-    zip_path = archive.with_suffix(".zip")
+    zip_path = archive.with_name(archive.name + ".zip")
     zip_path.unlink(missing_ok=True)
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=1) as zf:
         for path in sorted(bundle.rglob("*")):

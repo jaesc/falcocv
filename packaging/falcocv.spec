@@ -83,6 +83,10 @@ def _binaries():
 
 
 hiddenimports = [
+    # PyOpenGL loads its platform backend dynamically; the standard hook only
+    # covers glx/win32/darwin. FalcoCV selects EGL on Wayland.
+    "OpenGL.platform.egl",
+    "OpenGL.platform.osmesa",
     "falcocv.web.server",
     "falcocv.web.hmi_worker",
     "falcocv.core.ocr.industrial_ocr_engine",

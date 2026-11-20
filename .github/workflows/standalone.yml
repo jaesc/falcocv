@@ -2,9 +2,7 @@ name: Standalone
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  workflow_call:
 
 permissions:
   contents: read
@@ -25,8 +23,27 @@ jobs:
       - name: Install
         run: python -m pip install -e ".[dev,plc,protocols,standalone]"
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Download models
+        shell: pwsh
+        run: |
+          $models = python -c "from falcocv.core.models import ensure_models; print(ensure_models())"
+          "MODELS_DIR=$models" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - name: Build bundle, ZIP and installer
-        run: python scripts/build_standalone.py --zip --installer
+        shell: pwsh
+        run: |
+          python scripts/build_standalone.py --zip --installer --models-dir "$env:MODELS_DIR"
+          if (-not (Get-ChildItem dist/standalone/FalcoCV-*-windows-x64-setup.exe -ErrorAction SilentlyContinue)) {
+            throw "Windows installer was not produced"
+          }
 
       - name: Smoke test
         run: python scripts/smoke_standalone.py
@@ -69,8 +86,15 @@ jobs:
             -O /usr/local/bin/appimagetool
           sudo chmod +x /usr/local/bin/appimagetool
 
+      - name: Download models
+        run: |
+          MODELS_DIR=$(python -c "from falcocv.core.models import ensure_models; print(ensure_models())")
+          echo "MODELS_DIR=$MODELS_DIR" >> "$GITHUB_ENV"
+
       - name: Build bundle, ZIP and AppImage
-        run: python scripts/build_standalone.py --zip --appimage
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: python scripts/build_standalone.py --zip --appimage --models-dir "$MODELS_DIR"
 
       - name: Smoke test
         run: python scripts/smoke_standalone.py
