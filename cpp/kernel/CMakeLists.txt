@@ -23,6 +23,7 @@ endif()
 pybind11_add_module(_falco_kernel MODULE src/kernel.cpp)
 set_target_properties(_falco_kernel PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../bin"
 )
 install(TARGETS _falco_kernel
     LIBRARY DESTINATION falcocv

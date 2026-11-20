@@ -34,15 +34,38 @@ IS_WINDOWS = sys.platform == "win32"
 
 
 def _kernel_binaries():
-    """The pybind11 kernel lives in the package (wheel) or ``cpp/bin`` (dev)."""
-    candidates = list(PACKAGE_DIR.glob("_falco_kernel*")) or list(
-        (ROOT / "cpp" / "bin").glob("_falco_kernel*")
-    )
-    return [
-        (str(path), "falcocv")
-        for path in candidates
-        if path.suffix in {".pyd", ".so"}
-    ]
+    """Locate the pybind11 kernel in the source tree, site-packages or cpp/bin.
+
+    Editable installs build the extension into ``site-packages/falcocv`` while
+    ``falcocv.__file__`` points at ``src/falcocv``.  On Windows the CMake
+    ``LIBRARY_OUTPUT_DIRECTORY`` does not apply to the ``.pyd`` runtime output,
+    so ``cpp/bin`` may also be empty.
+    """
+    candidates = []
+    for folder in (PACKAGE_DIR, ROOT / "src" / "falcocv", ROOT / "cpp" / "bin"):
+        candidates.extend(folder.glob("_falco_kernel*"))
+
+    try:
+        import site
+        import sysconfig
+
+        site_dirs = set(site.getsitepackages())
+        purelib = sysconfig.get_paths().get("purelib")
+        if purelib:
+            site_dirs.add(purelib)
+        for site_dir in site_dirs:
+            candidates.extend((Path(site_dir) / "falcocv").glob("_falco_kernel*"))
+    except Exception:
+        pass
+
+    seen = set()
+    binaries = []
+    for path in candidates:
+        if path.suffix not in {".pyd", ".so"} or path in seen:
+            continue
+        seen.add(path)
+        binaries.append((str(path), "falcocv"))
+    return binaries
 
 
 def _data_files():
