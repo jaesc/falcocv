@@ -1,6 +1,6 @@
 # FalcoCV — TODO
 
-Status: 1.3.0 released; `dev` continues as the active development branch.
+Status: 1.3.1 released; `dev` continues as the active development branch.
 Phases and closed decisions live in
 [`plans/falcocv-plan-v2.md`](plans/falcocv-plan-v2.md); this file tracks
 concrete, actionable tasks only.

@@ -11,8 +11,8 @@ and the models, so no Python installation is required.
 
 | Platform | Package |
 | --- | --- |
-| Windows 10/11 x64 | `FalcoCV-1.3.0-windows-x64-setup.exe` (installer) or `FalcoCV-1.3.0-windows-x64.zip` (portable) |
-| Linux x86_64 | `FalcoCV-1.3.0-linux-x86_64.AppImage` or `FalcoCV-1.3.0-linux-x86_64.zip` |
+| Windows 10/11 x64 | `FalcoCV-1.3.1-windows-x64-setup.exe` (installer) or `FalcoCV-1.3.1-windows-x64.zip` (portable) |
+| Linux x86_64 | `FalcoCV-1.3.1-linux-x86_64.AppImage` or `FalcoCV-1.3.1-linux-x86_64.zip` |
 | Python 3.13 | `pip install falcocv` (wheel and sdist are attached to the release) |
 
 Download the latest release from
@@ -34,13 +34,13 @@ Linux / macOS:
 sha256sum -c SHA256SUMS.txt
 gpg --import FALCOCV_GPG_KEY.asc
 gpg --verify SHA256SUMS.txt.asc SHA256SUMS.txt
-gpg --verify FalcoCV-1.3.0-linux-x86_64.AppImage.asc FalcoCV-1.3.0-linux-x86_64.AppImage
+gpg --verify FalcoCV-1.3.1-linux-x86_64.AppImage.asc FalcoCV-1.3.1-linux-x86_64.AppImage
 ```
 
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\FalcoCV-1.3.0-windows-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\FalcoCV-1.3.1-windows-x64-setup.exe -Algorithm SHA256
 ```
 
 Compare the hash with the matching line in `SHA256SUMS.txt`.

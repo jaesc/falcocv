@@ -570,8 +570,10 @@ no cross-compilation.
 
 ## Current handoff (2026-11-20)
 
-- `1.3.0` is the current release; `main` and `dev` both point at tag
-  `v1.3.0`.  `dev` continues as the active development branch.
+- `1.3.1` is the current release; `main` and `dev` both point at tag
+  `v1.3.1`.  `1.3.0` was published to PyPI but its Windows standalone bundle
+  was missing the native kernel, so it was superseded.  `dev` continues as the
+  active development branch.
 - **Release automation** -> `.github/workflows/release.yml` runs on `v*` tags.
   It builds CPython 3.13 wheels, the sdist, the Windows standalone
   installer/ZIP and the Linux AppImage/ZIP, publishes to PyPI, writes
