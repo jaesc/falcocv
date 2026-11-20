@@ -42,7 +42,7 @@ def _kernel_binaries():
     so ``cpp/bin`` may also be empty.
     """
     candidates = []
-    for folder in (PACKAGE_DIR, ROOT / "src" / "falcocv", ROOT / "cpp" / "bin"):
+    for folder in (PACKAGE_DIR, ROOT / "src" / "falcocv"):
         candidates.extend(folder.glob("_falco_kernel*"))
 
     try:
@@ -58,12 +58,14 @@ def _kernel_binaries():
     except Exception:
         pass
 
+    candidates.extend((ROOT / "cpp" / "bin").glob("_falco_kernel*"))
+
     seen = set()
     binaries = []
     for path in candidates:
-        if path.suffix not in {".pyd", ".so"} or path in seen:
+        if path.suffix not in {".pyd", ".so"} or path.name in seen:
             continue
-        seen.add(path)
+        seen.add(path.name)
         binaries.append((str(path), "falcocv"))
     return binaries
 
