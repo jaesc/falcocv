@@ -568,10 +568,18 @@ no cross-compilation.
   no page; the dialog has a search box and `page:<key>` internal links.
 - ShapeMatch performance history: `docs/shape_match_perf_log.md`.
 
-## Current handoff (2026-11-09)
+## Current handoff (2026-11-20)
 
-- `1.2.0` is the current release; `main` and `dev` both point at tag
-  `v1.2.0`.  `dev` continues as the active development branch.
+- `1.3.0` is the current release; `main` and `dev` both point at tag
+  `v1.3.0`.  `dev` continues as the active development branch.
+- **Release automation** -> `.github/workflows/release.yml` runs on `v*` tags.
+  It builds CPython 3.13 wheels, the sdist, the Windows standalone
+  installer/ZIP and the Linux AppImage/ZIP, publishes to PyPI, writes
+  `SHA256SUMS.txt`, signs the Linux assets with the FalcoCV GPG key when
+  `GPG_PRIVATE_KEY`/`GPG_PASSPHRASE` secrets exist, and creates the GitHub
+  release.  Windows Authenticode signing is pending SignPath Foundation
+  approval; the release succeeds without it.  The public key is
+  `docs/FALCOCV_GPG_KEY.asc`.
 - **Async GUI execution** -> `WorkflowEditor` and `ToolRunControls` RUN/AUTO go
   through `ui/execution_service.py` (one QThread per editor); never call
   `controller.run()` from the GUI thread.  `ToolSignal` suspends
