@@ -108,13 +108,19 @@ jobs:
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           GPG_PASSPHRASE=$(printf '%s' "$GPG_PASSPHRASE" | tr -d '\r\n')
           KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec:/ {print $5; exit}')
-          ARGS=(--batch --yes --armor --detach-sign --local-user "$KEY_ID")
-          if [ -n "${GPG_PASSPHRASE:-}" ]; then
-            ARGS+=(--pinentry-mode loopback --passphrase "$GPG_PASSPHRASE")
-          fi
-          gpg "${ARGS[@]}" SHA256SUMS.txt
+          sign() {
+            if [ -n "${GPG_PASSPHRASE:-}" ]; then
+              printf '%s' "$GPG_PASSPHRASE" | gpg --batch --yes \
+                --pinentry-mode loopback --passphrase-fd 0 \
+                --armor --detach-sign --local-user "$KEY_ID" "$1"
+            else
+              gpg --batch --yes --armor --detach-sign \
+                --local-user "$KEY_ID" "$1"
+            fi
+          }
+          sign SHA256SUMS.txt
           for image in FalcoCV-*-linux-*.AppImage; do
-            gpg "${ARGS[@]}" "$image"
+            sign "$image"
           done
           gpg --armor --export "$KEY_ID" > FALCOCV_GPG_KEY.asc
 
