@@ -110,6 +110,14 @@ is what PyQt6 requires.
 GigE and USB3 Vision cameras only need the vendor GenTL producer (`.cti` file);
 the Harvesters integration is installed by default.
 
+### Standalone bundle
+
+Windows x64 and Linux x86_64 standalone packages (installer, AppImage and
+portable ZIP) are attached to each GitHub release. They include Python, Qt,
+OpenCV, ONNX Runtime, the native kernel and the models, so no Python
+installation is required. See [`docs/DOWNLOAD.md`](docs/DOWNLOAD.md) for the
+download links and checksum/GPG verification instructions.
+
 ### From source
 
 Requires CPython 3.13.x:
@@ -306,6 +314,24 @@ falcocv self-test          # installation smoke test (also works from a wheel)
 The suite covers the workflow engine, vision tools, UI (offscreen Qt) and
 web/HMI endpoints. The trainer-equivalence test needs the optional training
 toolchain (torch/timm) and is excluded.
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [@jaesc](https://github.com/jaesc)
+- Approvers: [@jaesc](https://github.com/jaesc)
+
+Windows Authenticode signing is enabled once the project is approved by
+SignPath Foundation. Linux release assets and `SHA256SUMS.txt` are signed with
+the FalcoCV release GPG key
+([`docs/FALCOCV_GPG_KEY.asc`](docs/FALCOCV_GPG_KEY.asc), fingerprint
+`3F5717C512E646A37E22D6B7B2BE6A6DB85C6837`). See
+[`docs/DOWNLOAD.md`](docs/DOWNLOAD.md) for verification commands.
+
+FalcoCV does not collect telemetry; it only connects to the devices and
+endpoints configured by the user. See [`docs/PRIVACY.md`](docs/PRIVACY.md).
 
 ## License
 
