@@ -101,6 +101,23 @@ def test_nested_run_does_not_mark_job_modified(main_window, qtbot):
     assert window._modified is False
 
 
+def test_block_config_close_without_edits_does_not_mark_job(
+    main_window, qtbot
+):
+    window = main_window
+    block, item = _add_block(window, qtbot)
+    block.workflow.add_tool(_NoopTool("nested"))
+    _open_block(window, qtbot, block, item)
+    dialog = block._config_window
+    window._modified = False
+    qtbot.wait(20)
+
+    dialog.close()
+    qtbot.wait(20)
+
+    assert window._modified is False
+
+
 def test_block_config_close_with_dirty_nested_controller_marks_job(
     main_window, qtbot
 ):
