@@ -58,6 +58,7 @@ class WorkflowEditor(QWidget):
         self.tree.generate_block_requested.connect(self.on_generate_block)
         self.tree.tool_dropped.connect(self.handle_add_tool)
         self.tree.tool_pasted.connect(self.on_tool_pasted)
+        self.tree.connection_changed.connect(self._on_tree_connection_changed)
 
         tree_header = QHBoxLayout()
         tree_header.setContentsMargins(0, 0, 0, 0)
@@ -254,6 +255,14 @@ class WorkflowEditor(QWidget):
         tool._execution_service = self.engine
         tool.structure_changed.disconnect(self.refresh_ui)
         tool.structure_changed.connect(self.refresh_ui)
+        if self.workflow.parent_tool is not None:
+            for signal, handler in (
+                (tool.data_changed, self._on_nested_tool_changed),
+                (tool.structure_changed, self._on_nested_tool_changed),
+                (tool.parameter_changed, self._on_nested_tool_edited),
+            ):
+                signal.disconnect(handler)
+                signal.connect(handler)
 
     def _bind_tools(self):
         for tool in self.workflow.tools:
@@ -263,11 +272,70 @@ class WorkflowEditor(QWidget):
         """Stop listening to the tools of a workflow that is being closed."""
         for tool in self.workflow.tools:
             tool.structure_changed.disconnect(self.refresh_ui)
+            if self.workflow.parent_tool is not None:
+                tool.data_changed.disconnect(self._on_nested_tool_changed)
+                tool.structure_changed.disconnect(self._on_nested_tool_changed)
+                tool.parameter_changed.disconnect(self._on_nested_tool_edited)
+        try:
+            self.tree.connection_changed.disconnect(
+                self._on_tree_connection_changed
+            )
+        except (TypeError, RuntimeError):
+            pass
 
     def _mark_parent_dirty(self):
         parent = self.workflow.parent_tool
         if parent is not None:
             parent.mark_dirty()
+
+    def _nested_engines(self):
+        """Engines that can emit execution signals for this nested editor."""
+        engines = []
+        engine = getattr(self, "engine", None)
+        if engine is not None:
+            engines.append(engine)
+        parent = self.workflow.parent_tool
+        if parent is not None:
+            parent_engine = getattr(parent, "_execution_service", None)
+            if parent_engine is not None:
+                engines.append(parent_engine)
+        return engines
+
+    def _nested_run_active(self) -> bool:
+        return any(
+            getattr(engine, "is_busy", False)
+            or getattr(engine, "is_finishing", False)
+            for engine in self._nested_engines()
+        )
+
+    def _nested_run_finishing(self) -> bool:
+        return any(
+            getattr(engine, "is_finishing", False)
+            for engine in self._nested_engines()
+        )
+
+    def _on_nested_tool_changed(self, *_):
+        """A nested tool emitted data/structure: mark the Block dirty.
+
+        Execution also emits ``data_changed``; skip while a run (ours or the
+        enclosing Block's) is replaying its signals.
+        """
+        if self._nested_run_active():
+            return
+        self._mark_parent_dirty()
+
+    def _on_nested_tool_edited(self, *_):
+        """A user edited a nested tool parameter/config.
+
+        ``parameter_changed`` is only emitted by ``mark_dirty()`` and is not
+        suspended during runs, so it stays a reliable user-edit signal.
+        """
+        if self._nested_run_finishing():
+            return
+        self._mark_parent_dirty()
+
+    def _on_tree_connection_changed(self, *_):
+        self._mark_parent_dirty()
 
     def _create_engine(self, controller):
         engine = ExecutionService(controller, self)

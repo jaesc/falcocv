@@ -503,6 +503,15 @@ cpp/bin/       → local kernel build output (gitignored)
   never deletes tools missing from the view; and cross-tree drops accept
   `CopyAction` because the handler moves the tool itself (Qt would otherwise
   remove the source rows a second time).
+- **Block dirty tracking** -> tools inside a Block use the nested
+  `WorkflowEditor` controller, not the main one.  The nested editor must
+  forward tool `data_changed`/`parameter_changed`/`structure_changed` and
+  `tree.connection_changed` to `parent.mark_dirty()`;
+  `BlockConfig.on_config_closed()` checks the nested controller as a fallback.
+  Ignore execution emissions with the nested and parent `is_busy`/
+  `is_finishing` flags.  `MainWindow._mark_modified_from_edit()` handles
+  `parameter_changed` without the running guard so user edits during a run are
+  not lost.
 
 ## Build
 

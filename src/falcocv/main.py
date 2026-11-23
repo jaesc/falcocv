@@ -725,6 +725,19 @@ class MainWindow(QMainWindow):
         self._modified = True
         self.update_title()
 
+    def _mark_modified_from_edit(self, *_):
+        """Mark the job dirty for a user edit, even during a run.
+
+        ``parameter_changed`` is emitted by ``BaseTool.mark_dirty()`` and is
+        not suspended by the execution service, so it is a reliable user-edit
+        signal.  The finishing replay still must not dirty the job.
+        """
+        engine = getattr(self.editor, "engine", None)
+        if engine is not None and engine.is_finishing:
+            return
+        self._modified = True
+        self.update_title()
+
     def _connect_modification_signals(self):
         """Hook tree and tool signals to dirty tracking."""
         self.editor.tree.order_changed.connect(self._mark_modified)
@@ -752,8 +765,13 @@ class MainWindow(QMainWindow):
                 tool.structure_changed.disconnect(self._mark_modified)
             except (TypeError, RuntimeError):
                 pass
+            try:
+                tool.parameter_changed.disconnect(self._mark_modified_from_edit)
+            except (TypeError, RuntimeError):
+                pass
             tool.data_changed.connect(self._mark_modified)
             tool.structure_changed.connect(self._mark_modified)
+            tool.parameter_changed.connect(self._mark_modified_from_edit)
 
     def _confirm_save_if_modified(self):
         """If the job has unsaved changes, ask the user what to do.

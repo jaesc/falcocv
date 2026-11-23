@@ -58,7 +58,18 @@ class BlockConfig(QWidget):
 
     def on_config_closed(self):
         from falcocv.core.config import ConfigManager
+        from falcocv.core.workflow_controller import ControllerState
         from falcocv.ui.widgets.toolbox import Toolbox
+
+        # Safety net: the nested editor marks its own controller dirty, but a
+        # missed signal must not let the Block close without marking the job.
+        editor = getattr(self, "editor", None)
+        if (
+            editor is not None
+            and editor.controller.state == ControllerState.DIRTY
+        ):
+            self.tool.mark_dirty()
+
         wf = self.tool.workflow
         ConfigManager().set_tool_splitter("Block", self.editor.splitter.sizes())
         self.editor.update_image_counter()
