@@ -101,6 +101,25 @@ def test_nested_run_does_not_mark_job_modified(main_window, qtbot):
     assert window._modified is False
 
 
+def test_opening_real_tool_config_does_not_mark_job(main_window, qtbot):
+    window = main_window
+    window.editor.handle_add_tool("ImageLoader")
+    qtbot.wait(20)
+    window._connect_tool_signals()
+    tree = window.editor.tree
+    item = tree.topLevelItem(tree.topLevelItemCount() - 1)
+    tool = tree.get_tool_from_item(item)
+    tree.itemDoubleClicked.emit(item, 0)
+    qtbot.waitUntil(lambda: tool._config_window is not None, timeout=3000)
+    window._modified = False
+    qtbot.wait(20)
+
+    tool._config_window.close()
+    qtbot.wait(20)
+
+    assert window._modified is False
+
+
 def test_block_config_close_without_edits_does_not_mark_job(
     main_window, qtbot
 ):
