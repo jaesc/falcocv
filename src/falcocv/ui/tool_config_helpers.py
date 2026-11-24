@@ -209,7 +209,10 @@ def configure_params_splitter(
 
     - Left panel is wrapped in a scroll area and cannot be collapsed.
     - Left panel does not grow when the dialog is resized.
-    - Right panel absorbs all extra space.
+    - Right panel absorbs all extra space when expanded, but can be collapsed
+      to give the left panel the full width.
+    - The right panel keeps a 200 px minimum so the left panel can be widened
+      without first collapsing the viewer.
     - Sizes are restored from ConfigManager if valid; otherwise the left
       panel is sized to a sensible default (capped to avoid an overly wide
       panel when some control groups have a large minimumSizeHint).
@@ -223,11 +226,14 @@ def configure_params_splitter(
     # Allow the user to resize down to 180 px; the scroll area will show a
     # horizontal scrollbar if a control group is wider than the viewport.
     scroll_left.setMinimumWidth(180)
+    # A 200 px viewer is still usable and lets the left panel grow much more
+    # than the layout's natural minimumSizeHint (often 400-600 px).
+    right_panel.setMinimumWidth(200)
     # Cap the initial/restored width to avoid an overly wide left panel.
     initial_left = max(240, min_left)
 
     splitter.setCollapsible(0, False)
-    splitter.setCollapsible(1, False)
+    splitter.setCollapsible(1, True)
     splitter.setStretchFactor(0, 0)
     splitter.setStretchFactor(1, 1)
 

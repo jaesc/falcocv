@@ -442,6 +442,12 @@ cpp/bin/       → local kernel build output (gitignored)
   is 180 px and the old saved splitter width is reset once through
   `ConfigManager.data["layout_revisions"]["shape_match_compact_panel"]`.  Keep
   labels short and put explanations in tooltips.
+- **Tool config splitter widths** -> the left panel keeps its width when the
+  window is resized (stretch factor 0), the right panel keeps a 200 px minimum
+  and can be collapsed.  The same applies to `WorkflowEditor` for the main
+  editor and Blocks (record selector minimum 120 px, viewer minimum 200 px).
+  Do not restore `setCollapsible(1, False)` or a large record-selector minimum:
+  they create an invisible upper limit on the left panel width.
 - **LineFit/CircleFit sources** -> the only source is a **caliper array driven
   by the tool ROI**: line calipers are parallel, one point per station along
   the ROI's local U axis scanning across V; circle calipers are radial around

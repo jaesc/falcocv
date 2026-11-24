@@ -104,6 +104,10 @@ class WorkflowEditor(QWidget):
         
         # Right Panel: Viewer
         viewer_container = QWidget()
+        # Keep the viewer usable but let the tree panel take most of the
+        # splitter.  The layout's natural minimum is ~580 px because of the
+        # record selector and footer labels.
+        viewer_container.setMinimumWidth(200)
         viewer_layout = QVBoxLayout(viewer_container)
         
         header = QHBoxLayout()
@@ -159,7 +163,7 @@ class WorkflowEditor(QWidget):
         self.counter_widget.hide()
         
         self.record_selector = QComboBox()
-        self.record_selector.setMinimumWidth(300)
+        self.record_selector.setMinimumWidth(120)
         self.record_selector.currentIndexChanged.connect(self.update_viewer_image)
         header.addWidget(self.record_selector)
 
@@ -192,7 +196,10 @@ class WorkflowEditor(QWidget):
         viewer_layout.addWidget(self.viewer_stack)
         
         self.splitter.addWidget(viewer_container)
-        self.splitter.setStretchFactor(0, 1)
+        # The left panel keeps its width when the window grows; the viewer
+        # absorbs the extra space.  The user can still widen the tree by
+        # dragging the splitter.
+        self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         
         # Apply splitter proportions from config
