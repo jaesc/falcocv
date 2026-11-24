@@ -4,6 +4,8 @@ import pytest
 
 from falcocv.tools.barcode_decoder.config import BarcodeDecoderConfig
 from falcocv.tools.barcode_decoder.logic import BarcodeDecoder
+from falcocv.tools.fixture_overlay.config import FixtureOverlayConfig
+from falcocv.tools.fixture_overlay.logic import FixtureOverlay
 from falcocv.tools.shape_match.config import ShapeMatchConfig
 from falcocv.tools.shape_match.logic import ShapeMatch
 from falcocv.tools.template_match.config import TemplateMatchConfig
@@ -50,3 +52,21 @@ def test_match_fixture_is_a_dedicated_section(qtbot, tool_cls, config_cls):
 
     assert config.chk_fixture.text() == "Act as Fixture"
     assert config.chk_fixture.parent().title() == "Fixture"
+
+
+def test_fixture_overlay_axes_are_always_enabled(qtbot):
+    tool = FixtureOverlay()
+    config = FixtureOverlayConfig(tool)
+    qtbot.addWidget(config)
+
+    assert len(config.fixture_axes) == 3
+    assert all(box.isChecked() for box in config.fixture_axes)
+    assert all(box.isEnabled() for box in config.fixture_axes)
+    assert not hasattr(config, "chk_fixture")
+
+    config.fixture_axes[2].setChecked(False)
+    assert tool.params["fixture_use_angle"] is False
+    config.fixture_axes[2].setChecked(True)
+    assert tool.params["fixture_use_angle"] is True
+
+

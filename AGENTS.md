@@ -65,6 +65,14 @@ cpp/bin/       → local kernel build output (gitignored)
 - **Overlay rendering** → render only in visible viewers; never rasterize into
   the image buffer; keep overlays as mathematical primitives.
 - **ROI helpers** accept 4- or 5-element ROIs (`[x,y,w,h]` or `[x,y,w,h,a]`).
+- **Fixture flow** -> every tool that acts as a fixture (TemplateMatch,
+  ShapeMatch, BarcodeDecoder, FixtureOverlay) must call
+  `VisionImage.apply_fixture(..., use_x/use_y/use_angle)`: it replaces only the
+  selected components and keeps the rest of the input fixture, and normalises
+  the angle to [-180, 180]. Never assign `out.x/.y/.angle` by hand. FixtureOverlay
+  exposes the same `fixture_use_*` params (no `act_as_fixture` toggle) and hides
+  world-space overlays, which carry no image-plane pose. ROI-only crops start a
+  new frame with an identity fixture by design.
 - **ROI crops with rotated fixtures** → `get_roi_data()` and
   `composite_roi_to_full()` must resolve the ROI origin with
   `fixture_to_image()`. An upright ROI drawn on a rotated fixture is stored as

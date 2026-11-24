@@ -25,12 +25,29 @@ def _get_elem_key(elem, idx):
     return (elem.source_tool, elem.ref_id, elem.element_type.name, idx)
 
 
+#: 2D overlay types that carry a usable fixture pose.  World-space (3D)
+#: overlays are excluded: they have no image-plane centre/angle, and offering
+#: them in the picker used to apply a silent (0, 0, 0) fixture.
+_FIXTURE_TYPES = frozenset({
+    OverlayType.POINT,
+    OverlayType.LINE,
+    OverlayType.CIRCLE,
+    OverlayType.ROI,
+    OverlayType.CONTOUR,
+    OverlayType.POLYGON,
+    OverlayType.AXES,
+    OverlayType.TEXT,
+})
+
+
 def _enumerate_elements(v_img):
     items = []
     if not isinstance(v_img, VisionImage):
         return items
     for layer_name, layer in v_img.overlay_layers.items():
         for idx, elem in enumerate(layer.elements):
+            if elem.element_type not in _FIXTURE_TYPES:
+                continue
             items.append({
                 "key": _get_elem_key(elem, idx),
                 "label": _make_label(elem, idx),
@@ -97,6 +114,12 @@ class FixtureOverlay(BaseTool):
             "selected_source_tool": None,
             "selected_ref_id": None,
             "selected_type": None,
+            # Which fixture components the selected element replaces.  The
+            # remaining ones are inherited from the input image, so a chain of
+            # fixture tools composes instead of resetting the pose.
+            "fixture_use_x": True,
+            "fixture_use_y": True,
+            "fixture_use_angle": True,
         }
 
     def run(self, advance=False):
@@ -112,7 +135,8 @@ class FixtureOverlay(BaseTool):
         v_img = img if isinstance(img, VisionImage) else VisionImage.from_array(img)
 
         out = VisionImage(v_img.data, x=v_img.x, y=v_img.y, angle=v_img.angle,
-                          scale_x=v_img.scale_x, scale_y=v_img.scale_y)
+                          scale_x=v_img.scale_x, scale_y=v_img.scale_y,
+                          scale_z=v_img.scale_z, offset_z=v_img.offset_z)
         out.inherit_overlays_from(v_img)
         propagate_3d(v_img, out, regenerate=False)
 
@@ -136,9 +160,17 @@ class FixtureOverlay(BaseTool):
                 self.data_changed.emit()
                 return
             cx, cy, angle = _compute_fixture(found["elem"])
-            out.x = cx
-            out.y = cy
-            out.angle = angle
+            # Only replace the selected components: an image that already
+            # carries a fixture keeps the rest of it.  apply_fixture() also
+            # normalises the angle to [-180, 180], like the match tools.
+            out.apply_fixture(
+                cx,
+                cy,
+                angle,
+                use_x=bool(self.params.get("fixture_use_x", True)),
+                use_y=bool(self.params.get("fixture_use_y", True)),
+                use_angle=bool(self.params.get("fixture_use_angle", True)),
+            )
 
         self.outputs["output image"] = out
         self.data_changed.emit()

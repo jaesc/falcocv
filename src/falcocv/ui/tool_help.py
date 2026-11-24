@@ -2291,11 +2291,21 @@ TOOL_HELP["Fixture Overlay"] = {
         {"name": "selected_ref_id", "default": "None",
          "description": "Reference id of the element inside that tool (for example 'edge1')."},
         {"name": "selected_type", "default": "None",
-         "description": "Overlay type: POINT, LINE, CIRCLE, ROI, CONTOUR or POLYGON."},
+         "description": "Overlay type: POINT, LINE, CIRCLE, ROI, CONTOUR, POLYGON, AXES or TEXT."},
+        {"name": "fixture_use_x", "default": "True",
+         "description": "Replace the input fixture X with the element centre X."},
+        {"name": "fixture_use_y", "default": "True",
+         "description": "Replace the input fixture Y with the element centre Y."},
+        {"name": "fixture_use_angle", "default": "True",
+         "description": "Replace the input fixture angle with the element angle."},
     ],
     "notes": (
         "Choose the element in the configuration dropdown; the tool copies the input image "
-        "and sets its fixture from the element's centre and angle. If the element is missing "
+        "and sets its fixture from the element's centre and angle. 'Use: X / Y / Angle' "
+        "selects which components are replaced: the unselected ones are inherited from the "
+        "input image, so chained fixture tools compose instead of resetting the pose. The "
+        "angle is normalised to [-180, 180], like the match tools. World-space (3D) overlays "
+        "are not listed because they carry no image-plane pose. If the element is missing "
         "the tool reports an error instead of keeping a stale fixture. ROIs are stored in "
         "fixture coordinates, so a rotated fixture keeps its ROIs upright."
     ),

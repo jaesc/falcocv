@@ -59,6 +59,7 @@ def test_apply_fixture_ignores_the_offset_when_the_angle_is_not_used():
         ("falcocv.tools.shape_match.logic", "ShapeMatch"),
         ("falcocv.tools.template_match.logic", "TemplateMatch"),
         ("falcocv.tools.barcode_decoder.logic", "BarcodeDecoder"),
+        ("falcocv.tools.fixture_overlay.logic", "FixtureOverlay"),
     ],
 )
 def test_tools_default_to_all_components(module_name, class_name):
@@ -69,3 +70,10 @@ def test_tools_default_to_all_components(module_name, class_name):
     assert tool.params["fixture_use_x"] is True
     assert tool.params["fixture_use_y"] is True
     assert tool.params["fixture_use_angle"] is True
+
+
+def test_fixture_overlay_always_acts_and_has_no_toggle():
+    from falcocv.tools.fixture_overlay.logic import FixtureOverlay
+
+    tool = FixtureOverlay()
+    assert "act_as_fixture" not in tool.params
