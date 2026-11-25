@@ -270,6 +270,8 @@ TOOL_HELP["Filters"] = {
          "description": "Global region of interest [x, y, width, height, angle]. Zero size = full image."},
         {"name": "output_mode", "default": '"Full Image"',
          "description": "'Full Image' maps the filtered ROI back onto the original. 'ROI Only' returns just the patch."},
+        {"name": "output_dtype", "default": '"same"',
+         "description": "'same' keeps the input dtype (float32 depth stays depth). 'uint8' publishes an 8-bit image, required for grayscale/threshold views of a range image."},
         {"name": "show_overlays", "default": "True",
          "description": "Show the ROI outline on the output image."},
     ],
@@ -278,9 +280,11 @@ TOOL_HELP["Filters"] = {
         "Filters execute in order from top to bottom in the table. Unchecked filters are skipped. "
         "Each filter receives the output of the previous filter. The global ROI is applied once "
         "before the pipeline and the result is mapped back (if Full Image mode) or cropped (if ROI Only). "
+        "An empty chain (or one with every filter disabled) publishes the input image by reference: "
+        "no pixel copy, no NaN scan and no point-cloud regeneration. "
         "Filter types: Gaussian Blur, Median Blur, Bilateral Filter, Sharpen, Sobel (X/Y/Magnitude/Angle), "
         "Canny Edge, Morphology, Threshold, CLAHE, Normalize, Equalize Histogram, Color Conversion (Gray/R/G/B/H/S/V/Lightness), "
-        "Invert, Resize (Factor/Width/Height/Longest Side), Rotate/Flip."
+        "Invert, Resize (Factor/Width/Height/Longest Side), Rotate/Flip, Pixel Map."
     ),
     "see_also": ["Blob Detector", "Histogram"],
     "filters": {
@@ -443,6 +447,18 @@ TOOL_HELP["Filters"] = {
             ],
             "when_to_use": "Correcting camera orientation, augmenting training data, mirroring for UI display.",
             "limitations": "90° rotations change width and height. Flipping does not. Non-90° rotation requires the Resize filter with a custom warp.",
+        },
+        "pixel_map": {
+            "name": "Pixel Map",
+            "how_it_works": "Applies a piecewise-linear transfer curve from input values to output values. The editor stores the final curve as control points; two points with the same input form a vertical step. Values outside the input domain pass through unchanged. Integer images use a lookup table; float range images evaluate the curve directly.",
+            "effect": "Flat ranges become constant levels, ranges with different outputs become ramps, and a step between them becomes a hard threshold. 'Invert' flips the range, 'Threshold' creates a binary step and 'Normalize' stretches the observed data to the output range.",
+            "params_detail": [
+                {"name": "points", "detail": "Control points [input, output] sorted by input. Duplicate inputs define a step; the right-hand value wins at the boundary."},
+                {"name": "domain", "detail": "Input domain the curve is defined on: the full dtype range for integer images, the observed data range for float range images."},
+                {"name": "preserve_invalid", "detail": "Float inputs only: 0 and NaN (invalid depth) are never remapped."},
+            ],
+            "when_to_use": "Remapping depth ranges before measurement, isolating a height band, inverting Z, converting a range image to a displayable grayscale, or applying arbitrary calibration curves.",
+            "limitations": "Float range images evaluate the curve pixel by pixel; integer images are much faster (LUT). On a float depth image the filter keeps float32 unless the tool output type is set to 8-bit.",
         },
     },
 }

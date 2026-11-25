@@ -3,7 +3,8 @@ from falcocv.core.vision_image import VisionImage
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QComboBox, QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox,
-    QSlider, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView, QStackedWidget,
+    QSlider, QSplitter, QTableWidget, QTableWidgetItem, QHeaderView,
+    QStackedWidget, QDialog,
 )
 from PyQt6.QtCore import Qt, QTimer
 from falcocv.ui.style import TEXT_MUTED, disabled_css
@@ -23,6 +24,8 @@ from .logic import (
     FILTER_DEFS, FILTER_TYPE_ORDER,
     _filter_summary, _make_default_filter, FiltersTool,
 )
+from .pixel_map import identity_points, input_domain
+from .pixel_map_editor import PixelMapDialog
 
 
 class FiltersConfig(QWidget):
@@ -101,6 +104,25 @@ class FiltersConfig(QWidget):
         self.combo_mode.setCurrentText(tool.params["output_mode"])
         self.combo_mode.currentTextChanged.connect(self._on_output_mode_changed)
         mode_lyt.addWidget(self.combo_mode)
+
+        dtype_row = QHBoxLayout()
+        dtype_row.addWidget(QLabel("Output type:"))
+        self.combo_output_dtype = QComboBox()
+        self.combo_output_dtype.addItem("Same as input", "same")
+        self.combo_output_dtype.addItem("8-bit (view)", "uint8")
+        index = self.combo_output_dtype.findData(
+            tool.params.get("output_dtype", "same")
+        )
+        self.combo_output_dtype.setCurrentIndex(max(0, index))
+        self.combo_output_dtype.setToolTip(
+            "Grayscale, threshold and Canny produce 8-bit values. On a float "
+            "range image the chain keeps float32 unless this is set to 8-bit."
+        )
+        self.combo_output_dtype.currentIndexChanged.connect(
+            self._on_output_dtype_changed
+        )
+        dtype_row.addWidget(self.combo_output_dtype)
+        mode_lyt.addLayout(dtype_row)
         self.controls_layout.addWidget(mode_group)
 
         # Visibility
@@ -157,6 +179,17 @@ class FiltersConfig(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         defs = FILTER_DEFS.get(ftype)
+        if defs and defs.get("custom_editor"):
+            widget._pixel_map = True
+            self.pixel_map_summary = QLabel("Identity")
+            self.pixel_map_summary.setWordWrap(True)
+            self.btn_pixel_map = QPushButton("Edit Pixel Map…")
+            self.btn_pixel_map.clicked.connect(self._edit_pixel_map)
+            layout.addWidget(self.pixel_map_summary)
+            layout.addWidget(self.btn_pixel_map)
+            layout.addStretch()
+            widget._controls = {}
+            return widget
         if not defs:
             layout.addWidget(QLabel("No parameters"))
             widget._controls = {}
@@ -229,6 +262,9 @@ class FiltersConfig(QWidget):
         return widget
 
     def _populate_page(self, page, f):
+        if getattr(page, "_pixel_map", False):
+            self.pixel_map_summary.setText(self._pixel_map_summary(f))
+            return
         if not hasattr(page, "_controls"):
             return
         for key, widget in page._controls.items():
@@ -262,6 +298,55 @@ class FiltersConfig(QWidget):
             elif isinstance(widget, QComboBox):
                 values[key] = widget.currentData()
         return values
+
+    # ------------------------------------------------------------------
+    # Pixel map
+    # ------------------------------------------------------------------
+
+    def _pixel_map_summary(self, f):
+        points = f.get("points") or []
+        domain = f.get("domain") or [0.0, 255.0]
+        identity = (
+            len(points) == 2
+            and abs(points[0][0] - points[0][1]) < 1e-9
+            and abs(points[1][0] - points[1][1]) < 1e-9
+        )
+        label = "Identity" if identity else f"{len(points)} control points"
+        return f"{label} · domain {float(domain[0]):g}–{float(domain[1]):g}"
+
+    def _seed_pixel_map(self, f):
+        image = self.tool.inputs.get("input image")
+        data = image.data if isinstance(image, VisionImage) else image
+        if not isinstance(data, np.ndarray):
+            return
+        domain = input_domain(data)
+        if not domain:
+            return
+        f["domain"] = [float(domain[0]), float(domain[1])]
+        f["points"] = identity_points(domain)
+
+    def _edit_pixel_map(self):
+        row = self.filter_table.currentRow()
+        filters = list(self.tool.params.get("filters", []))
+        if row < 0 or row >= len(filters):
+            return
+        current = dict(filters[row])
+        image = self.tool.inputs.get("input image")
+        data = image.data if isinstance(image, VisionImage) else image
+        scale_z = getattr(image, "scale_z", 1.0) if isinstance(image, VisionImage) else 1.0
+        offset_z = getattr(image, "offset_z", 0.0) if isinstance(image, VisionImage) else 0.0
+        dialog = PixelMapDialog(
+            self, current, data, scale_z=scale_z, offset_z=offset_z
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        filters[row] = dialog.result_filter()
+        self.tool.params["filters"] = filters
+        self.filter_table.item(row, 2).setText(_filter_summary(filters[row]))
+        page = self.param_stack.currentWidget()
+        if page is not None:
+            self._populate_page(page, filters[row])
+        self.tool.mark_dirty()
 
     # ------------------------------------------------------------------
     # Table management
@@ -320,7 +405,8 @@ class FiltersConfig(QWidget):
 
     def _add_filter(self):
         filters = list(self.tool.params.get("filters", []))
-        filters.append(_make_default_filter("gaussian_blur"))
+        new_filter = _make_default_filter("gaussian_blur")
+        filters.append(new_filter)
         self.tool.params["filters"] = filters
         self._rebuild_table()
         self.filter_table.selectRow(len(filters) - 1)
@@ -379,6 +465,8 @@ class FiltersConfig(QWidget):
         new_type = combo.currentData()
         filters = list(self.tool.params.get("filters", []))
         f = _make_default_filter(new_type)
+        if new_type == "pixel_map":
+            self._seed_pixel_map(f)
         f["enabled"] = filters[row].get("enabled", True)
         filters[row] = f
         self.tool.params["filters"] = filters
@@ -412,6 +500,12 @@ class FiltersConfig(QWidget):
 
     def _on_output_mode_changed(self, text):
         self.tool.params["output_mode"] = text
+        self.tool.mark_dirty()
+
+    def _on_output_dtype_changed(self, _index):
+        self.tool.params["output_dtype"] = (
+            self.combo_output_dtype.currentData() or "same"
+        )
         self.tool.mark_dirty()
 
     def _on_overlays_toggled(self, checked):

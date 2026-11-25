@@ -10,6 +10,7 @@ from falcocv.core.roi_utils import extract_roi, create_roi_only_output, composit
 from falcocv.core.pointcloud_utils import propagate_3d
 from falcocv.core.tool_inputs import image_input_error
 from falcocv.core.config import ConfigManager
+from .pixel_map import apply_pixel_map
 
 # ---------------------------------------------------------------------------
 # Filter definitions
@@ -139,9 +140,14 @@ FILTER_DEFS = {
              ]},
         ],
     },
+    "pixel_map": {
+        "label": "Pixel Map",
+        "params": [],
+        "custom_editor": True,
+    },
 }
 
-FILTER_TYPE_ORDER = ["gaussian_blur", "median_blur", "bilateral", "sharpen", "sobel", "canny", "morphology", "threshold", "clahe", "normalize", "equalize", "color_conversion", "invert", "resize", "rotate_flip"]
+FILTER_TYPE_ORDER = ["gaussian_blur", "median_blur", "bilateral", "sharpen", "sobel", "canny", "morphology", "threshold", "clahe", "normalize", "equalize", "color_conversion", "invert", "resize", "rotate_flip", "pixel_map"]
 
 
 def _normalize_to_u8(img):
@@ -157,11 +163,20 @@ def _make_default_filter(ftype):
     if defs:
         for p in defs["params"]:
             f[p["key"]] = p["default"]
+    if ftype == "pixel_map":
+        f.update({
+            "domain": [0.0, 255.0],
+            "points": [[0.0, 0.0], [255.0, 255.0]],
+            "preserve_invalid": True,
+        })
     return f
 
 
 def _filter_summary(f):
     ftype = f.get("type", "")
+    if ftype == "pixel_map":
+        count = len(f.get("points") or [])
+        return f"{count} points"
     defs = FILTER_DEFS.get(ftype)
     if not defs:
         return ftype
@@ -185,6 +200,9 @@ def _filter_summary(f):
 # ---------------------------------------------------------------------------
 
 def apply_filter(img, ftype, params):
+    if ftype == "pixel_map":
+        return apply_pixel_map(img, params)
+
     if ftype == "gaussian_blur":
         ks = int(params.get("kernel_size", 5))
         if ks % 2 == 0:
@@ -285,6 +303,11 @@ def apply_filter(img, ftype, params):
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         else:
             gray = img
+        if gray.dtype == np.float32:
+            # The threshold is expressed in 0..255, so float range images
+            # must be normalised first.  Raw counts (depth) would otherwise
+            # compare against 128 of a 0..65535 range.
+            gray = _normalize_to_u8(gray)
         _, result = cv2.threshold(gray, val, 255, cv2.THRESH_BINARY_INV if inv else cv2.THRESH_BINARY)
         if len(img.shape) == 3:
             result = cv2.cvtColor(result, cv2.COLOR_GRAY2BGR)
@@ -327,11 +350,13 @@ def apply_filter(img, ftype, params):
         if mode == "gray":
             if len(img.shape) == 3:
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            else:
-                gray = img
-            if len(img.shape) == 3:
                 return cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-            return gray
+            if img.dtype.kind == "f":
+                # A single-channel range image is already "gray"; what the
+                # user wants is a viewable 8-bit grayscale of the depth
+                # range, so normalise it instead of returning it untouched.
+                return _normalize_to_u8(img)
+            return img
         if len(img.shape) < 3:
             return img
         b, g, r = cv2.split(img)
@@ -418,8 +443,42 @@ class FiltersTool(BaseTool):
             "filters": [],
             "roi": [0, 0, 0, 0, 0],
             "output_mode": "Full Image",
+            "output_dtype": "same",
             "show_overlays": True,
         }
+
+    def _publish_identity(self, v_img):
+        """No active filter: publish the input without touching its pixels."""
+        roi_p = self.params.get("roi") or [0, 0, 0, 0, 0]
+        w = roi_p[2] if len(roi_p) > 2 else 0
+        h = roi_p[3] if len(roi_p) > 3 else 0
+        if w <= 0 or h <= 0 or not self.params.get("show_overlays", True):
+            self.outputs["output image"] = v_img
+            self.data_changed.emit()
+            return
+
+        out_vimg = VisionImage(
+            v_img.data,
+            x=v_img.x,
+            y=v_img.y,
+            angle=v_img.angle,
+            scale_x=v_img.scale_x,
+            scale_y=v_img.scale_y,
+            scale_z=v_img.scale_z,
+            offset_z=v_img.offset_z,
+        )
+        out_vimg.inherit_overlays_from(v_img)
+        propagate_3d(v_img, out_vimg, regenerate=False)
+        layer = out_vimg.get_overlay_layer("default", source_tool=self.name)
+        layer.elements = [e for e in layer.elements if e.source_tool != self.name]
+        abs_roi = v_img.fixture_to_image(roi_p)
+        layer.add_roi(
+            [abs_roi[0], abs_roi[1], abs_roi[2], abs_roi[3], abs_roi[4]],
+            color=(255, 128, 0),
+            thickness=2,
+        )
+        self.outputs["output image"] = out_vimg
+        self.data_changed.emit()
 
     def run(self, advance=False):
         img = self.inputs.get("input image")
@@ -431,6 +490,15 @@ class FiltersTool(BaseTool):
             return
 
         v_img = img if isinstance(img, VisionImage) else VisionImage.from_array(img)
+        output_mode = self.params.get("output_mode", "Full Image")
+        output_dtype = self.params.get("output_dtype", "same")
+        active_filters = [
+            f for f in self.params.get("filters", [])
+            if f.get("enabled", True)
+        ]
+        if not active_filters and output_mode != "ROI Only" and output_dtype == "same":
+            self._publish_identity(v_img)
+            return
 
         roi_p = self.params["roi"]
         x, y, w, h = roi_p[0], roi_p[1], roi_p[2], roi_p[3]
@@ -439,26 +507,34 @@ class FiltersTool(BaseTool):
         roi = extract_roi(v_img, self.params["roi"])
         working = roi["roi_src"]
         input_was_float = working.dtype.kind == "f"
-        if input_was_float:
+        nan_scrubbed = False
+        if input_was_float and not np.isfinite(working).all():
             working = np.nan_to_num(working, nan=0.0)
+            nan_scrubbed = True
 
         if w <= 0 or h <= 0:
             h_img, w_img = v_img.data.shape[:2]
             x, y, w, h = 0, 0, w_img, h_img
             a = 0
 
-        for f in self.params.get("filters", []):
-            if not f.get("enabled", True):
-                continue
+        for f in active_filters:
             ftype = f.get("type")
             fparams = {k: v for k, v in f.items() if k not in ("enabled", "type")}
             working = apply_filter(working, ftype, fparams)
 
-        # Preserve float32 (depth -> depth) as the C++ compute did.
-        if input_was_float and working.dtype != np.float32:
+        if output_dtype == "uint8":
+            if working.dtype != np.uint8:
+                working = np.clip(np.rint(working), 0, 255).astype(np.uint8)
+        elif input_was_float and working.dtype != np.float32:
+            # Preserve float32 (depth -> depth) as the C++ compute did.
             working = working.astype(np.float32)
 
-        if self.params.get("output_mode") == "ROI Only":
+        # Rebuilding the cloud is only needed when pixels changed; an identity
+        # chain shares the input cloud (the empty-chain fast path above avoids
+        # even reaching this).
+        regenerate = (bool(active_filters) or nan_scrubbed) and output_dtype != "uint8"
+
+        if output_mode == "ROI Only":
             out_vimg = create_roi_only_output(
                 roi, working, v_img, self.name, roi["ax"], roi["ay"],
             )
@@ -472,12 +548,18 @@ class FiltersTool(BaseTool):
                 out_vimg = VisionImage(working, v_img.x, v_img.y, v_img.angle,
                                         v_img.scale_x, v_img.scale_y, v_img.scale_z, v_img.offset_z)
                 out_vimg.inherit_overlays_from(v_img)
-                propagate_3d(v_img, out_vimg, regenerate=True)
+                propagate_3d(v_img, out_vimg, regenerate=regenerate)
+                if output_dtype == "uint8":
+                    out_vimg._3d_data = None
+                    out_vimg._3d_cache_key = None
                 self.outputs["output image"] = out_vimg
             else:
                 show_roi = self.params.get("show_overlays", True)
                 out_vimg = composite_roi_to_full(working, v_img, self.params["roi"], draw_roi=show_roi, source_tool=self.name)
                 propagate_3d(v_img, out_vimg, regenerate=True)
+                if output_dtype == "uint8":
+                    out_vimg._3d_data = None
+                    out_vimg._3d_cache_key = None
                 self.outputs["output image"] = out_vimg
 
         self.data_changed.emit()

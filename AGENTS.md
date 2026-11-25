@@ -83,6 +83,24 @@ cpp/bin/       → local kernel build output (gitignored)
 - **Filters on depth** → scrub NaNs, preserve float32 output; Canny/CLAHE/
   equalize normalize float32 to uint8 internally; invert float32 with
   `(max+min)-img`.
+- **Filters empty chain** -> with no enabled filter (or no filters at all) and
+  `Full Image` / `output_dtype="same"`, `FiltersTool` publishes the input
+  `VisionImage` by reference: no pixel copy, no NaN scan and no cloud
+  regeneration.  Do not reintroduce an unconditional `np.nan_to_num` or
+  `propagate_3d(regenerate=True)`; both cost hundreds of ms on 80 MP frames.
+  A partial ROI with `show_overlays` wraps the same buffer (no copy).
+- **Filters output dtype** -> `output_dtype="same"` keeps float32 depth.  Set
+  it to `uint8` for grayscale/threshold views of a range image; otherwise the
+  chain casts 8-bit results back to float32.  `color_conversion` gray and
+  `threshold` normalise float range images to 0..255 first.
+- **Pixel Map filter** -> stores the final transfer curve, not edit history:
+  `points` (duplicate x = vertical step) + `domain` + `preserve_invalid`.
+  Integer images use a dtype-range LUT (`cv2.LUT`); float range images are
+  evaluated per segment and keep values outside the domain unchanged.  The
+  right-hand value wins at a shared boundary.  `preserve_invalid` keeps 0/NaN
+  untouched on float inputs so the depth cloud stays clean.  The editor
+  (`tools/filters/pixel_map_editor.py`) only mutates the curve; the runtime
+  never depends on how it was built.
 - **Histogram on depth** → support float32/NaN with a finite min/max range;
   never call `np.iinfo` on a float dtype.
 - **Barcode Auto** → try the fast 1D path first (downscaled pyzbar, then
