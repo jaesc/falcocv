@@ -29,6 +29,15 @@ def _blob_config(qtbot):
     return config
 
 
+def test_block_record_selector_is_long_enough(qtbot):
+    dialog, config = _block_config(qtbot)
+    selector = config.editor.record_selector
+
+    assert selector.minimumWidth() >= 360
+    assert selector.width() >= 360
+    dialog.close()
+
+
 def test_block_left_panel_can_be_widened(qtbot):
     dialog, config = _block_config(qtbot)
     splitter = config.editor.splitter

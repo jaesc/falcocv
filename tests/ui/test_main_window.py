@@ -40,6 +40,12 @@ def test_add_tool_and_open_config_via_double_click(main_window, qtbot):
     assert tool._config_window is None
 
 
+def test_main_editor_record_selector_is_long_enough(main_window):
+    selector = main_window.editor.record_selector
+    assert selector.minimumWidth() >= 360
+    assert selector.width() >= 360
+
+
 def test_image_loader_filters_blob_pipeline(main_window, qtbot, tmp_path):
     window = main_window
     image_path = _synthetic_image(tmp_path / "blobs.png")

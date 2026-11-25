@@ -163,7 +163,12 @@ class WorkflowEditor(QWidget):
         self.counter_widget.hide()
         
         self.record_selector = QComboBox()
-        self.record_selector.setMinimumWidth(120)
+        # The selector is part of the viewer header.  360 px (3x the old
+        # 120 px minimum) is safe because viewer_container below keeps an
+        # explicit 200 px minimum, which is what lets the splitter widen the
+        # tree panel.  Removing that explicit minimum would bring back the
+        # invisible upper limit on the left panel width.
+        self.record_selector.setMinimumWidth(360)
         self.record_selector.currentIndexChanged.connect(self.update_viewer_image)
         header.addWidget(self.record_selector)
 

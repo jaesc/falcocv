@@ -314,11 +314,13 @@ class DepthRangeLoaderConfig(QWidget):
 
     def _on_delay_changed(self, value):
         self.tool.params["delay"] = value
+        self.tool.mark_dirty()
 
     # ── Params ──────────────────────────────────────────────────────
 
     def _on_scale(self, v):
         self.tool.params["scale"] = float(v)
+        self.tool.mark_dirty()
 
     def _on_zero(self, checked):
         self.tool.params["zero_as_invalid"] = bool(checked)
@@ -330,6 +332,7 @@ class DepthRangeLoaderConfig(QWidget):
 
     def _on_param(self, param, v):
         self.tool.params[param] = float(v)
+        self.tool.mark_dirty()
 
     def _on_target_points(self, value):
         self.tool.params["target_points"] = int(value)
